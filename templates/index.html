@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <title>Sports Arbitrage Scanner</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <h1>Sports Arbitrage Scanner</h1>
+      <p>Scan US retail vs EU sharp books for two-way arbitrage.</p>
+    </div>
+    <button class="icon-btn" id="theme-toggle" title="Toggle theme">🌙</button>
+  </header>
+
+  <main>
+    <section class="card config-card">
+      <form id="scan-form">
+        <div class="config-grid">
+          <div class="field">
+            <label class="field-label">API Key</label>
+            <div class="input-wrap">
+              <input type="password" id="api-key" placeholder="sk_xxx" required />
+              <button type="button" id="toggle-key" class="icon-btn" aria-label="Show API key">👁</button>
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label">Total Stake ($)</label>
+            <input type="number" id="stake-input" min="1" step="1" value="100" />
+            <p class="helper">Stake splits proportionally across both outcomes.</p>
+          </div>
+          <div class="field">
+            <label class="field-label">Sports</label>
+            <div id="sports-list" class="sports-grid">
+              {% for sport in default_sports %}
+              <label class="checkbox">
+                <input type="checkbox" name="sports" value="{{ sport.key }}" checked />
+                <span>{{ sport.label }}</span>
+              </label>
+              {% endfor %}
+            </div>
+            <label class="checkbox all-toggle">
+              <input type="checkbox" id="all-sports" />
+              <span>Scan all active sports (uses more API credits)</span>
+            </label>
+            <p class="helper">Each selected sport consumes one API request.</p>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="submit" id="scan-btn">Scan Now</button>
+          <div id="status" class="status"></div>
+        </div>
+      </form>
+    </section>
+
+    <section class="stats-row">
+      <div class="stat-card" id="stat-opps">
+        <span class="stat-label">Opportunities</span>
+        <span class="stat-value">0</span>
+      </div>
+      <div class="stat-card" id="stat-events">
+        <span class="stat-label">Events Scanned</span>
+        <span class="stat-value">0</span>
+      </div>
+      <div class="stat-card" id="stat-sports">
+        <span class="stat-label">Sports</span>
+        <span class="stat-value">0</span>
+      </div>
+      <div class="stat-card" id="stat-calls">
+        <span class="stat-label">API Calls</span>
+        <span class="stat-value">0</span>
+      </div>
+    </section>
+
+    <section id="summary-info" class="card summary-info hidden"></section>
+
+    <section class="summary-grid">
+      <div class="card summary-card" id="roi-card">
+        <div class="card-head">
+          <h3>By ROI Band</h3>
+        </div>
+        <div id="roi-bars" class="bar-list"></div>
+      </div>
+      <div class="card summary-card" id="sport-card">
+        <div class="card-head">
+          <h3>By Sport</h3>
+        </div>
+        <div id="sport-bars" class="bar-list"></div>
+      </div>
+    </section>
+
+    <section class="card results-card">
+      <div class="card-head">
+        <h3>Opportunities</h3>
+        <div class="table-meta">
+          <span id="table-count">0 results</span>
+          <span class="muted">Sorted by ROI</span>
+        </div>
+      </div>
+      <table id="results-table">
+        <thead>
+          <tr>
+            <th>ROI</th>
+            <th>Profit</th>
+            <th>Sport</th>
+            <th>Event</th>
+            <th>Time</th>
+            <th>Market</th>
+            <th>Outcome 1</th>
+            <th>Outcome 2</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div id="table-empty" class="empty">No arbitrage opportunities yet.</div>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById('scan-form');
+    const apiKeyInput = document.getElementById('api-key');
+    const stakeInput = document.getElementById('stake-input');
+    const scanBtn = document.getElementById('scan-btn');
+    const statusEl = document.getElementById('status');
+    const summaryEl = document.getElementById('summary-info');
+    const resultsBody = document.querySelector('#results-table tbody');
+    const emptyState = document.getElementById('table-empty');
+    const allSportsToggle = document.getElementById('all-sports');
+    const summaryROI = document.getElementById('roi-bars');
+    const summarySport = document.getElementById('sport-bars');
+    const tableCount = document.getElementById('table-count');
+    const statOpps = document.querySelector('#stat-opps .stat-value');
+    const statEvents = document.querySelector('#stat-events .stat-value');
+    const statSports = document.querySelector('#stat-sports .stat-value');
+    const statCalls = document.querySelector('#stat-calls .stat-value');
+    const themeToggle = document.getElementById('theme-toggle');
+    const toggleKeyBtn = document.getElementById('toggle-key');
+    const currencyFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+    let lastData = null;
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const savedTheme = localStorage.getItem('arb-theme');
+      if (savedTheme) {
+        document.documentElement.dataset.theme = savedTheme;
+        themeToggle.textContent = savedTheme === 'dark' ? '☀️' : '🌙';
+      }
+    });
+
+    toggleKeyBtn.addEventListener('click', () => {
+      if (apiKeyInput.type === 'password') {
+        apiKeyInput.type = 'text';
+        toggleKeyBtn.textContent = '🙈';
+      } else {
+        apiKeyInput.type = 'password';
+        toggleKeyBtn.textContent = '👁';
+      }
+    });
+
+    themeToggle.addEventListener('click', () => {
+      const current = document.documentElement.dataset.theme || 'light';
+      const next = current === 'light' ? 'dark' : 'light';
+      document.documentElement.dataset.theme = next;
+      localStorage.setItem('arb-theme', next);
+      themeToggle.textContent = next === 'dark' ? '☀️' : '🌙';
+    });
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const apiKey = apiKeyInput.value.trim();
+      if (!apiKey) {
+        showStatus('Please enter your API key.', 'error');
+        return;
+      }
+      const sports = Array.from(form.querySelectorAll('input[name="sports"]:checked')).map(
+        (el) => el.value
+      );
+      await runScan({ apiKey, sports, allSports: allSportsToggle.checked, stake: parseFloat(stakeInput.value) || 100 });
+    });
+
+    stakeInput.addEventListener('input', () => {
+      if (lastData) {
+        renderResults(lastData);
+      }
+    });
+
+    async function runScan(payload) {
+      setScanning(true);
+      try {
+        const response = await fetch('/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey: payload.apiKey, sports: payload.sports, allSports: payload.allSports }),
+        });
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Scan failed');
+        }
+        lastData = data;
+        renderResults(data);
+        showStatus(`Scan complete at ${new Date(data.scan_time).toLocaleTimeString()}`, 'success');
+      } catch (err) {
+        showStatus(err.message || 'Scan failed', 'error');
+        renderResults({ opportunities: [], summary: null });
+      } finally {
+        setScanning(false);
+      }
+    }
+
+    function setScanning(isScanning) {
+      scanBtn.disabled = isScanning;
+      scanBtn.textContent = isScanning ? 'Scanning…' : 'Scan Now';
+      statusEl.textContent = isScanning ? 'Scanning, please wait…' : '';
+      statusEl.className = 'status';
+    }
+
+    function showStatus(message, type) {
+      statusEl.textContent = message;
+      statusEl.className = `status ${type}`;
+    }
+
+    function renderResults(data) {
+      const opportunities = data.opportunities || [];
+      const stakeValue = parseFloat(stakeInput.value) || 0;
+      resultsBody.innerHTML = '';
+      tableCount.textContent = `${opportunities.length} results`;
+      if (opportunities.length === 0) {
+        emptyState.classList.remove('hidden');
+      } else {
+        emptyState.classList.add('hidden');
+        let runningProfit = 0;
+        opportunities.forEach((opp) => {
+          const row = document.createElement('tr');
+          row.classList.add(roiBandClass(opp.roi_percent));
+          const commence = opp.commence_time ? new Date(opp.commence_time).toLocaleString() : 'TBD';
+          const calc = calculateStakes(opp, stakeValue);
+          const breakdown = calc?.breakdown || [];
+          runningProfit += calc?.guaranteed_profit || 0;
+          row.innerHTML = `
+            <td><span class="roi-badge">${opp.roi_percent?.toFixed(2)}%</span></td>
+            <td class="profit-cell">${calc ? formatProfit(calc.guaranteed_profit) : '-'}</td>
+            <td>${opp.sport_display || opp.sport || ''}</td>
+            <td>${opp.event || ''}</td>
+            <td>${commence}</td>
+            <td>${formatMarket(opp)}</td>
+            <td>${formatOutcome(breakdown[0])}</td>
+            <td>${formatOutcome(breakdown[1])}</td>`;
+          resultsBody.appendChild(row);
+        });
+        tableCount.textContent = `${opportunities.length} results • ${formatCurrency(runningProfit)} profit`;
+      }
+
+      const summary = data.summary;
+      if (summary) {
+        statOpps.textContent = data.opportunities_count;
+        statEvents.textContent = summary.events_scanned;
+        statSports.textContent = summary.sports_scanned;
+        statCalls.textContent = summary.api_calls_used;
+        const totalProfit = (opportunities || []).reduce((sum, opp) => {
+          const calc = calculateStakes(opp, stakeValue);
+          return sum + (calc?.guaranteed_profit || 0);
+        }, 0);
+        renderBars(summaryROI, summary.by_roi_band, 'roi');
+        renderBars(summarySport, summary.by_sport, 'sport');
+        const totalStaked = stakeValue > 0 ? stakeValue * opportunities.length : 0;
+        summaryEl.classList.remove('hidden');
+        summaryEl.innerHTML = `
+          <h3>Summary</h3>
+          <p>Found <strong>${data.opportunities_count}</strong> opportunities across <strong>${summary.events_scanned}</strong> events in <strong>${summary.sports_scanned}</strong> sports.</p>
+          <p>Total potential profit: <strong>${formatCurrency(totalProfit)}</strong>${totalStaked ? ` on ${formatCurrency(totalStaked)} staked` : ''}</p>
+          <p>API calls used: ${summary.api_calls_used}</p>
+          <p class="helper">ROI = return on total stake. 2% ROI means $2 profit on a $100 stake.</p>
+        `;
+      } else {
+        statOpps.textContent = statEvents.textContent = statSports.textContent = statCalls.textContent = '0';
+        summaryROI.innerHTML = '';
+        summarySport.innerHTML = '';
+        summaryEl.classList.add('hidden');
+        summaryEl.innerHTML = '';
+      }
+    }
+
+    function roiBandClass(roi) {
+      if (roi >= 2) return 'band-hot';
+      if (roi >= 1) return 'band-warm';
+      return 'band-cool';
+    }
+
+    function renderBars(container, data, type) {
+      if (!data || Object.keys(data).length === 0) {
+        container.innerHTML = '<p class="muted">No data</p>';
+        return;
+      }
+      const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
+      const max = entries[0][1] || 1;
+      container.innerHTML = entries
+        .map(([label, value]) => {
+          const width = Math.max((value / max) * 100, 8);
+          const bandClass = type === 'roi' ? roiBandLabelClass(label) : '';
+          return `
+            <div class="bar-row">
+              <span>${label}</span>
+              <div class="bar-track">
+                <div class="bar-fill ${bandClass}" style="width: ${width}%"></div>
+              </div>
+              <span class="bar-value">${value}</span>
+            </div>`;
+        })
+        .join('');
+    }
+
+    function roiBandLabelClass(label) {
+      if (label.includes('2')) return 'band-hot';
+      if (label.includes('1-2')) return 'band-warm';
+      return 'band-cool';
+    }
+
+    function formatOutcome(item) {
+      if (!item) return '';
+      const point = item.point !== undefined && item.point !== null ? ` (${item.point})` : '';
+      const stake = item.stake !== undefined ? formatCurrency(item.stake) : '';
+      const book = item.bookmaker ? ` @ ${item.bookmaker}` : '';
+      return `<span class="outcome"><strong>${item.outcome || ''}${point}</strong><span>${stake}${book}</span><span class="mono">@ ${formatPrice(item.price)}</span></span>`;
+    }
+
+    function formatMarket(opp) {
+      if (opp.market === 'spreads' || opp.market === 'totals') {
+        const point = opp.best_odds?.[0]?.point ?? opp.point;
+        if (point !== undefined && point !== null) {
+          return `${opp.market} (${point})`;
+        }
+      }
+      return opp.market || '';
+    }
+
+    function formatPrice(value) {
+      if (!value && value !== 0) return '';
+      return Number(value).toFixed(2);
+    }
+
+    function calculateStakes(opp, totalStake) {
+      const odds = (opp.best_odds || []).slice(0, 2);
+      if (!totalStake || totalStake <= 0 || odds.length < 2) return null;
+      const inverses = odds.map((o) => (o && o.price ? 1 / Number(o.price) : 0));
+      const sumInv = inverses.reduce((a, b) => a + b, 0);
+      if (sumInv <= 0) return null;
+      const breakdown = odds.map((o, idx) => {
+        if (!o || !o.price) return null;
+        const fraction = inverses[idx] / sumInv;
+        const stake = Number((totalStake * fraction).toFixed(2));
+        const payout = Number((stake * o.price).toFixed(2));
+        return {
+          outcome: o.outcome,
+          bookmaker: o.bookmaker,
+          price: o.price,
+          point: o.point,
+          stake,
+          payout,
+          fraction,
+        };
+      });
+      if (breakdown.includes(null)) return null;
+      const guaranteed_profit = Number((breakdown[0].payout - totalStake).toFixed(2));
+      const roi_percent = totalStake ? (guaranteed_profit / totalStake) * 100 : 0;
+      return { breakdown, guaranteed_profit, roi_percent };
+    }
+
+    function formatCurrency(value) {
+      return currencyFormatter.format(value || 0);
+    }
+
+    function formatProfit(value) {
+      const formatted = formatCurrency(Math.abs(value || 0));
+      return `${value >= 0 ? '+' : '-'}${formatted}`;
+    }
+  </script>
+</body>
+</html>

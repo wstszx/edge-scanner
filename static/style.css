@@ -1,0 +1,389 @@
+:root {
+  --bg: #f8fafc;
+  --card: #ffffff;
+  --card-border: #e2e8f0;
+  --text: #1e293b;
+  --text-muted: #64748b;
+  --accent: #3b82f6;
+  --success: #22c55e;
+  --error: #ef4444;
+  --warning: #f59e0b;
+  --shadow: 0 4px 20px rgba(15, 23, 42, 0.08);
+  --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+[data-theme="dark"] {
+  --bg: #0f172a;
+  --card: #1e293b;
+  --card-border: #334155;
+  --text: #e2e8f0;
+  --text-muted: #94a3b8;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem 4vw 0.5rem;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.7rem;
+}
+
+.app-header p {
+  margin: 0.2rem 0 0;
+  color: var(--text-muted);
+}
+
+main {
+  max-width: 1200px;
+  margin: 0 auto 3rem;
+  padding: 0 4vw;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: var(--shadow);
+  margin-top: 1.2rem;
+}
+
+.summary-info p {
+  margin: 0.2rem 0;
+}
+
+.summary-info.hidden {
+  display: none;
+}
+
+.config-card .config-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 2fr;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .config-card .config-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.field-label {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+  display: block;
+}
+
+.input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.input-wrap input {
+  flex: 1;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  background: var(--bg);
+  color: inherit;
+}
+
+.icon-btn {
+  border: none;
+  background: var(--card-border);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+}
+
+.sports-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.35rem 1rem;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 0.7rem;
+}
+
+.checkbox {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.95rem;
+}
+
+.checkbox input {
+  accent-color: var(--accent);
+}
+
+.all-toggle {
+  margin-top: 0.8rem;
+}
+
+.helper {
+  margin: 0.4rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1rem;
+  gap: 1rem;
+}
+
+#scan-btn {
+  padding: 0.75rem 1.8rem;
+  font-size: 1rem;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+#scan-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.status {
+  min-height: 1.4rem;
+  color: var(--text-muted);
+}
+
+.status.success {
+  color: var(--success);
+}
+
+.status.error {
+  color: var(--error);
+}
+
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+  margin-top: 1.2rem;
+}
+
+.stat-card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 1rem;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.stat-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.stat-value {
+  font-size: 1.8rem;
+  font-weight: 600;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 1.2rem;
+}
+
+.bar-list .bar-row {
+  display: grid;
+  grid-template-columns: 1fr 6fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+  font-size: 0.95rem;
+}
+
+.bar-track {
+  background: #e2e8f0;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+[data-theme="dark"] .bar-track {
+  background: #475569;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.band-hot {
+  background: #22c55e;
+}
+
+.band-warm {
+  background: #facc15;
+}
+
+.band-cool {
+  background: #94a3b8;
+}
+
+.results-card .card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+#results-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#results-table th {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-align: left;
+  padding: 0.6rem;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--card-border);
+}
+
+#results-table td {
+  padding: 0.75rem 0.6rem;
+  border-bottom: 1px solid var(--card-border);
+  vertical-align: top;
+  font-size: 0.95rem;
+}
+
+#results-table tr.band-hot {
+  box-shadow: inset 4px 0 0 #22c55e;
+  background: rgba(34, 197, 94, 0.08);
+}
+
+#results-table tr.band-warm {
+  box-shadow: inset 4px 0 0 #facc15;
+  background: rgba(250, 204, 21, 0.1);
+}
+
+#results-table tr.band-cool {
+  box-shadow: inset 4px 0 0 #94a3b8;
+}
+
+.roi-badge {
+  font-family: var(--mono);
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: var(--card-border);
+  display: inline-block;
+}
+
+.profit-cell {
+  font-family: var(--mono);
+}
+
+.profit-cell.gain {
+  color: #166534;
+}
+
+.profit-cell.loss {
+  color: #b91c1c;
+}
+
+.outcome {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.outcome strong {
+  font-weight: 600;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+.empty {
+  text-align: center;
+  color: var(--text-muted);
+  margin-top: 1rem;
+}
+
+.hidden {
+  display: none;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.table-meta {
+  display: flex;
+  gap: 1rem;
+  color: var(--text-muted);
+}
+
+.card-head h3 {
+  margin: 0;
+}
+
+.icon-btn {
+  background: transparent;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  color: inherit;
+}
+
+.icon-btn:hover {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.band-hot .roi-badge {
+  background: rgba(34, 197, 94, 0.2);
+  color: #166534;
+}
+
+.band-warm .roi-badge {
+  background: rgba(250, 204, 21, 0.2);
+  color: #854d0e;
+}
+
+.band-cool .roi-badge {
+  background: rgba(148, 163, 184, 0.3);
+  color: #475569;
+}
