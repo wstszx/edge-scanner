@@ -2,7 +2,78 @@
 
 from __future__ import annotations
 
-REGIONS = "us,eu"
+REGION_CONFIG = {
+    "us": {"name": "United States", "default": True},
+    "us2": {"name": "United States (Additional)", "default": False},
+    "uk": {"name": "United Kingdom", "default": False},
+    "eu": {"name": "Europe", "default": True},
+    "au": {"name": "Australia", "default": False},
+}
+
+DEFAULT_REGION_KEYS = [key for key, meta in REGION_CONFIG.items() if meta.get("default")]
+
+REGION_OPTIONS = [
+    {"key": key, "label": meta["name"], "default": meta.get("default", False)}
+    for key, meta in REGION_CONFIG.items()
+]
+
+EXCHANGE_BOOKMAKERS = {
+    "betfair_ex_eu": {"name": "Betfair"},
+    "betfair_ex_uk": {"name": "Betfair"},
+    "betfair_ex_au": {"name": "Betfair"},
+    "sportsbet_ex": {"name": "Sportsbet Exchange"},
+    "matchbook": {"name": "Matchbook"},
+}
+
+EXCHANGE_KEYS = set(EXCHANGE_BOOKMAKERS.keys())
+
+DEFAULT_COMMISSION = 0.05  # 5%
+
+# -----------------------------------------------------------------------------
+# Middles configuration
+# -----------------------------------------------------------------------------
+
+MIN_MIDDLE_GAP = 1.5
+DEFAULT_MIDDLE_SORT = "ev"
+SHOW_POSITIVE_EV_ONLY = True
+
+PROBABILITY_PER_INTEGER = {
+    # Spreads
+    "americanfootball_nfl_spreads": 0.025,
+    "americanfootball_ncaaf_spreads": 0.025,
+    "basketball_nba_spreads": 0.025,
+    "basketball_ncaab_spreads": 0.025,
+    "baseball_mlb_spreads": 0.030,
+    "icehockey_nhl_spreads": 0.030,
+    # Totals
+    "americanfootball_nfl_totals": 0.030,
+    "americanfootball_ncaaf_totals": 0.030,
+    "basketball_nba_totals": 0.020,
+    "basketball_ncaab_totals": 0.020,
+    "baseball_mlb_totals": 0.045,
+    "icehockey_nhl_totals": 0.055,
+    "default": 0.030,
+}
+
+NFL_KEY_NUMBER_PROBABILITY = {
+    3: 0.150,
+    7: 0.090,
+    10: 0.060,
+    6: 0.050,
+    14: 0.045,
+    4: 0.040,
+    1: 0.035,
+    17: 0.035,
+    13: 0.030,
+    11: 0.025,
+}
+
+KEY_NUMBER_SPORTS = {
+    "americanfootball_nfl",
+    "americanfootball_ncaaf",
+}
+
+MAX_MIDDLE_PROBABILITY = 0.35
 
 SPORT_DISPLAY_NAMES = {
     "americanfootball_nfl": "NFL",

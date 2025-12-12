@@ -75,15 +75,44 @@ main {
 
 .config-card .config-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 2fr;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 1.5rem;
-  flex-wrap: wrap;
 }
 
-@media (max-width: 900px) {
-  .config-card .config-grid {
-    grid-template-columns: 1fr;
-  }
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+
+.tab-btn {
+  background: transparent;
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  padding: 0.4rem 1rem;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.tab-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.middle-config {
+  margin-top: 1rem;
+}
+
+.middle-config.hidden {
+  display: none;
+}
+
+.middle-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
 }
 
 .field-label {
@@ -124,6 +153,15 @@ main {
   gap: 0.35rem 1rem;
   max-height: 220px;
   overflow-y: auto;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  padding: 0.7rem;
+}
+
+.regions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 0.25rem 0.75rem;
   border: 1px solid var(--card-border);
   border-radius: 10px;
   padding: 0.7rem;
@@ -185,6 +223,42 @@ main {
 
 .status.error {
   color: var(--error);
+}
+
+.commission-box {
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+  background: rgba(59, 130, 246, 0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.alert {
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+  border-left: 4px solid var(--warning);
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--text);
+  margin-top: 1rem;
+}
+
+.alert.warning {
+  border-color: var(--warning);
+}
+
+.toggle-field .checkbox {
+  margin-top: 0.3rem;
+}
+
+.middle-caveat {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.middle-caveat strong {
+  color: var(--text);
 }
 
 .stats-row {
@@ -304,12 +378,39 @@ main {
   box-shadow: inset 4px 0 0 #94a3b8;
 }
 
+.ev-hot {
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.ev-warm {
+  background: rgba(250, 204, 21, 0.08);
+}
+
+.ev-cool {
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.ev-negative {
+  opacity: 0.8;
+}
+
 .roi-badge {
   font-family: var(--mono);
   padding: 0.25rem 0.55rem;
   border-radius: 999px;
   background: var(--card-border);
   display: inline-block;
+}
+
+.roi-badge.secondary {
+  background: rgba(99, 102, 241, 0.15);
+  color: #312e81;
+}
+
+.roi-warning {
+  font-size: 0.85rem;
+  margin-left: 0.2rem;
+  color: var(--warning);
 }
 
 .profit-cell {
@@ -324,6 +425,12 @@ main {
   color: #b91c1c;
 }
 
+.ev-gross {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 .outcome {
   display: flex;
   flex-direction: column;
@@ -332,6 +439,23 @@ main {
 
 .outcome strong {
   font-weight: 600;
+}
+
+.exchange-badge {
+  align-self: flex-start;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--warning);
+}
+
+.net-note {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.75rem;
 }
 
 .mono {
@@ -376,6 +500,44 @@ main {
 .band-hot .roi-badge {
   background: rgba(34, 197, 94, 0.2);
   color: #166534;
+}
+
+.roi-negative .roi-badge {
+  background: rgba(248, 113, 113, 0.2);
+  color: #991b1b;
+}
+
+.has-exchange {
+  border-left: 3px solid rgba(59, 130, 246, 0.5);
+  position: relative;
+}
+
+.has-exchange::after {
+  content: 'EX';
+  position: absolute;
+  top: 8px;
+  left: -14px;
+  background: rgba(59, 130, 246, 0.85);
+  color: #fff;
+  font-size: 0.6rem;
+  padding: 0.05rem 0.25rem;
+  border-radius: 2px;
+  letter-spacing: 0.04em;
+}
+
+.exchange-flag {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.exchange-flag.none {
+  color: var(--text-muted);
+}
+
+.exchange-note {
+  font-size: 0.8rem;
+  color: var(--text-muted);
 }
 
 .band-warm .roi-badge {

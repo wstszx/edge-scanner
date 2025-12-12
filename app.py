@@ -9,7 +9,12 @@ from typing import Optional
 
 from flask import Flask, jsonify, render_template, request
 
-from config import DEFAULT_SPORT_OPTIONS
+from config import (
+    DEFAULT_COMMISSION,
+    DEFAULT_REGION_KEYS,
+    DEFAULT_SPORT_OPTIONS,
+    REGION_OPTIONS,
+)
 from scanner import run_scan
 
 app = Flask(__name__)
@@ -17,7 +22,12 @@ app = Flask(__name__)
 
 @app.route("/")
 def index() -> str:
-    return render_template("index.html", default_sports=DEFAULT_SPORT_OPTIONS)
+    return render_template(
+        "index.html",
+        default_sports=DEFAULT_SPORT_OPTIONS,
+        region_options=REGION_OPTIONS,
+        default_commission_percent=int(DEFAULT_COMMISSION * 100),
+    )
 
 
 @app.route("/scan", methods=["POST"])
@@ -27,11 +37,31 @@ def scan() -> tuple:
     sports = payload.get("sports") or []
     all_sports = bool(payload.get("allSports"))
     stake = payload.get("stake")
+    regions = payload.get("regions")
+    commission = payload.get("commission")
     try:
         stake_value = float(stake) if stake is not None else 100.0
     except (TypeError, ValueError):
         stake_value = 100.0
-    result = run_scan(api_key, sports, all_sports, stake_value)
+    if isinstance(regions, list):
+        regions_value = [str(region) for region in regions if isinstance(region, str)]
+    else:
+        regions_value = None
+    try:
+        commission_percent = float(commission) if commission is not None else None
+    except (TypeError, ValueError):
+        commission_percent = None
+    commission_rate = (
+        commission_percent / 100.0 if commission_percent is not None else DEFAULT_COMMISSION
+    )
+    result = run_scan(
+        api_key,
+        sports,
+        all_sports,
+        stake_value,
+        regions_value or DEFAULT_REGION_KEYS,
+        commission_rate,
+    )
     status = 200 if result.get("success") else result.get("error_code", 500)
     return jsonify(result), status
 

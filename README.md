@@ -1,26 +1,86 @@
-# Sports Arbitrage Scanner
+# Edge Scanner
 
-Scan for cross-book sports betting arbitrage using The Odds API.
+**Arbitrage • Middles**
 
-## Setup
+Open-source sports betting scanner that finds arbitrage opportunities and middle bets across US and EU bookmakers.
 
-1. Install dependencies: `pip install -r requirements.txt`
-2. Get a free API key from [The Odds API](https://the-odds-api.com/)
-3. Run the app: `python app.py` (add `--port 5050` if port 5000 is busy)
+## Features
 
-Your browser will open automatically. Enter your API key, pick sports (or use the default set), and click **Scan**. Each sport selected consumes one API request.  
-If you see "Access to 127.0.0.1 was denied", another process (often macOS AirPlay) is already on port 5000 — rerun with `python app.py --port 5050`.
+| Tab | What it finds | Risk profile |
+|-----|---------------|--------------|
+| **Arbitrage** | Guaranteed profit by betting both sides across different books | Zero risk |
+| **Middles** | Line gaps where both bets can win if the result lands in between | High variance, +EV over time |
 
 ## How It Works
 
-- The backend pulls odds from US (retail) and EU (sharp) regions across moneyline, spreads, and totals markets.
-- For each event and market, it collects the best price per outcome and checks if the inverse-odds sum is below 1 (classic two-way arbitrage).
-- Results are grouped with ROI bands and sport summaries, and displayed in an interactive table.
+The scanner pulls odds from The Odds API across multiple regions (US, EU, UK, AU) and:
 
-## Notes
+1. **Arbitrage** — finds where the sum of inverse odds across books is less than 1, guaranteeing profit regardless of outcome
+2. **Middles** — finds where books disagree on spreads/totals, creating a gap where both sides can win
 
-- Default sports: NFL, NBA, MLB, NHL, top European soccer leagues, MLS.
-- Use the **All sports** toggle to scan every active non-futures sport (uses many API credits).
-- Handle API rate limits gracefully; errors appear in the UI if the key is invalid or quota exceeded.
+## Setup
 
-MIT License
+1. Clone this repo
+2. Install dependencies: `pip install -r requirements.txt`
+3. Get a free API key from [The Odds API](https://the-odds-api.com/)
+4. Run: `python app.py`
+
+Your browser opens automatically. Enter your API key and scan.
+
+## Markets Scanned
+
+| Sport | Markets |
+|-------|---------|
+| NFL, NBA, MLB, NHL | Moneyline, Spreads, Totals |
+| Soccer (EPL, La Liga, etc.) | Spreads, Totals only* |
+
+*Soccer moneyline is three-way (win/draw/lose) — excluded from two-way scanning.
+
+## API Usage
+
+Each scan uses one API call per sport. Free tier: 500 requests/month.
+
+Default sports use ~6-10 calls per scan depending on what's in season.
+
+## Understanding the Results
+
+### Arbitrage
+
+ROI = guaranteed return on total stake. A 2% ROI means $2 profit on $100 staked.
+
+Stakes are split so you get the same payout regardless of outcome.
+
+### Middles
+
+EV = expected value based on historical probability of landing in the gap.
+
+NFL key numbers (3, 7) significantly boost probability for spread middles.
+
+Middles lose small amounts most of the time and win big occasionally — positive EV over many bets, but high variance on any single bet.
+
+## Configuration
+
+Configurable via the UI:
+- Regions (US, US2, UK, EU, AU)
+- Sports selection
+- Exchange commission rate (for Betfair, etc.)
+- Minimum gap for middles
+- Stake amount
+
+## Tech Stack
+
+- **Backend:** Python, Flask
+- **Frontend:** HTML, CSS, JavaScript
+- **Data:** The Odds API
+
+## License
+
+MIT
+
+## Contributing
+
+PRs welcome. Ideas for future versions:
+- +EV scanner (compare to sharp lines)
+- Three-way arbitrage (soccer moneylines)
+- Alerts/notifications
+- Historical tracking
