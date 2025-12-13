@@ -40,6 +40,12 @@ body {
   padding: 1.5rem 4vw 0.5rem;
 }
 
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 .app-header h1 {
   margin: 0;
   font-size: 1.7rem;
@@ -73,6 +79,14 @@ main {
   display: none;
 }
 
+.env-key-notice {
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  background: rgba(34, 197, 94, 0.15);
+  color: #166534;
+  font-weight: 600;
+}
+
 .config-card .config-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -101,6 +115,26 @@ main {
   border-color: var(--accent);
 }
 
+.odds-format {
+  display: inline-flex;
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.85rem;
+}
+
+.odds-format span {
+  padding: 0.25rem 0.75rem;
+  color: var(--text-muted);
+}
+
+.odds-format span.active {
+  background: var(--accent);
+  color: #fff;
+}
+
 .middle-config {
   margin-top: 1rem;
 }
@@ -113,6 +147,30 @@ main {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 1rem;
+}
+
+.plus-config {
+  margin-top: 1rem;
+}
+
+.plus-config.hidden {
+  display: none;
+}
+
+.plus-config-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.plus-config .helper {
+  max-width: 320px;
+}
+
+.kelly-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 0.6rem;
 }
 
 .field-label {
@@ -342,12 +400,16 @@ main {
   margin-bottom: 1rem;
 }
 
-#results-table {
+#results-table,
+#middles-table,
+#plus-ev-table {
   width: 100%;
   border-collapse: collapse;
 }
 
-#results-table th {
+#results-table th,
+#middles-table th,
+#plus-ev-table th {
   text-transform: uppercase;
   font-size: 0.75rem;
   letter-spacing: 0.08em;
@@ -357,7 +419,9 @@ main {
   border-bottom: 1px solid var(--card-border);
 }
 
-#results-table td {
+#results-table td,
+#middles-table td,
+#plus-ev-table td {
   padding: 0.75rem 0.6rem;
   border-bottom: 1px solid var(--card-border);
   vertical-align: top;
@@ -450,6 +514,12 @@ main {
   border-radius: 999px;
   background: rgba(245, 158, 11, 0.15);
   color: var(--warning);
+}
+
+.kelly-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
 .net-note {

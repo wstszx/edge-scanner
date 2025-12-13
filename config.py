@@ -131,6 +131,53 @@ ROI_BANDS = [
     (2.0, float("inf"), "2%+"),
 ]
 
+# -----------------------------------------------------------------------------
+# +EV configuration
+# -----------------------------------------------------------------------------
+
+SHARP_BOOKS = [
+    {"key": "pinnacle", "name": "Pinnacle", "region": "eu", "type": "bookmaker"},
+    {"key": "betfair_ex_eu", "name": "Betfair Exchange", "region": "eu", "type": "exchange"},
+    {"key": "matchbook", "name": "Matchbook", "region": "eu", "type": "exchange"},
+]
+
+DEFAULT_SHARP_BOOK = "pinnacle"
+DEFAULT_BANKROLL = 1000.0
+MIN_EDGE_PERCENT = 1.0
+DEFAULT_KELLY_FRACTION = 0.25
+KELLY_OPTIONS = [
+    {"label": "Full Kelly", "value": 1.0},
+    {"label": "Half Kelly", "value": 0.5},
+    {"label": "Quarter Kelly", "value": 0.25},
+    {"label": "Tenth Kelly", "value": 0.1},
+]
+
+SOFT_BOOK_KEYS = [
+    "draftkings",
+    "fanduel",
+    "betmgm",
+    "caesars",
+    "pointsbetus",
+    "pointsbet",
+    "betrivers",
+    "unibet",
+    "888sport",
+    "bovada",
+    "betonlineag",
+    "lowvig",
+    "williamhill_us",
+    "betway",
+    "sportsbettingag",
+    "barstool",
+]
+
+EDGE_BANDS = [
+    (1.0, 3.0, "1-3%"),
+    (3.0, 5.0, "3-5%"),
+    (5.0, 10.0, "5-10%"),
+    (10.0, float("inf"), "10%+"),
+]
+
 
 def markets_for_sport(sport_key: str) -> list[str]:
     if sport_key in AMERICAN_SPORTS:

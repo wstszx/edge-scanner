@@ -1,8 +1,8 @@
 # Edge Scanner
 
-**Arbitrage • Middles**
+**Arbitrage • Middles • +EV**
 
-Open-source sports betting scanner that finds arbitrage opportunities and middle bets across US and EU bookmakers.
+Open-source sports betting scanner that finds arbitrage opportunities, middle bets, and +EV plays across US and EU bookmakers.
 
 ## Features
 
@@ -10,6 +10,7 @@ Open-source sports betting scanner that finds arbitrage opportunities and middle
 |-----|---------------|--------------|
 | **Arbitrage** | Guaranteed profit by betting both sides across different books | Zero risk |
 | **Middles** | Line gaps where both bets can win if the result lands in between | High variance, +EV over time |
+| **+EV** | Soft book odds better than sharp book fair value | Medium variance, profit over volume |
 
 ## How It Works
 
@@ -17,6 +18,7 @@ The scanner pulls odds from The Odds API across multiple regions (US, EU, UK, AU
 
 1. **Arbitrage** — finds where the sum of inverse odds across books is less than 1, guaranteeing profit regardless of outcome
 2. **Middles** — finds where books disagree on spreads/totals, creating a gap where both sides can win
+3. **+EV** — compares soft book odds to sharp reference (Pinnacle), identifying bets with positive expected value
 
 ## Setup
 
@@ -26,6 +28,11 @@ The scanner pulls odds from The Odds API across multiple regions (US, EU, UK, AU
 4. Run: `python app.py`
 
 Your browser opens automatically. Enter your API key and scan.
+
+**Optional:** Create a `.env` file with your API key to skip manual entry:
+```
+ODDS_API_KEY=your_api_key_here
+```
 
 ## Markets Scanned
 
@@ -54,9 +61,17 @@ Stakes are split so you get the same payout regardless of outcome.
 
 EV = expected value based on historical probability of landing in the gap.
 
-NFL key numbers (3, 7) significantly boost probability for spread middles.
+NFL key numbers (3, 7) significantly boost probability for spread middles — these margins occur more often due to field goals and touchdowns.
 
 Middles lose small amounts most of the time and win big occasionally — positive EV over many bets, but high variance on any single bet.
+
+### +EV
+
+Edge = how much better the soft book odds are compared to sharp book fair value.
+
+Sharp books (Pinnacle) have tight lines with minimal vig (~2%). When soft books offer better odds than the sharp-implied fair price, that's a +EV bet.
+
+Kelly staking helps size bets based on edge — quarter Kelly recommended to reduce variance.
 
 ## Configuration
 
@@ -65,7 +80,10 @@ Configurable via the UI:
 - Sports selection
 - Exchange commission rate (for Betfair, etc.)
 - Minimum gap for middles
-- Stake amount
+- Minimum edge for +EV
+- Sharp reference book (Pinnacle, Betfair, Matchbook)
+- Kelly fraction (full, half, quarter, tenth)
+- Stake amount / bankroll
 
 ## Tech Stack
 
@@ -80,7 +98,7 @@ MIT
 ## Contributing
 
 PRs welcome. Ideas for future versions:
-- +EV scanner (compare to sharp lines)
-- Three-way arbitrage (soccer moneylines)
 - Alerts/notifications
 - Historical tracking
+- Three-way arbitrage (soccer moneylines)
+- Player props

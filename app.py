@@ -1,23 +1,34 @@
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import threading
 import webbrowser
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 
 from config import (
+    DEFAULT_BANKROLL,
     DEFAULT_COMMISSION,
+    DEFAULT_KELLY_FRACTION,
     DEFAULT_REGION_KEYS,
+    DEFAULT_SHARP_BOOK,
     DEFAULT_SPORT_OPTIONS,
+    KELLY_OPTIONS,
+    MIN_EDGE_PERCENT,
     REGION_OPTIONS,
+    SHARP_BOOKS,
 )
 from scanner import run_scan
 
+load_dotenv()
+
 app = Flask(__name__)
+ENV_API_KEY = os.getenv("ODDS_API_KEY") or os.getenv("THEODDSAPI_API_KEY")
 
 
 @app.route("/")
@@ -27,18 +38,47 @@ def index() -> str:
         default_sports=DEFAULT_SPORT_OPTIONS,
         region_options=REGION_OPTIONS,
         default_commission_percent=int(DEFAULT_COMMISSION * 100),
+        has_env_key=bool(ENV_API_KEY),
+        sharp_books=SHARP_BOOKS,
+        default_sharp_book=DEFAULT_SHARP_BOOK,
+        default_min_edge_percent=MIN_EDGE_PERCENT,
+        default_bankroll=DEFAULT_BANKROLL,
+        default_kelly_fraction=DEFAULT_KELLY_FRACTION,
+        kelly_options=KELLY_OPTIONS,
     )
 
 
 @app.route("/scan", methods=["POST"])
 def scan() -> tuple:
     payload = request.get_json(force=True, silent=True) or {}
-    api_key = (payload.get("apiKey") or "").strip()
+    api_key = ENV_API_KEY or (payload.get("apiKey") or "").strip()
     sports = payload.get("sports") or []
     all_sports = bool(payload.get("allSports"))
     stake = payload.get("stake")
     regions = payload.get("regions")
     commission = payload.get("commission")
+    sharp_book = (payload.get("sharpBook") or DEFAULT_SHARP_BOOK).strip().lower()
+    try:
+        min_edge_percent = (
+            float(payload.get("minEdgePercent")) if payload.get("minEdgePercent") is not None else MIN_EDGE_PERCENT
+        )
+    except (TypeError, ValueError):
+        min_edge_percent = MIN_EDGE_PERCENT
+    min_edge_percent = max(0.0, min_edge_percent)
+    try:
+        bankroll_value = float(payload.get("bankroll")) if payload.get("bankroll") is not None else DEFAULT_BANKROLL
+    except (TypeError, ValueError):
+        bankroll_value = DEFAULT_BANKROLL
+    bankroll_value = max(0.0, bankroll_value)
+    try:
+        kelly_fraction = (
+            float(payload.get("kellyFraction"))
+            if payload.get("kellyFraction") is not None
+            else DEFAULT_KELLY_FRACTION
+        )
+    except (TypeError, ValueError):
+        kelly_fraction = DEFAULT_KELLY_FRACTION
+    kelly_fraction = max(0.0, min(kelly_fraction, 1.0))
     try:
         stake_value = float(stake) if stake is not None else 100.0
     except (TypeError, ValueError):
@@ -61,6 +101,10 @@ def scan() -> tuple:
         stake_value,
         regions_value or DEFAULT_REGION_KEYS,
         commission_rate,
+        sharp_book=sharp_book,
+        min_edge_percent=min_edge_percent,
+        bankroll=bankroll_value,
+        kelly_fraction=kelly_fraction,
     )
     status = 200 if result.get("success") else result.get("error_code", 500)
     return jsonify(result), status

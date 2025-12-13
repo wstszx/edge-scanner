@@ -11,26 +11,36 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import requests
 
 from config import (
+    DEFAULT_BANKROLL,
     DEFAULT_COMMISSION,
+    DEFAULT_KELLY_FRACTION,
     DEFAULT_MIDDLE_SORT,
     DEFAULT_REGION_KEYS,
+    DEFAULT_SHARP_BOOK,
     DEFAULT_SPORT_KEYS,
+    EDGE_BANDS,
     EXCHANGE_BOOKMAKERS,
     EXCHANGE_KEYS,
     KEY_NUMBER_SPORTS,
     MAX_MIDDLE_PROBABILITY,
+    MIN_EDGE_PERCENT,
     MIN_MIDDLE_GAP,
     NFL_KEY_NUMBER_PROBABILITY,
     PROBABILITY_PER_INTEGER,
     REGION_CONFIG,
     ROI_BANDS,
+    SHARP_BOOKS,
     SHOW_POSITIVE_EV_ONLY,
+    SOFT_BOOK_KEYS,
     SPORT_DISPLAY_NAMES,
     markets_for_sport,
 )
 
 BASE_URL = "https://api.the-odds-api.com/v4"
 MIDDLE_MARKETS = {"spreads", "totals"}
+ALLOWED_PLUS_EV_MARKETS = {"h2h", "spreads", "totals"}
+SOFT_BOOK_KEY_SET = set(SOFT_BOOK_KEYS)
+SHARP_BOOK_MAP = {book["key"]: book for book in SHARP_BOOKS}
 
 
 class ScannerError(Exception):
@@ -54,6 +64,20 @@ def _normalize_regions(regions: Optional[Sequence[str]]) -> List[str]:
     return valid or list(DEFAULT_REGION_KEYS)
 
 
+def _ensure_sharp_region(regions: List[str], sharp_key: str) -> List[str]:
+    """Always include the region required for the sharp reference (usually EU)."""
+    required_region = SHARP_BOOK_MAP.get(sharp_key, {}).get("region", "eu")
+    normalized = []
+    seen = set()
+    for region in regions:
+        if region not in seen:
+            normalized.append(region)
+            seen.add(region)
+    if required_region and required_region not in seen and required_region in REGION_CONFIG:
+        normalized.append(required_region)
+    return normalized
+
+
 def _apply_commission(price: float, commission_rate: float, is_exchange: bool) -> float:
     if not is_exchange:
         return price
@@ -61,6 +85,31 @@ def _apply_commission(price: float, commission_rate: float, is_exchange: bool) -
     if edge <= 0:
         return price
     return 1.0 + edge * (1.0 - commission_rate)
+
+
+def _sharp_priority(selected_key: str) -> List[dict]:
+    priority = []
+    seen = set()
+    if selected_key in SHARP_BOOK_MAP:
+        priority.append(SHARP_BOOK_MAP[selected_key])
+        seen.add(selected_key)
+    for book in SHARP_BOOKS:
+        key = book.get("key")
+        if key and key not in seen:
+            priority.append(book)
+            seen.add(key)
+    return priority
+
+
+def _points_match(point_a, point_b, tolerance: float = 1e-6) -> bool:
+    if point_a is None and point_b is None:
+        return True
+    if point_a is None or point_b is None:
+        return False
+    try:
+        return abs(float(point_a) - float(point_b)) <= tolerance
+    except (TypeError, ValueError):
+        return False
 
 
 def _spread_gap_info(favorite_line: float, underdog_line: float) -> Optional[dict]:
@@ -104,6 +153,98 @@ def _total_gap_info(over_line: float, under_line: float) -> Optional[dict]:
         "middle_integers": middle_integers,
         "integer_count": len(middle_integers),
     }
+
+
+def _build_sharp_reference(
+    bookmaker: dict, commission_rate: float, is_exchange: bool
+) -> Dict[Tuple[str, str], dict]:
+    """Return mapping of (market_key, line_key) to vig-free odds."""
+    line_map: Dict[Tuple[str, str], List[dict]] = {}
+    for market in bookmaker.get("markets", []):
+        market_key = market.get("key")
+        if market_key not in ALLOWED_PLUS_EV_MARKETS:
+            continue
+        for outcome in market.get("outcomes", []):
+            price = outcome.get("price")
+            if not price or price <= 1:
+                continue
+            line_key = _line_key(market_key, outcome)
+            if not line_key:
+                continue
+            try:
+                price_val = float(price)
+            except (TypeError, ValueError):
+                continue
+            adjusted_price = _apply_commission(price_val, commission_rate, is_exchange)
+            line_map.setdefault((market_key, line_key), []).append(
+                {
+                    "name": (outcome.get("name") or "").strip().lower(),
+                    "display_name": outcome.get("name") or "",
+                    "price": adjusted_price,
+                    "raw_price": price_val,
+                    "point": outcome.get("point"),
+                }
+            )
+    references: Dict[Tuple[str, str], dict] = {}
+    for key, entries in line_map.items():
+        if len(entries) != 2:
+            continue
+        first, second = entries
+        fair_a, fair_b, vig_percent = _remove_vig(first["price"], second["price"])
+        prob_a = 1 / fair_a if fair_a else 0.0
+        prob_b = 1 / fair_b if fair_b else 0.0
+        references[key] = {
+            "vig_percent": round(vig_percent, 2),
+            "outcomes": {
+                first["name"]: {
+                    "fair_odds": fair_a,
+                    "true_probability": prob_a,
+                    "sharp_odds": first["raw_price"],
+                    "opponent_odds": second["raw_price"],
+                    "opponent_name": second["display_name"],
+                    "display_name": first["display_name"],
+                    "point": first.get("point"),
+                },
+                second["name"]: {
+                    "fair_odds": fair_b,
+                    "true_probability": prob_b,
+                    "sharp_odds": second["raw_price"],
+                    "opponent_odds": first["raw_price"],
+                    "opponent_name": first["display_name"],
+                    "display_name": second["display_name"],
+                    "point": second.get("point"),
+                },
+            },
+        }
+    return references
+
+
+def _two_way_outcomes(bookmaker: dict) -> Dict[Tuple[str, str], List[dict]]:
+    line_map: Dict[Tuple[str, str], List[dict]] = {}
+    for market in bookmaker.get("markets", []):
+        market_key = market.get("key")
+        if market_key not in ALLOWED_PLUS_EV_MARKETS:
+            continue
+        for outcome in market.get("outcomes", []):
+            price = outcome.get("price")
+            if not price or price <= 1:
+                continue
+            line_key = _line_key(market_key, outcome)
+            if not line_key:
+                continue
+            try:
+                display_price = float(price)
+            except (TypeError, ValueError):
+                continue
+            line_map.setdefault((market_key, line_key), []).append(
+                {
+                    "name": (outcome.get("name") or "").strip().lower(),
+                    "display_name": outcome.get("name") or "",
+                    "price": display_price,
+                    "point": outcome.get("point"),
+                }
+            )
+    return {key: entries for key, entries in line_map.items() if len(entries) == 2}
 
 
 def _estimate_middle_probability(
@@ -426,6 +567,118 @@ def _collect_middle_opportunities(
     return entries
 
 
+def _collect_plus_ev_opportunities(
+    game: dict,
+    markets: Sequence[str],
+    sharp_priority: List[dict],
+    commission_rate: float,
+    min_edge_percent: float,
+    bankroll: float,
+    kelly_fraction: float,
+) -> List[dict]:
+    bookmakers = game.get("bookmakers", [])
+    sharp_meta = None
+    sharp_bookmaker = None
+    for candidate in sharp_priority:
+        for book in bookmakers:
+            if book.get("key") == candidate.get("key"):
+                sharp_meta = candidate
+                sharp_bookmaker = book
+                break
+        if sharp_bookmaker:
+            break
+    if not sharp_bookmaker or not sharp_meta:
+        return []
+    is_sharp_exchange = sharp_meta.get("type") == "exchange"
+    sharp_reference = _build_sharp_reference(sharp_bookmaker, commission_rate, is_sharp_exchange)
+    if not sharp_reference:
+        return []
+    opportunities: List[dict] = []
+    for book in bookmakers:
+        key = book.get("key")
+        if not key:
+            continue
+        if key == sharp_meta.get("key"):
+            continue
+        if SOFT_BOOK_KEY_SET and key not in SOFT_BOOK_KEY_SET:
+            continue
+        bookmaker_title = book.get("title") or key
+        is_exchange = key in EXCHANGE_KEYS
+        soft_lines = _two_way_outcomes(book)
+        if not soft_lines:
+            continue
+        for (market_key, line_key), entries in soft_lines.items():
+            if market_key not in markets:
+                continue
+            reference = sharp_reference.get((market_key, line_key))
+            if not reference:
+                continue
+            for entry in entries:
+                name_norm = entry["name"]
+                sharp_outcome = reference["outcomes"].get(name_norm)
+                if not sharp_outcome:
+                    continue
+                soft_point = entry.get("point")
+                sharp_point = sharp_outcome.get("point")
+                has_point = sharp_point is not None or soft_point is not None
+                if has_point and not _points_match(soft_point, sharp_point):
+                    continue
+                display_price = entry["price"]
+                effective_price = _apply_commission(display_price, commission_rate, is_exchange)
+                fair_odds = sharp_outcome["fair_odds"]
+                gross_edge = _calculate_edge_percent(display_price, fair_odds)
+                net_edge = _calculate_edge_percent(effective_price, fair_odds)
+                if net_edge < min_edge_percent:
+                    continue
+                true_probability = sharp_outcome["true_probability"]
+                ev_per_100 = _calculate_ev(true_probability, effective_price, 100.0)
+                full_pct, fraction_pct, recommended = _kelly_stake(
+                    true_probability, effective_price, bankroll, kelly_fraction
+                )
+                opportunity = {
+                    "id": str(uuid.uuid4()),
+                    "sport": game.get("sport_key"),
+                    "sport_display": game.get("sport_display")
+                    or SPORT_DISPLAY_NAMES.get(game.get("sport_key", ""), game.get("sport_key")),
+                    "event": f"{game.get('away_team')} vs {game.get('home_team')}",
+                    "commence_time": game.get("commence_time"),
+                    "market": market_key,
+                    "market_point": sharp_outcome.get("point"),
+                    "bet": {
+                        "outcome": entry.get("display_name") or "",
+                        "soft_book": bookmaker_title,
+                        "soft_key": key,
+                        "soft_odds": display_price,
+                        "effective_odds": effective_price,
+                        "is_exchange": is_exchange,
+                        "point": soft_point,
+                    },
+                    "sharp": {
+                        "book": sharp_meta.get("name") or sharp_bookmaker.get("title") or sharp_meta.get("key"),
+                        "key": sharp_meta.get("key"),
+                        "odds": sharp_outcome["sharp_odds"],
+                        "opponent_odds": sharp_outcome["opponent_odds"],
+                        "opponent": sharp_outcome["opponent_name"],
+                        "fair_odds": sharp_outcome["fair_odds"],
+                        "true_probability": sharp_outcome["true_probability"],
+                        "true_probability_percent": round(sharp_outcome["true_probability"] * 100, 2),
+                        "vig_percent": reference.get("vig_percent"),
+                    },
+                    "edge_percent": round(net_edge, 2),
+                    "net_edge_percent": round(net_edge, 2),
+                    "gross_edge_percent": round(gross_edge, 2),
+                    "ev_per_100": round(ev_per_100, 2),
+                    "kelly": {
+                        "full_percent": full_pct,
+                        "fraction_percent": fraction_pct,
+                        "recommended_stake": recommended,
+                    },
+                    "has_exchange": is_exchange,
+                }
+                opportunities.append(opportunity)
+    return opportunities
+
+
 def _build_middle_entry(
     game: dict,
     market_key: str,
@@ -720,6 +973,65 @@ def _deduplicate_middles(opportunities: List[dict]) -> List[dict]:
     return list(best_by_key.values())
 
 
+def _plus_ev_summary(opportunities: List[dict]) -> dict:
+    count = len(opportunities)
+    avg_edge = (
+        round(sum(opp.get("edge_percent", 0) for opp in opportunities) / count, 2)
+        if count
+        else 0.0
+    )
+    best = max(opportunities, key=lambda o: o.get("edge_percent", 0), default=None)
+    total_ev = round(sum(opp.get("ev_per_100", 0) for opp in opportunities), 2)
+    by_sport: Dict[str, int] = {}
+    by_edge_band: Dict[str, int] = {label: 0 for *_, label in EDGE_BANDS}
+    for opp in opportunities:
+        sport = opp.get("sport_display") or opp.get("sport") or "Other"
+        by_sport[sport] = by_sport.get(sport, 0) + 1
+        edge = opp.get("edge_percent", 0)
+        for lower, upper, label in EDGE_BANDS:
+            if lower <= edge < upper:
+                by_edge_band[label] += 1
+                break
+    return {
+        "count": count,
+        "average_edge_percent": avg_edge,
+        "total_ev_per_100": total_ev,
+        "best_edge": {
+            "edge_percent": best.get("edge_percent") if best else None,
+            "event": best.get("event") if best else None,
+            "sport": best.get("sport_display") if best else None,
+        }
+        if best
+        else None,
+        "by_sport": by_sport,
+        "by_edge_band": by_edge_band,
+    }
+
+
+def _deduplicate_plus_ev(opportunities: List[dict]) -> List[dict]:
+    best_by_key: Dict[tuple, dict] = {}
+    for opp in opportunities:
+        bet = opp.get("bet", {})
+        point = bet.get("point")
+        if point is None:
+            point = opp.get("market_point")
+        try:
+            normalized_point = float(point) if point is not None else None
+        except (TypeError, ValueError):
+            normalized_point = None
+        key = (
+            opp.get("event"),
+            opp.get("sport"),
+            opp.get("market"),
+            (bet.get("outcome") or "").strip().lower(),
+            normalized_point,
+        )
+        existing = best_by_key.get(key)
+        if not existing or (opp.get("edge_percent", 0) > existing.get("edge_percent", 0)):
+            best_by_key[key] = opp
+    return list(best_by_key.values())
+
+
 def run_scan(
     api_key: str,
     sports: Optional[List[str]] = None,
@@ -727,12 +1039,17 @@ def run_scan(
     stake_amount: float = 100.0,
     regions: Optional[Sequence[str]] = None,
     commission_rate: float = DEFAULT_COMMISSION,
+    sharp_book: str = DEFAULT_SHARP_BOOK,
+    min_edge_percent: float = MIN_EDGE_PERCENT,
+    bankroll: float = DEFAULT_BANKROLL,
+    kelly_fraction: float = DEFAULT_KELLY_FRACTION,
 ) -> dict:
     if not api_key:
         return {"success": False, "error": "API key is required", "error_code": 400}
     if stake_amount is None or stake_amount <= 0:
         stake_amount = 100.0
     normalized_regions = _normalize_regions(regions)
+    normalized_regions = _ensure_sharp_region(normalized_regions, sharp_book or DEFAULT_SHARP_BOOK)
     if not normalized_regions:
         return {
             "success": False,
@@ -777,11 +1094,13 @@ def run_scan(
 
     arb_opportunities: List[dict] = []
     middle_opportunities: List[dict] = []
+    plus_ev_opportunities: List[dict] = []
     events_scanned = 0
     total_profit = 0.0
     sport_errors: List[dict] = []
     successful_sports = 0
     api_calls_used = 0
+    sharp_priority = _sharp_priority(sharp_book or DEFAULT_SHARP_BOOK)
 
     for sport in filtered:
         sport_key = sport.get("key")
@@ -819,14 +1138,27 @@ def run_scan(
                         game, market_key, stake_amount, commission_rate
                     )
                     middle_opportunities.extend(middle_entries)
+            plus_entries = _collect_plus_ev_opportunities(
+                game,
+                markets,
+                sharp_priority,
+                commission_rate,
+                min_edge_percent,
+                bankroll,
+                kelly_fraction,
+            )
+            plus_ev_opportunities.extend(plus_entries)
 
     arb_opportunities.sort(key=lambda x: x["roi_percent"], reverse=True)
     middle_opportunities.sort(key=lambda x: x["ev_percent"], reverse=True)
     middle_opportunities = _deduplicate_middles(middle_opportunities)
+    plus_ev_opportunities = _deduplicate_plus_ev(plus_ev_opportunities)
+    plus_ev_opportunities.sort(key=lambda x: x.get("edge_percent", 0), reverse=True)
     arb_summary = _summaries(
         arb_opportunities, successful_sports, events_scanned, total_profit, api_calls_used
     )
     middle_summary = _middle_summary(middle_opportunities)
+    plus_ev_summary = _plus_ev_summary(plus_ev_opportunities)
     return {
         "success": True,
         "scan_time": _iso_now(),
@@ -847,8 +1179,67 @@ def run_scan(
                 "positive_only": SHOW_POSITIVE_EV_ONLY,
             },
         },
+        "plus_ev": {
+            "opportunities": plus_ev_opportunities,
+            "opportunities_count": len(plus_ev_opportunities),
+            "summary": plus_ev_summary,
+            "defaults": {
+                "sharp_book": sharp_book or DEFAULT_SHARP_BOOK,
+                "min_edge_percent": min_edge_percent,
+                "bankroll": bankroll,
+                "kelly_fraction": kelly_fraction,
+            },
+        },
         "sport_errors": sport_errors,
         "partial": bool(sport_errors),
         "regions": normalized_regions,
         "commission_rate": commission_rate,
     }
+def _remove_vig(odds_a: float, odds_b: float) -> Tuple[float, float, float]:
+    """Return fair odds for both sides plus vig percent."""
+    if odds_a <= 1 or odds_b <= 1:
+        return odds_a, odds_b, 0.0
+    implied_a = 1 / odds_a
+    implied_b = 1 / odds_b
+    total_implied = implied_a + implied_b
+    if total_implied <= 0:
+        return odds_a, odds_b, 0.0
+    true_prob_a = implied_a / total_implied
+    true_prob_b = implied_b / total_implied
+    fair_a = 1 / true_prob_a if true_prob_a else odds_a
+    fair_b = 1 / true_prob_b if true_prob_b else odds_b
+    vig_percent = max(0.0, (total_implied - 1.0) * 100)
+    return fair_a, fair_b, vig_percent
+
+
+def _calculate_edge_percent(soft_odds: float, fair_odds: float) -> float:
+    if fair_odds <= 0:
+        return 0.0
+    return (soft_odds / fair_odds - 1.0) * 100
+
+
+def _calculate_ev(true_probability: float, odds: float, stake: float) -> float:
+    true_probability = max(0.0, min(true_probability, 1.0))
+    win_amount = stake * (odds - 1.0)
+    lose_amount = stake
+    value = (true_probability * win_amount) - ((1.0 - true_probability) * lose_amount)
+    return round(value, 2)
+
+
+def _kelly_stake(
+    true_probability: float, odds: float, bankroll: float, fraction: float
+) -> Tuple[float, float, float]:
+    if bankroll <= 0 or odds <= 1:
+        return 0.0, 0.0
+    p = max(0.0, min(true_probability, 1.0))
+    q = 1.0 - p
+    b = odds - 1.0
+    if b <= 0:
+        return 0.0, 0.0
+    kelly_fraction = (b * p - q) / b
+    if kelly_fraction <= 0:
+        return 0.0, 0.0
+    fraction = max(0.0, min(fraction, 1.0))
+    recommended_fraction = kelly_fraction * fraction
+    stake = round(bankroll * recommended_fraction, 2)
+    return round(kelly_fraction * 100, 2), round(recommended_fraction * 100, 2), stake
