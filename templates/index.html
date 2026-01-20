@@ -20,6 +20,10 @@
         <span data-lang="en" class="active">EN</span>
         <span data-lang="zh">中文</span>
       </div>
+      <div class="odds-format" id="density-toggle" role="button" tabindex="0" aria-label="Toggle density">
+        <span data-density="comfort" class="active" data-i18n="density_comfort">Comfort</span>
+        <span data-density="compact" data-i18n="density_compact">Compact</span>
+      </div>
       <button class="icon-btn" id="theme-toggle" title="Toggle theme">🌙</button>
     </div>
   </header>
@@ -101,6 +105,31 @@
       <button type="button" class="tab-btn" data-tab="plus-ev" data-i18n="tab_plus_ev">+EV</button>
     </nav>
 
+    <section class="card arbitrage-config" id="arbitrage-config">
+      <div class="arbitrage-config-grid">
+        <div class="field">
+          <label class="field-label" data-i18n="arb_min_roi">Minimum Net ROI (%)</label>
+          <input type="number" id="min-roi-input" min="-5" max="10" step="0.1" value="0" />
+          <p class="helper" data-i18n="arb_min_roi_helper">Hide opportunities below this net ROI.</p>
+        </div>
+        <div class="field toggle-field">
+          <label class="field-label" data-i18n="filters_label">Filters</label>
+          <label class="checkbox">
+            <input type="checkbox" id="exchange-only-toggle" />
+            <span data-i18n="arb_exchange_only">Show exchange books only</span>
+          </label>
+        </div>
+        <div class="field">
+          <label class="field-label" data-i18n="sort_by">Sort By</label>
+          <select id="arbitrage-sort">
+            <option value="roi" data-i18n="sort_roi">Net ROI</option>
+            <option value="profit" data-i18n="sort_profit">Profit</option>
+            <option value="time" data-i18n="sort_time">Event time</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
     <section class="card middle-config hidden" id="middles-config">
       <div class="middle-config-grid">
         <div class="field">
@@ -167,6 +196,35 @@
       </div>
     </section>
 
+    <section class="card scan-status" id="scan-status">
+      <div class="scan-status-head">
+        <h3 data-i18n="scan_status_title">Scan Status</h3>
+      </div>
+      <div class="scan-status-grid">
+        <div class="status-chip" id="scan-status-chip" data-status="idle">
+          <span class="status-label" data-i18n="scan_status_label">Status</span>
+          <span id="scan-status-text">Idle</span>
+        </div>
+        <div class="status-chip">
+          <span class="status-label" data-i18n="scan_last_scan">Last Scan</span>
+          <span id="scan-last-time">-</span>
+        </div>
+        <div class="status-chip">
+          <span class="status-label" data-i18n="scan_api_calls">API Calls</span>
+          <span id="scan-api-calls">-</span>
+        </div>
+        <div class="status-chip">
+          <span class="status-label" data-i18n="scan_events">Events</span>
+          <span id="scan-events">-</span>
+        </div>
+        <div class="status-chip">
+          <span class="status-label" data-i18n="scan_sports">Sports</span>
+          <span id="scan-sports">-</span>
+        </div>
+      </div>
+      <div id="scan-errors" class="scan-errors hidden"></div>
+    </section>
+
     <section id="arbitrage-panel">
       <section class="stats-row">
         <div class="stat-card" id="stat-opps">
@@ -210,26 +268,28 @@
           <h3 data-i18n="opportunities_title">Opportunities</h3>
           <div class="table-meta">
             <span id="table-count">0 results</span>
-            <span class="muted" data-i18n="sorted_by_roi">Sorted by ROI</span>
+            <span class="muted" id="arb-sort-label" data-i18n="sorted_by_roi">Sorted by ROI</span>
           </div>
         </div>
-        <table id="results-table">
-          <thead>
-            <tr>
-              <th data-i18n="table_net_roi">Net ROI</th>
-              <th data-i18n="table_gross_roi">Gross ROI</th>
-              <th data-i18n="table_profit">Profit</th>
-              <th data-i18n="table_exchange">Exchange</th>
-              <th data-i18n="table_sport">Sport</th>
-              <th data-i18n="table_event">Event</th>
-              <th data-i18n="table_time">Time</th>
-              <th data-i18n="table_market">Market</th>
-              <th data-i18n="table_outcome_1">Outcome 1</th>
-              <th data-i18n="table_outcome_2">Outcome 2</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+        <div class="table-scroll">
+          <table id="results-table">
+            <thead>
+              <tr>
+                <th data-i18n="table_net_roi">Net ROI</th>
+                <th data-i18n="table_gross_roi">Gross ROI</th>
+                <th data-i18n="table_profit">Profit</th>
+                <th data-i18n="table_exchange">Exchange</th>
+                <th data-i18n="table_sport">Sport</th>
+                <th data-i18n="table_event">Event</th>
+                <th data-i18n="table_time">Time</th>
+                <th data-i18n="table_market">Market</th>
+                <th data-i18n="table_outcome_1">Outcome 1</th>
+                <th data-i18n="table_outcome_2">Outcome 2</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
         <div id="table-empty" class="empty" data-i18n="empty_arbitrage">No arbitrage opportunities yet.</div>
       </section>
     </section>
@@ -276,28 +336,30 @@
           <h3 data-i18n="middles_title">Middles</h3>
           <div class="table-meta">
             <span id="middles-table-count">0 results</span>
-            <span class="muted" data-i18n="sorted_by_ev">Sorted by EV</span>
+            <span class="muted" id="middles-sort-label" data-i18n="sorted_by_ev">Sorted by EV</span>
           </div>
         </div>
-        <table id="middles-table">
-          <thead>
-            <tr>
-              <th data-i18n="table_ev">EV</th>
-              <th data-i18n="table_prob">Prob</th>
-              <th data-i18n="table_gap">Gap</th>
-              <th data-i18n="table_sport">Sport</th>
-              <th data-i18n="table_event">Event</th>
-              <th data-i18n="table_time">Time</th>
-              <th data-i18n="table_market">Market</th>
-              <th data-i18n="table_side_a">Side A</th>
-              <th data-i18n="table_side_b">Side B</th>
-              <th data-i18n="table_middle">Middle</th>
-              <th data-i18n="table_win_both">Win Both</th>
-              <th data-i18n="table_miss">Miss</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+        <div class="table-scroll">
+          <table id="middles-table">
+            <thead>
+              <tr>
+                <th data-i18n="table_ev">EV</th>
+                <th data-i18n="table_prob">Prob</th>
+                <th data-i18n="table_gap">Gap</th>
+                <th data-i18n="table_sport">Sport</th>
+                <th data-i18n="table_event">Event</th>
+                <th data-i18n="table_time">Time</th>
+                <th data-i18n="table_market">Market</th>
+                <th data-i18n="table_side_a">Side A</th>
+                <th data-i18n="table_side_b">Side B</th>
+                <th data-i18n="table_middle">Middle</th>
+                <th data-i18n="table_win_both">Win Both</th>
+                <th data-i18n="table_miss">Miss</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
         <div id="middles-empty" class="empty" data-i18n="empty_middles">No middle opportunities meet your filters.</div>
       </section>
 
@@ -348,27 +410,29 @@
           <h3 data-i18n="plus_ev_title">+EV Opportunities</h3>
           <div class="table-meta">
             <span id="plus-ev-table-count">0 results</span>
-            <span class="muted" data-i18n="sorted_by_edge">Sorted by Edge</span>
+            <span class="muted" id="plus-ev-sort-label" data-i18n="sorted_by_edge">Sorted by Edge</span>
           </div>
         </div>
-        <table id="plus-ev-table">
-          <thead>
-            <tr>
-              <th data-i18n="table_edge">Edge</th>
-              <th data-i18n="table_ev_100">EV ($100)</th>
-              <th data-i18n="table_kelly">Kelly</th>
-              <th data-i18n="table_sport">Sport</th>
-              <th data-i18n="table_event">Event</th>
-              <th data-i18n="table_time">Time</th>
-              <th data-i18n="table_market">Market</th>
-              <th data-i18n="table_bet">Bet</th>
-              <th data-i18n="table_soft_odds">Soft Odds</th>
-              <th data-i18n="table_fair_odds">Fair Odds</th>
-              <th data-i18n="table_true_prob">True Prob</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+        <div class="table-scroll">
+          <table id="plus-ev-table">
+            <thead>
+              <tr>
+                <th data-i18n="table_edge">Edge</th>
+                <th data-i18n="table_ev_100">EV ($100)</th>
+                <th data-i18n="table_kelly">Kelly</th>
+                <th data-i18n="table_sport">Sport</th>
+                <th data-i18n="table_event">Event</th>
+                <th data-i18n="table_time">Time</th>
+                <th data-i18n="table_market">Market</th>
+                <th data-i18n="table_bet">Bet</th>
+                <th data-i18n="table_soft_odds">Soft Odds</th>
+                <th data-i18n="table_fair_odds">Fair Odds</th>
+                <th data-i18n="table_true_prob">True Prob</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
         <div id="plus-ev-empty" class="empty" data-i18n="empty_plus_ev">No +EV bets at the current thresholds.</div>
       </section>
 
@@ -405,6 +469,7 @@
     const summaryROI = document.getElementById('roi-bars');
     const summarySport = document.getElementById('sport-bars');
     const tableCount = document.getElementById('table-count');
+    const arbSortLabel = document.getElementById('arb-sort-label');
     const statOpps = document.querySelector('#stat-opps .stat-value');
     const statEvents = document.querySelector('#stat-events .stat-value');
     const statSports = document.querySelector('#stat-sports .stat-value');
@@ -433,6 +498,7 @@
     const middleKeyCard = document.getElementById('middles-key-card');
     const middlesTableBody = document.querySelector('#middles-table tbody');
     const middlesTableCount = document.getElementById('middles-table-count');
+    const middlesSortLabel = document.getElementById('middles-sort-label');
     const middlesEmpty = document.getElementById('middles-empty');
     const sharpSelect = document.getElementById('sharp-book-select');
     const minEdgeInput = document.getElementById('min-edge-input');
@@ -448,14 +514,28 @@
     const plusEvEdgeBars = document.getElementById('plus-ev-edge-bars');
     const plusEvTableBody = document.querySelector('#plus-ev-table tbody');
     const plusEvTableCount = document.getElementById('plus-ev-table-count');
+    const plusEvSortLabel = document.getElementById('plus-ev-sort-label');
     const plusEvEmpty = document.getElementById('plus-ev-empty');
     const oddsToggle = document.getElementById('odds-toggle');
     const languageToggle = document.getElementById('language-toggle');
+    const densityToggle = document.getElementById('density-toggle');
+    const arbitrageConfig = document.getElementById('arbitrage-config');
+    const minRoiInput = document.getElementById('min-roi-input');
+    const exchangeOnlyToggle = document.getElementById('exchange-only-toggle');
+    const arbitrageSortSelect = document.getElementById('arbitrage-sort');
+    const scanStatusChip = document.getElementById('scan-status-chip');
+    const scanStatusText = document.getElementById('scan-status-text');
+    const scanLastTime = document.getElementById('scan-last-time');
+    const scanApiCalls = document.getElementById('scan-api-calls');
+    const scanEvents = document.getElementById('scan-events');
+    const scanSports = document.getElementById('scan-sports');
+    const scanErrors = document.getElementById('scan-errors');
     const defaultCommissionPercent = parseFloat(commissionInput.value) || 5;
     let lastCommissionRate = defaultCommissionPercent / 100;
     let lastScanData = null;
     let activeTab = 'arbitrage';
     let oddsFormat = localStorage.getItem('edge-odds-format') || 'decimal';
+    let densityMode = localStorage.getItem('edge-density') || 'comfort';
     let isScanning = false;
     let lastStatus = null;
 
@@ -466,6 +546,7 @@
         odds_american: 'American',
         toggle_theme: 'Toggle theme',
         toggle_language: 'Toggle language',
+        toggle_density: 'Toggle density',
         api_key_label: 'API Key',
         env_key_notice: '✓ Using API key from .env',
         api_key_show: 'Show API key',
@@ -483,14 +564,21 @@
         scan_now: 'Scan Now',
         scanning: 'Scanning...',
         scanning_wait: 'Scanning, please wait...',
+        density_comfort: 'Comfort',
+        density_compact: 'Compact',
         tab_arbitrage: 'Arbitrage',
         tab_middles: 'Middles',
         tab_plus_ev: '+EV',
+        arb_min_roi: 'Minimum Net ROI (%)',
+        arb_min_roi_helper: 'Hide opportunities below this net ROI.',
+        arb_exchange_only: 'Show exchange books only',
         middle_min_gap: 'Minimum Gap (points)',
         middle_min_gap_helper: 'Only show middles with at least this many points between the lines.',
         filters_label: 'Filters',
         positive_ev_only: 'Show only positive EV middles',
         sort_by: 'Sort By',
+        sort_roi: 'Net ROI',
+        sort_profit: 'Profit',
         sort_ev: 'Estimated EV',
         sort_probability: 'Probability',
         sort_gap: 'Gap size',
@@ -520,6 +608,18 @@
         stat_avg_edge: 'Avg Edge',
         stat_best_edge: 'Best Edge',
         stat_total_ev: 'Total EV ($100)',
+        scan_status_title: 'Scan Status',
+        scan_status_label: 'Status',
+        scan_last_scan: 'Last Scan',
+        scan_api_calls: 'API Calls',
+        scan_events: 'Events',
+        scan_sports: 'Sports',
+        status_idle: 'Idle',
+        status_ready: 'Ready',
+        status_scanning: 'Scanning',
+        status_error: 'Error',
+        status_partial: 'Partial',
+        scan_errors: '<strong>Errors:</strong> {details}',
         by_roi_band: 'By ROI Band',
         by_sport: 'By Sport',
         by_edge_band: 'By Edge Band',
@@ -530,6 +630,12 @@
         sorted_by_roi: 'Sorted by ROI',
         sorted_by_ev: 'Sorted by EV',
         sorted_by_edge: 'Sorted by Edge',
+        sorted_by_profit: 'Sorted by Profit',
+        sorted_by_time: 'Sorted by Time',
+        sorted_by_probability: 'Sorted by Probability',
+        sorted_by_gap: 'Sorted by Gap',
+        sorted_by_kelly: 'Sorted by Kelly',
+        sorted_by_ev_value: 'Sorted by EV',
         table_net_roi: 'Net ROI',
         table_gross_roi: 'Gross ROI',
         table_profit: 'Profit',
@@ -570,6 +676,7 @@
         summary_regions_suffix: ' | Regions: {regions}',
         summary_commission: 'Exchange commission applied: {commission}.',
         summary_roi_note: 'ROI = return on total stake. 2% ROI means $2 profit on a $100 stake.',
+        filters_applied: 'Showing {shown} of {total} opportunities after filters.',
         middle_summary_counts: 'Middles matching filters: {count}, with {positive} positive EV.',
         middle_summary_avg: 'Average EV: {avg}{best}',
         middle_summary_best: ' | Best: {event}',
@@ -604,6 +711,7 @@
         odds_american: '美式',
         toggle_theme: '切换主题',
         toggle_language: '切换语言',
+        toggle_density: '切换密度',
         api_key_label: 'API 密钥',
         env_key_notice: '✓ 使用 .env 中的 API 密钥',
         api_key_show: '显示 API 密钥',
@@ -621,14 +729,21 @@
         scan_now: '开始扫描',
         scanning: '扫描中...',
         scanning_wait: '正在扫描，请稍候...',
+        density_comfort: '舒适',
+        density_compact: '紧凑',
         tab_arbitrage: '套利',
         tab_middles: '中间盘',
         tab_plus_ev: '+EV',
+        arb_min_roi: '最小净 ROI (%)',
+        arb_min_roi_helper: '隐藏低于该净 ROI 的机会。',
+        arb_exchange_only: '仅显示交易所书商',
         middle_min_gap: '最小间隔（分）',
         middle_min_gap_helper: '仅显示盘口差至少达到该分数的中间盘。',
         filters_label: '筛选',
         positive_ev_only: '仅显示正 EV 的中间盘',
         sort_by: '排序',
+        sort_roi: '净 ROI',
+        sort_profit: '利润',
         sort_ev: '预计 EV',
         sort_probability: '概率',
         sort_gap: '间隔大小',
@@ -658,6 +773,18 @@
         stat_avg_edge: '平均 Edge',
         stat_best_edge: '最高 Edge',
         stat_total_ev: '总 EV（$100）',
+        scan_status_title: '扫描状态',
+        scan_status_label: '状态',
+        scan_last_scan: '上次扫描',
+        scan_api_calls: 'API 调用',
+        scan_events: '赛事数',
+        scan_sports: '项目数',
+        status_idle: '空闲',
+        status_ready: '就绪',
+        status_scanning: '扫描中',
+        status_error: '错误',
+        status_partial: '部分结果',
+        scan_errors: '<strong>错误：</strong>{details}',
         by_roi_band: '按 ROI 区间',
         by_sport: '按项目',
         by_edge_band: '按 Edge 区间',
@@ -668,6 +795,12 @@
         sorted_by_roi: '按 ROI 排序',
         sorted_by_ev: '按 EV 排序',
         sorted_by_edge: '按 Edge 排序',
+        sorted_by_profit: '按利润排序',
+        sorted_by_time: '按时间排序',
+        sorted_by_probability: '按概率排序',
+        sorted_by_gap: '按间隔排序',
+        sorted_by_kelly: '按凯利排序',
+        sorted_by_ev_value: '按 EV 排序',
         table_net_roi: '净 ROI',
         table_gross_roi: '总 ROI',
         table_profit: '利润',
@@ -708,6 +841,7 @@
         summary_regions_suffix: ' | 地区：{regions}',
         summary_commission: '已计入交易所手续费：{commission}。',
         summary_roi_note: 'ROI 为总下注回报率。2% ROI 意味着下注 $100 约盈利 $2。',
+        filters_applied: '筛选后显示 {shown}/{total} 个机会。',
         middle_summary_counts: '符合筛选的中间盘：{count}，其中 {positive} 为正 EV。',
         middle_summary_avg: '平均 EV：{avg}{best}',
         middle_summary_best: ' | 最佳：{event}',
@@ -793,6 +927,7 @@
     }
     let activeLocale = activeLanguage === 'zh' ? 'zh-CN' : 'en-US';
     currencyFormatter = createCurrencyFormatter(activeLocale);
+    document.documentElement.dataset.density = densityMode;
 
     function t(key, params = {}) {
       const table = TRANSLATIONS[activeLanguage] || TRANSLATIONS.en || {};
@@ -824,15 +959,25 @@
       if (languageToggle) {
         languageToggle.setAttribute('aria-label', t('toggle_language'));
       }
+      if (densityToggle) {
+        densityToggle.setAttribute('aria-label', t('toggle_density'));
+      }
       updateLanguageToggle();
       updateOddsToggle();
+      updateDensityToggle();
       updateSportLabels();
       updateRegionLabels();
       updateKellyOptions();
       updateToggleKeyLabel();
       updateScanButtonText();
+      updateArbSortLabel();
+      updateMiddlesSortLabel();
+      updatePlusEvSortLabel();
       refreshStatus();
       setActiveTab(activeTab);
+      applyScanStatus(scanStatusChip ? scanStatusChip.dataset.status : 'idle');
+      updateScanMeta(lastScanData);
+      renderPartialWarning(lastScanData);
     }
 
     function setLanguage(nextLang) {
@@ -851,6 +996,14 @@
       languageToggle.querySelectorAll('span').forEach((span) => {
         span.classList.toggle('active', span.dataset.lang === activeLanguage);
       });
+    }
+
+    function updateDensityToggle() {
+      if (!densityToggle) return;
+      densityToggle.querySelectorAll('span').forEach((span) => {
+        span.classList.toggle('active', span.dataset.density === densityMode);
+      });
+      document.documentElement.dataset.density = densityMode;
     }
 
     function updateScanButtonText() {
@@ -918,6 +1071,14 @@
       return map[key] || fallback;
     }
 
+    function formatRegionList(regions) {
+      if (!Array.isArray(regions) || !regions.length) return '';
+      if (activeLanguage === 'zh') {
+        return regions.map((region) => translateRegionKey(region, region)).join(', ');
+      }
+      return regions.map((region) => String(region).toUpperCase()).join(', ');
+    }
+
     function translateMarketLabel(market) {
       if (!market || activeLanguage !== 'zh') return market || '';
       const map = MARKET_LABELS[activeLanguage] || {};
@@ -947,6 +1108,80 @@
         statusEl.textContent = message;
       }
       statusEl.className = type ? `status ${type}` : 'status';
+    }
+
+    function statusKeyForState(state) {
+      switch (state) {
+        case 'ready':
+          return 'status_ready';
+        case 'scanning':
+          return 'status_scanning';
+        case 'error':
+          return 'status_error';
+        case 'partial':
+          return 'status_partial';
+        case 'idle':
+        default:
+          return 'status_idle';
+      }
+    }
+
+    function applyScanStatus(state) {
+      if (!scanStatusChip || !scanStatusText) return;
+      const normalized = state || 'idle';
+      scanStatusChip.dataset.status = normalized;
+      scanStatusText.textContent = t(statusKeyForState(normalized));
+    }
+
+    function updateScanMeta(payload) {
+      if (!scanLastTime || !scanApiCalls || !scanEvents || !scanSports) return;
+      if (!payload || !payload.arbitrage?.summary) {
+        scanLastTime.textContent = '-';
+        scanApiCalls.textContent = '-';
+        scanEvents.textContent = '-';
+        scanSports.textContent = '-';
+        return;
+      }
+      const summary = payload.arbitrage.summary;
+      scanLastTime.textContent = formatDateTime(payload.scan_time);
+      scanApiCalls.textContent = summary.api_calls_used ?? '-';
+      scanEvents.textContent = summary.events_scanned ?? '-';
+      scanSports.textContent = summary.sports_scanned ?? '-';
+    }
+
+    function updateArbSortLabel() {
+      if (!arbSortLabel) return;
+      const keyMap = {
+        roi: 'sorted_by_roi',
+        profit: 'sorted_by_profit',
+        time: 'sorted_by_time',
+      };
+      const sortKey = arbitrageSortSelect ? arbitrageSortSelect.value || 'roi' : 'roi';
+      arbSortLabel.textContent = t(keyMap[sortKey] || 'sorted_by_roi');
+    }
+
+    function updateMiddlesSortLabel() {
+      if (!middlesSortLabel) return;
+      const keyMap = {
+        ev: 'sorted_by_ev',
+        probability: 'sorted_by_probability',
+        gap: 'sorted_by_gap',
+        time: 'sorted_by_time',
+      };
+      const sortKey = middleSortSelect.value || 'ev';
+      middlesSortLabel.textContent = t(keyMap[sortKey] || 'sorted_by_ev');
+    }
+
+    function updatePlusEvSortLabel() {
+      if (!plusEvSortLabel) return;
+      const keyMap = {
+        edge: 'sorted_by_edge',
+        ev: 'sorted_by_ev_value',
+        kelly: 'sorted_by_kelly',
+        time: 'sorted_by_time',
+      };
+      const sortKey = plusEvSortSelect.value || 'edge';
+      plusEvSortLabel.textContent = t(keyMap[sortKey] || 'sorted_by_edge');
     }
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -999,6 +1234,16 @@
       });
     }
 
+    if (densityToggle) {
+      densityToggle.addEventListener('click', (event) => {
+        const target = event.target;
+        const selected = target && target.dataset ? target.dataset.density : null;
+        densityMode = selected || (densityMode === 'comfort' ? 'compact' : 'comfort');
+        localStorage.setItem('edge-density', densityMode);
+        updateDensityToggle();
+      });
+    }
+
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         const target = tab.dataset.tab;
@@ -1045,6 +1290,9 @@
       }
     });
 
+    if (minRoiInput) minRoiInput.addEventListener('input', () => renderArbitrage());
+    if (exchangeOnlyToggle) exchangeOnlyToggle.addEventListener('change', () => renderArbitrage());
+    if (arbitrageSortSelect) arbitrageSortSelect.addEventListener('change', () => renderArbitrage());
     minGapInput.addEventListener('input', () => renderMiddles());
     positiveEvToggle.addEventListener('change', () => renderMiddles());
     middleSortSelect.addEventListener('change', () => renderMiddles());
@@ -1106,6 +1354,9 @@
       statusEl.textContent = nextState ? t('scanning_wait') : '';
       statusEl.className = 'status';
       lastStatus = nextState ? { key: 'scanning_wait', params: {}, type: null } : null;
+      if (nextState) {
+        applyScanStatus('scanning');
+      }
     }
 
     function showStatus(message, type, key = null, params = {}) {
@@ -1127,23 +1378,64 @@
       renderMiddles();
       renderPlusEv();
       renderPartialWarning(payload);
+      if (payload) {
+        applyScanStatus(payload.partial ? 'partial' : 'ready');
+      } else {
+        applyScanStatus('error');
+      }
+      updateScanMeta(payload);
     }
 
     function renderArbitrage() {
       const arbData = lastScanData?.arbitrage;
       const opportunities = arbData?.opportunities || [];
       const stakeValue = parseFloat(stakeInput.value) || 0;
+      const minRoiValue = minRoiInput ? minRoiInput.value : 0;
+      const minRoi = Number.isFinite(parseFloat(minRoiValue)) ? parseFloat(minRoiValue) : 0;
+      const exchangeOnly = exchangeOnlyToggle ? exchangeOnlyToggle.checked : false;
+      const sortKey = arbitrageSortSelect ? arbitrageSortSelect.value || 'roi' : 'roi';
+      updateArbSortLabel();
+      const prepared = opportunities.map((opp) => {
+        const calcNet = calculateStakes(opp, stakeValue, true);
+        const netRoi = calcNet?.roi_percent ?? opp.roi_percent ?? 0;
+        const profitValue = calcNet?.guaranteed_profit ?? 0;
+        const timeValue = opp.commence_time ? new Date(opp.commence_time).getTime() : 0;
+        return {
+          opp,
+          calcNet,
+          netRoi,
+          profitValue,
+          timeValue,
+        };
+      });
+      const filtered = prepared.filter((item) => {
+        if (item.netRoi < minRoi) return false;
+        if (exchangeOnly && !item.opp.has_exchange) return false;
+        return true;
+      });
+      filtered.sort((a, b) => {
+        switch (sortKey) {
+          case 'profit':
+            return (b.profitValue || 0) - (a.profitValue || 0);
+          case 'time':
+            return (a.timeValue || 0) - (b.timeValue || 0);
+          case 'roi':
+          default:
+            return (b.netRoi || 0) - (a.netRoi || 0);
+        }
+      });
       resultsBody.innerHTML = '';
-      tableCount.textContent = t('results_count', { count: opportunities.length });
-      if (!opportunities.length) {
+      tableCount.textContent = t('results_count', { count: filtered.length });
+      if (!filtered.length) {
         emptyState.classList.remove('hidden');
       } else {
         emptyState.classList.add('hidden');
         let runningProfit = 0;
-        opportunities.forEach((opp) => {
+        filtered.forEach((entry) => {
+          const opp = entry.opp;
           const row = document.createElement('tr');
-          const calcNet = calculateStakes(opp, stakeValue, true);
-          const netRoi = calcNet?.roi_percent ?? opp.roi_percent;
+          const calcNet = entry.calcNet;
+          const netRoi = entry.netRoi;
           row.classList.add(roiBandClass(netRoi));
           const commence = formatDateTime(opp.commence_time);
           const calcGross = opp.has_exchange ? calculateStakes(opp, stakeValue, false) : null;
@@ -1152,7 +1444,7 @@
           if (netNegative) row.classList.add('roi-negative');
           if (opp.has_exchange) row.classList.add('has-exchange');
           const breakdown = calcNet?.breakdown || [];
-          const profitValue = calcNet?.guaranteed_profit ?? 0;
+          const profitValue = entry.profitValue ?? 0;
           runningProfit += profitValue || 0;
           const profitClass = profitValue > 0 ? 'gain' : profitValue < 0 ? 'loss' : '';
           const grossCell = opp.has_exchange ? formatRoiBadge(grossRoi) : '';
@@ -1171,28 +1463,31 @@
           resultsBody.appendChild(row);
         });
         tableCount.textContent = t('results_profit', {
-          count: opportunities.length,
+          count: filtered.length,
           profit: formatCurrency(runningProfit),
         });
       }
       const summary = arbData?.summary;
       if (summary) {
-        statOpps.textContent = arbData.opportunities_count || opportunities.length;
+        statOpps.textContent = filtered.length;
         statEvents.textContent = summary.events_scanned;
         statSports.textContent = summary.sports_scanned;
         statCalls.textContent = summary.api_calls_used;
-        const totalProfit = opportunities.reduce((sum, opp) => {
-          const calc = calculateStakes(opp, parseFloat(stakeInput.value) || stakeValue, true);
-          return sum + (calc?.guaranteed_profit || 0);
-        }, 0);
+        const totalProfit = filtered.reduce((sum, item) => sum + (item.profitValue || 0), 0);
         renderBars(summaryROI, summary.by_roi_band, 'roi');
-        renderBars(summarySport, summary.by_sport, 'sport');
-        const totalStaked = stakeValue > 0 ? stakeValue * opportunities.length : 0;
+        const filteredBySport = filtered.reduce((acc, item) => {
+          const sport = item.opp.sport_display || item.opp.sport || 'Other';
+          acc[sport] = (acc[sport] || 0) + 1;
+          return acc;
+        }, {});
+        renderBars(summarySport, filteredBySport, 'sport');
+        const totalStaked = stakeValue > 0 ? stakeValue * filtered.length : 0;
         const commissionPercent = formatCommissionPercent(lastCommissionRate);
-        const regionsLabel = Array.isArray(lastScanData?.regions) && lastScanData.regions.length
-          ? lastScanData.regions.join(', ').toUpperCase()
-          : '';
-        const countText = `<strong>${arbData.opportunities_count || opportunities.length}</strong>`;
+        const regionsLabel = formatRegionList(lastScanData?.regions);
+        const totalCount = arbData.opportunities_count || opportunities.length;
+        const filtersActive = exchangeOnly || minRoi > 0;
+        const shownCount = filtersActive ? filtered.length : totalCount;
+        const countText = `<strong>${shownCount}</strong>`;
         const eventsText = `<strong>${summary.events_scanned}</strong>`;
         const sportsText = `<strong>${summary.sports_scanned}</strong>`;
         const profitText = `<strong>${formatCurrency(totalProfit)}</strong>`;
@@ -1201,6 +1496,10 @@
           : '';
         const regionsSuffix = regionsLabel ? t('summary_regions_suffix', { regions: regionsLabel }) : '';
         const callsText = t('summary_calls', { calls: summary.api_calls_used, regions: regionsSuffix });
+        const filtersNote =
+          filtersActive && totalCount !== filtered.length
+            ? `<p class="helper">${t('filters_applied', { shown: filtered.length, total: totalCount })}</p>`
+            : '';
         summaryEl.classList.remove('hidden');
         summaryEl.innerHTML = `
           <h3>${t('summary_title')}</h3>
@@ -1209,6 +1508,7 @@
           <p>${callsText}</p>
           <p>${t('summary_commission', { commission: commissionPercent })}</p>
           <p class="helper">${t('summary_roi_note')}</p>
+          ${filtersNote}
         `;
       } else {
         statOpps.textContent = statEvents.textContent = statSports.textContent = statCalls.textContent = '0';
@@ -1225,6 +1525,7 @@
       const minGap = parseFloat(minGapInput.value) || 0;
       const positiveOnly = positiveEvToggle.checked;
       const sortKey = middleSortSelect.value || 'ev';
+      updateMiddlesSortLabel();
       const scannedStake = data?.stake_amount || 0;
       const desiredStake = parseFloat(stakeInput.value) || scannedStake || 100;
       const stakeRatio = scannedStake > 0 ? desiredStake / scannedStake : 1;
@@ -1326,6 +1627,7 @@
       const bankroll = parseFloat(bankrollInput.value) || appConfig.defaultBankroll || 1000;
       const kellyFraction = parseFloat(kellySelect.value) || appConfig.defaultKellyFraction || 0.25;
       const sortKey = plusEvSortSelect.value || 'edge';
+      updatePlusEvSortLabel();
       const filtered = opportunities.filter((opp) => (opp.edge_percent || 0) >= minEdge);
       filtered.sort((a, b) => {
         switch (sortKey) {
@@ -1568,9 +1870,17 @@
           .join(', ');
         partialWarning.innerHTML = t('partial_results', { details });
         partialWarning.classList.remove('hidden');
+        if (scanErrors) {
+          scanErrors.innerHTML = t('scan_errors', { details });
+          scanErrors.classList.remove('hidden');
+        }
       } else {
         partialWarning.classList.add('hidden');
         partialWarning.textContent = '';
+        if (scanErrors) {
+          scanErrors.classList.add('hidden');
+          scanErrors.textContent = '';
+        }
       }
     }
 
@@ -1595,6 +1905,9 @@
       arbitragePanel.classList.toggle('hidden', tab !== 'arbitrage');
       middlesPanel.classList.toggle('hidden', tab !== 'middles');
       plusEvPanel.classList.toggle('hidden', tab !== 'plus-ev');
+      if (arbitrageConfig) {
+        arbitrageConfig.classList.toggle('hidden', tab !== 'arbitrage');
+      }
       middlesConfig.classList.toggle('hidden', tab !== 'middles');
       plusEvConfig.classList.toggle('hidden', tab !== 'plus-ev');
       if (tab === 'arbitrage') {
