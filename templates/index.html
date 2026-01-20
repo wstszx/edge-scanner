@@ -9,12 +9,16 @@
   <header class="app-header">
     <div>
       <h1>Edge Scanner</h1>
-      <p>Arbitrage • Middles • +EV</p>
+      <p data-i18n="tagline">Arbitrage • Middles • +EV</p>
     </div>
     <div class="header-controls">
       <div class="odds-format" id="odds-toggle" role="button" tabindex="0">
-        <span data-format="decimal" class="active">Decimal</span>
-        <span data-format="american">American</span>
+        <span data-format="decimal" class="active" data-i18n="odds_decimal">Decimal</span>
+        <span data-format="american" data-i18n="odds_american">American</span>
+      </div>
+      <div class="odds-format" id="language-toggle" role="button" tabindex="0" aria-label="Toggle language">
+        <span data-lang="en" class="active">EN</span>
+        <span data-lang="zh">中文</span>
       </div>
       <button class="icon-btn" id="theme-toggle" title="Toggle theme">🌙</button>
     </div>
@@ -26,12 +30,12 @@
         <div class="config-grid">
           {% if has_env_key %}
           <div class="field">
-            <label class="field-label">API Key</label>
-            <div class="env-key-notice">✓ Using API key from .env</div>
+            <label class="field-label" data-i18n="api_key_label">API Key</label>
+            <div class="env-key-notice" data-i18n="env_key_notice">✓ Using API key from .env</div>
           </div>
           {% else %}
           <div class="field">
-            <label class="field-label">API Key</label>
+            <label class="field-label" data-i18n="api_key_label">API Key</label>
             <div class="input-wrap">
               <input type="password" id="api-key" placeholder="sk_xxx" required />
               <button type="button" id="toggle-key" class="icon-btn" aria-label="Show API key">👁</button>
@@ -39,85 +43,85 @@
           </div>
           {% endif %}
           <div class="field">
-            <label class="field-label">Total Stake ($)</label>
+            <label class="field-label" data-i18n="total_stake_label">Total Stake ($)</label>
             <input type="number" id="stake-input" min="1" step="1" value="100" />
-            <p class="helper">Used for arbitrage + middles stake splits.</p>
+            <p class="helper" data-i18n="stake_helper">Used for arbitrage + middles stake splits.</p>
           </div>
           <div class="field">
-            <label class="field-label">Sports</label>
+            <label class="field-label" data-i18n="sports_label">Sports</label>
             <div id="sports-list" class="sports-grid">
               {% for sport in default_sports %}
               <label class="checkbox">
                 <input type="checkbox" name="sports" value="{{ sport.key }}" checked />
-                <span>{{ sport.label }}</span>
+                <span data-sport-key="{{ sport.key }}">{{ sport.label }}</span>
               </label>
               {% endfor %}
             </div>
             <label class="checkbox all-toggle">
               <input type="checkbox" id="all-sports" />
-              <span>Scan all active sports (uses more API credits)</span>
+              <span data-i18n="all_sports_label">Scan all active sports (uses more API credits)</span>
             </label>
-            <p class="helper">Each selected sport consumes one API request.</p>
+            <p class="helper" data-i18n="sports_helper">Each selected sport consumes one API request.</p>
           </div>
           <div class="field">
-            <label class="field-label">Regions</label>
+            <label class="field-label" data-i18n="regions_label">Regions</label>
             <div id="regions-list" class="regions-grid">
               {% for region in region_options %}
               <label class="checkbox">
                 <input type="checkbox" name="regions" value="{{ region.key }}" {% if region.default %}checked{% endif %} />
-                <span>{{ region.label }}</span>
+                <span data-region-key="{{ region.key }}">{{ region.label }}</span>
               </label>
               {% endfor %}
             </div>
-            <p class="helper">Select at least one region. EU is always included for sharp reference.</p>
+            <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included for sharp reference.</p>
           </div>
           <div class="field commission-field">
             <div class="commission-box">
               <div>
-                <label class="field-label">Exchange Commission (%)</label>
-                <p class="helper">Applied to Betfair, Matchbook, Sportsbet Exchange, etc.</p>
+                <label class="field-label" data-i18n="commission_label">Exchange Commission (%)</label>
+                <p class="helper" data-i18n="commission_helper">Applied to Betfair, Matchbook, Sportsbet Exchange, etc.</p>
               </div>
               <div class="input-wrap">
                 <input type="number" id="commission-input" min="0" max="15" step="0.5" value="{{ default_commission_percent }}" />
               </div>
-              <p class="helper">Net ROI/EV already reflects this commission.</p>
+              <p class="helper" data-i18n="commission_note">Net ROI/EV already reflects this commission.</p>
             </div>
           </div>
         </div>
         <div class="actions">
-          <button type="submit" id="scan-btn">Scan Now</button>
+          <button type="submit" id="scan-btn" data-i18n="scan_now">Scan Now</button>
           <div id="status" class="status"></div>
         </div>
       </form>
     </section>
 
     <nav class="tabs">
-      <button type="button" class="tab-btn active" data-tab="arbitrage">Arbitrage</button>
-      <button type="button" class="tab-btn" data-tab="middles">Middles</button>
-      <button type="button" class="tab-btn" data-tab="plus-ev">+EV</button>
+      <button type="button" class="tab-btn active" data-tab="arbitrage" data-i18n="tab_arbitrage">Arbitrage</button>
+      <button type="button" class="tab-btn" data-tab="middles" data-i18n="tab_middles">Middles</button>
+      <button type="button" class="tab-btn" data-tab="plus-ev" data-i18n="tab_plus_ev">+EV</button>
     </nav>
 
     <section class="card middle-config hidden" id="middles-config">
       <div class="middle-config-grid">
         <div class="field">
-          <label class="field-label">Minimum Gap (points)</label>
+          <label class="field-label" data-i18n="middle_min_gap">Minimum Gap (points)</label>
           <input type="number" id="min-gap-input" min="0" max="10" step="0.5" value="1.5" />
-          <p class="helper">Only show middles with at least this many points between the lines.</p>
+          <p class="helper" data-i18n="middle_min_gap_helper">Only show middles with at least this many points between the lines.</p>
         </div>
         <div class="field toggle-field">
-          <label class="field-label">Filters</label>
+          <label class="field-label" data-i18n="filters_label">Filters</label>
           <label class="checkbox">
             <input type="checkbox" id="positive-ev-toggle" checked />
-            <span>Show only positive EV middles</span>
+            <span data-i18n="positive_ev_only">Show only positive EV middles</span>
           </label>
         </div>
         <div class="field">
-          <label class="field-label">Sort By</label>
+          <label class="field-label" data-i18n="sort_by">Sort By</label>
           <select id="middle-sort">
-            <option value="ev">Estimated EV</option>
-            <option value="probability">Probability</option>
-            <option value="gap">Gap size</option>
-            <option value="time">Event time</option>
+            <option value="ev" data-i18n="sort_ev">Estimated EV</option>
+            <option value="probability" data-i18n="sort_probability">Probability</option>
+            <option value="gap" data-i18n="sort_gap">Gap size</option>
+            <option value="time" data-i18n="sort_time">Event time</option>
           </select>
         </div>
       </div>
@@ -126,38 +130,38 @@
     <section class="card plus-config hidden" id="plus-ev-config">
       <div class="plus-config-grid">
         <div class="field">
-          <label class="field-label">Sharp Reference Book</label>
+          <label class="field-label" data-i18n="sharp_reference_book">Sharp Reference Book</label>
           <select id="sharp-book-select">
             {% for book in sharp_books %}
             <option value="{{ book.key }}" {% if book.key == default_sharp_book %}selected{% endif %}>{{ book.name }}</option>
             {% endfor %}
           </select>
-          <p class="helper">Used as the "true" odds source. Pinnacle recommended.</p>
+          <p class="helper" data-i18n="sharp_book_helper">Used as the "true" odds source. Pinnacle recommended.</p>
         </div>
         <div class="field">
-          <label class="field-label">Minimum Edge (%)</label>
+          <label class="field-label" data-i18n="min_edge_label">Minimum Edge (%)</label>
           <input type="number" id="min-edge-input" min="0" max="20" step="0.5" value="{{ default_min_edge_percent }}" />
-          <p class="helper">Filter +EV bets below this edge.</p>
+          <p class="helper" data-i18n="min_edge_helper">Filter +EV bets below this edge.</p>
         </div>
         <div class="field">
-          <label class="field-label">Kelly Staking</label>
+          <label class="field-label" data-i18n="kelly_staking">Kelly Staking</label>
           <div class="kelly-grid">
             <input type="number" id="bankroll-input" min="0" step="50" value="{{ default_bankroll }}" />
             <select id="kelly-select">
               {% for opt in kelly_options %}
-              <option value="{{ opt.value }}" {% if opt.value == default_kelly_fraction %}selected{% endif %}>{{ opt.label }}</option>
+              <option value="{{ opt.value }}" data-kelly-value="{{ opt.value }}" {% if opt.value == default_kelly_fraction %}selected{% endif %}>{{ opt.label }}</option>
               {% endfor %}
             </select>
           </div>
-          <p class="helper">Bankroll + Kelly fraction are not persisted between scans.</p>
+          <p class="helper" data-i18n="kelly_helper">Bankroll + Kelly fraction are not persisted between scans.</p>
         </div>
         <div class="field">
-          <label class="field-label">Sort By</label>
+          <label class="field-label" data-i18n="sort_by">Sort By</label>
           <select id="plus-ev-sort">
-            <option value="edge">Edge %</option>
-            <option value="ev">EV ($)</option>
-            <option value="kelly">Kelly stake</option>
-            <option value="time">Event time</option>
+            <option value="edge" data-i18n="sort_edge">Edge %</option>
+            <option value="ev" data-i18n="sort_ev_value">EV ($)</option>
+            <option value="kelly" data-i18n="sort_kelly">Kelly stake</option>
+            <option value="time" data-i18n="sort_time">Event time</option>
           </select>
         </div>
       </div>
@@ -166,19 +170,19 @@
     <section id="arbitrage-panel">
       <section class="stats-row">
         <div class="stat-card" id="stat-opps">
-          <span class="stat-label">Opportunities</span>
+          <span class="stat-label" data-i18n="stat_opportunities">Opportunities</span>
           <span class="stat-value">0</span>
         </div>
         <div class="stat-card" id="stat-events">
-          <span class="stat-label">Events Scanned</span>
+          <span class="stat-label" data-i18n="stat_events_scanned">Events Scanned</span>
           <span class="stat-value">0</span>
         </div>
         <div class="stat-card" id="stat-sports">
-          <span class="stat-label">Sports</span>
+          <span class="stat-label" data-i18n="stat_sports">Sports</span>
           <span class="stat-value">0</span>
         </div>
         <div class="stat-card" id="stat-calls">
-          <span class="stat-label">API Calls</span>
+          <span class="stat-label" data-i18n="stat_api_calls">API Calls</span>
           <span class="stat-value">0</span>
         </div>
       </section>
@@ -189,13 +193,13 @@
       <section class="summary-grid">
         <div class="card summary-card" id="roi-card">
           <div class="card-head">
-            <h3>By ROI Band</h3>
+            <h3 data-i18n="by_roi_band">By ROI Band</h3>
           </div>
           <div id="roi-bars" class="bar-list"></div>
         </div>
         <div class="card summary-card" id="sport-card">
           <div class="card-head">
-            <h3>By Sport</h3>
+            <h3 data-i18n="by_sport">By Sport</h3>
           </div>
           <div id="sport-bars" class="bar-list"></div>
         </div>
@@ -203,49 +207,49 @@
 
       <section class="card results-card">
         <div class="card-head">
-          <h3>Opportunities</h3>
+          <h3 data-i18n="opportunities_title">Opportunities</h3>
           <div class="table-meta">
             <span id="table-count">0 results</span>
-            <span class="muted">Sorted by ROI</span>
+            <span class="muted" data-i18n="sorted_by_roi">Sorted by ROI</span>
           </div>
         </div>
         <table id="results-table">
           <thead>
             <tr>
-              <th>Net ROI</th>
-              <th>Gross ROI</th>
-              <th>Profit</th>
-              <th>Exchange</th>
-              <th>Sport</th>
-              <th>Event</th>
-              <th>Time</th>
-              <th>Market</th>
-              <th>Outcome 1</th>
-              <th>Outcome 2</th>
+              <th data-i18n="table_net_roi">Net ROI</th>
+              <th data-i18n="table_gross_roi">Gross ROI</th>
+              <th data-i18n="table_profit">Profit</th>
+              <th data-i18n="table_exchange">Exchange</th>
+              <th data-i18n="table_sport">Sport</th>
+              <th data-i18n="table_event">Event</th>
+              <th data-i18n="table_time">Time</th>
+              <th data-i18n="table_market">Market</th>
+              <th data-i18n="table_outcome_1">Outcome 1</th>
+              <th data-i18n="table_outcome_2">Outcome 2</th>
             </tr>
           </thead>
           <tbody></tbody>
         </table>
-        <div id="table-empty" class="empty">No arbitrage opportunities yet.</div>
+        <div id="table-empty" class="empty" data-i18n="empty_arbitrage">No arbitrage opportunities yet.</div>
       </section>
     </section>
 
     <section id="middles-panel" class="hidden">
       <section class="stats-row">
         <div class="stat-card">
-          <span class="stat-label">Middles Found</span>
+          <span class="stat-label" data-i18n="stat_middles_found">Middles Found</span>
           <span class="stat-value" id="middle-stat-count">0</span>
         </div>
         <div class="stat-card">
-          <span class="stat-label">+EV Middles</span>
+          <span class="stat-label" data-i18n="stat_positive_middles">+EV Middles</span>
           <span class="stat-value" id="middle-stat-positive">0</span>
         </div>
         <div class="stat-card">
-          <span class="stat-label">Avg EV</span>
+          <span class="stat-label" data-i18n="stat_avg_ev">Avg EV</span>
           <span class="stat-value" id="middle-stat-avg">0%</span>
         </div>
         <div class="stat-card">
-          <span class="stat-label">Best EV</span>
+          <span class="stat-label" data-i18n="stat_best_ev">Best EV</span>
           <span class="stat-value" id="middle-stat-best">0%</span>
         </div>
       </section>
@@ -255,13 +259,13 @@
       <section class="summary-grid">
         <div class="card summary-card">
           <div class="card-head">
-            <h3>By Sport</h3>
+            <h3 data-i18n="by_sport">By Sport</h3>
           </div>
           <div id="middles-sport-bars" class="bar-list"></div>
         </div>
         <div class="card summary-card" id="middles-key-card">
           <div class="card-head">
-            <h3>Key Numbers</h3>
+            <h3 data-i18n="key_numbers_label">Key Numbers</h3>
           </div>
           <div id="middles-key-bars" class="bar-list"></div>
         </div>
@@ -269,55 +273,55 @@
 
       <section class="card results-card">
         <div class="card-head">
-          <h3>Middles</h3>
+          <h3 data-i18n="middles_title">Middles</h3>
           <div class="table-meta">
             <span id="middles-table-count">0 results</span>
-            <span class="muted">Sorted by EV</span>
+            <span class="muted" data-i18n="sorted_by_ev">Sorted by EV</span>
           </div>
         </div>
         <table id="middles-table">
           <thead>
             <tr>
-              <th>EV</th>
-              <th>Prob</th>
-              <th>Gap</th>
-              <th>Sport</th>
-              <th>Event</th>
-              <th>Time</th>
-              <th>Market</th>
-              <th>Side A</th>
-              <th>Side B</th>
-              <th>Middle</th>
-              <th>Win Both</th>
-              <th>Miss</th>
+              <th data-i18n="table_ev">EV</th>
+              <th data-i18n="table_prob">Prob</th>
+              <th data-i18n="table_gap">Gap</th>
+              <th data-i18n="table_sport">Sport</th>
+              <th data-i18n="table_event">Event</th>
+              <th data-i18n="table_time">Time</th>
+              <th data-i18n="table_market">Market</th>
+              <th data-i18n="table_side_a">Side A</th>
+              <th data-i18n="table_side_b">Side B</th>
+              <th data-i18n="table_middle">Middle</th>
+              <th data-i18n="table_win_both">Win Both</th>
+              <th data-i18n="table_miss">Miss</th>
             </tr>
           </thead>
           <tbody></tbody>
         </table>
-        <div id="middles-empty" class="empty">No middle opportunities meet your filters.</div>
+        <div id="middles-empty" class="empty" data-i18n="empty_middles">No middle opportunities meet your filters.</div>
       </section>
 
       <section class="card middle-caveat">
-        <p><strong>Understanding Middles:</strong> Middles are high-variance plays. They typically lose small amounts and win big when the final score lands inside the gap. Probabilities are estimates based on historical scoring distributions (NFL key numbers like 3 &amp; 7 dramatically boost EV). Treat the EV as guidance, not a guarantee, and stake responsibly.</p>
+        <p data-i18n-html="caveat_middles"><strong>Understanding Middles:</strong> Middles are high-variance plays. They typically lose small amounts and win big when the final score lands inside the gap. Probabilities are estimates based on historical scoring distributions (NFL key numbers like 3 &amp; 7 dramatically boost EV). Treat the EV as guidance, not a guarantee, and stake responsibly.</p>
       </section>
     </section>
 
     <section id="plus-ev-panel" class="hidden">
       <section class="stats-row">
         <div class="stat-card">
-          <span class="stat-label">+EV Bets</span>
+          <span class="stat-label" data-i18n="stat_plus_ev_bets">+EV Bets</span>
           <span class="stat-value" id="plus-ev-count">0</span>
         </div>
         <div class="stat-card">
-          <span class="stat-label">Avg Edge</span>
+          <span class="stat-label" data-i18n="stat_avg_edge">Avg Edge</span>
           <span class="stat-value" id="plus-ev-avg">0%</span>
         </div>
         <div class="stat-card">
-          <span class="stat-label">Best Edge</span>
+          <span class="stat-label" data-i18n="stat_best_edge">Best Edge</span>
           <span class="stat-value" id="plus-ev-best">0%</span>
         </div>
         <div class="stat-card">
-          <span class="stat-label">Total EV ($100)</span>
+          <span class="stat-label" data-i18n="stat_total_ev">Total EV ($100)</span>
           <span class="stat-value" id="plus-ev-total">$0</span>
         </div>
       </section>
@@ -327,13 +331,13 @@
       <section class="summary-grid">
         <div class="card summary-card">
           <div class="card-head">
-            <h3>By Sport</h3>
+            <h3 data-i18n="by_sport">By Sport</h3>
           </div>
           <div id="plus-ev-sport-bars" class="bar-list"></div>
         </div>
         <div class="card summary-card">
           <div class="card-head">
-            <h3>By Edge Band</h3>
+            <h3 data-i18n="by_edge_band">By Edge Band</h3>
           </div>
           <div id="plus-ev-edge-bars" class="bar-list"></div>
         </div>
@@ -341,35 +345,35 @@
 
       <section class="card results-card">
         <div class="card-head">
-          <h3>+EV Opportunities</h3>
+          <h3 data-i18n="plus_ev_title">+EV Opportunities</h3>
           <div class="table-meta">
             <span id="plus-ev-table-count">0 results</span>
-            <span class="muted">Sorted by Edge</span>
+            <span class="muted" data-i18n="sorted_by_edge">Sorted by Edge</span>
           </div>
         </div>
         <table id="plus-ev-table">
           <thead>
             <tr>
-              <th>Edge</th>
-              <th>EV ($100)</th>
-              <th>Kelly</th>
-              <th>Sport</th>
-              <th>Event</th>
-              <th>Time</th>
-              <th>Market</th>
-              <th>Bet</th>
-              <th>Soft Odds</th>
-              <th>Fair Odds</th>
-              <th>True Prob</th>
+              <th data-i18n="table_edge">Edge</th>
+              <th data-i18n="table_ev_100">EV ($100)</th>
+              <th data-i18n="table_kelly">Kelly</th>
+              <th data-i18n="table_sport">Sport</th>
+              <th data-i18n="table_event">Event</th>
+              <th data-i18n="table_time">Time</th>
+              <th data-i18n="table_market">Market</th>
+              <th data-i18n="table_bet">Bet</th>
+              <th data-i18n="table_soft_odds">Soft Odds</th>
+              <th data-i18n="table_fair_odds">Fair Odds</th>
+              <th data-i18n="table_true_prob">True Prob</th>
             </tr>
           </thead>
           <tbody></tbody>
         </table>
-        <div id="plus-ev-empty" class="empty">No +EV bets at the current thresholds.</div>
+        <div id="plus-ev-empty" class="empty" data-i18n="empty_plus_ev">No +EV bets at the current thresholds.</div>
       </section>
 
       <section class="card middle-caveat">
-        <p><strong>Understanding +EV Betting:</strong> Sharp books (Pinnacle, Betfair, Matchbook) provide near "true" odds. When a soft book posts a higher price than fair value, the bet has positive expected value. +EV bets still lose roughly half the time—the edge shows up over many wagers. Kelly staking helps size bets, but variance can still be high. Always confirm odds before betting; edges disappear quickly.</p>
+        <p data-i18n-html="caveat_plus_ev"><strong>Understanding +EV Betting:</strong> Sharp books (Pinnacle, Betfair, Matchbook) provide near "true" odds. When a soft book posts a higher price than fair value, the bet has positive expected value. +EV bets still lose roughly half the time—the edge shows up over many wagers. Kelly staking helps size bets, but variance can still be high. Always confirm odds before betting; edges disappear quickly.</p>
       </section>
     </section>
   </main>
@@ -407,7 +411,7 @@
     const statCalls = document.querySelector('#stat-calls .stat-value');
     const themeToggle = document.getElementById('theme-toggle');
     const toggleKeyBtn = document.getElementById('toggle-key');
-    const currencyFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+    let currencyFormatter;
     const partialWarning = document.getElementById('partial-warning');
     const commissionInput = document.getElementById('commission-input');
     const tabs = document.querySelectorAll('.tab-btn');
@@ -446,11 +450,504 @@
     const plusEvTableCount = document.getElementById('plus-ev-table-count');
     const plusEvEmpty = document.getElementById('plus-ev-empty');
     const oddsToggle = document.getElementById('odds-toggle');
+    const languageToggle = document.getElementById('language-toggle');
     const defaultCommissionPercent = parseFloat(commissionInput.value) || 5;
     let lastCommissionRate = defaultCommissionPercent / 100;
     let lastScanData = null;
     let activeTab = 'arbitrage';
     let oddsFormat = localStorage.getItem('edge-odds-format') || 'decimal';
+    let isScanning = false;
+    let lastStatus = null;
+
+    const TRANSLATIONS = {
+      en: {
+        tagline: 'Arbitrage / Middles / +EV',
+        odds_decimal: 'Decimal',
+        odds_american: 'American',
+        toggle_theme: 'Toggle theme',
+        toggle_language: 'Toggle language',
+        api_key_label: 'API Key',
+        env_key_notice: '✓ Using API key from .env',
+        api_key_show: 'Show API key',
+        api_key_hide: 'Hide API key',
+        total_stake_label: 'Total Stake ($)',
+        stake_helper: 'Used for arbitrage + middles stake splits.',
+        sports_label: 'Sports',
+        all_sports_label: 'Scan all active sports (uses more API credits)',
+        sports_helper: 'Each selected sport consumes one API request.',
+        regions_label: 'Regions',
+        regions_helper: 'Select at least one region. EU is always included for sharp reference.',
+        commission_label: 'Exchange Commission (%)',
+        commission_helper: 'Applied to Betfair, Matchbook, Sportsbet Exchange, etc.',
+        commission_note: 'Net ROI/EV already reflects this commission.',
+        scan_now: 'Scan Now',
+        scanning: 'Scanning...',
+        scanning_wait: 'Scanning, please wait...',
+        tab_arbitrage: 'Arbitrage',
+        tab_middles: 'Middles',
+        tab_plus_ev: '+EV',
+        middle_min_gap: 'Minimum Gap (points)',
+        middle_min_gap_helper: 'Only show middles with at least this many points between the lines.',
+        filters_label: 'Filters',
+        positive_ev_only: 'Show only positive EV middles',
+        sort_by: 'Sort By',
+        sort_ev: 'Estimated EV',
+        sort_probability: 'Probability',
+        sort_gap: 'Gap size',
+        sort_time: 'Event time',
+        sharp_reference_book: 'Sharp Reference Book',
+        sharp_book_helper: 'Used as the \"true\" odds source. Pinnacle recommended.',
+        min_edge_label: 'Minimum Edge (%)',
+        min_edge_helper: 'Filter +EV bets below this edge.',
+        kelly_staking: 'Kelly Staking',
+        kelly_helper: 'Bankroll + Kelly fraction are not persisted between scans.',
+        sort_edge: 'Edge %',
+        sort_ev_value: 'EV ($)',
+        sort_kelly: 'Kelly stake',
+        kelly_full: 'Full Kelly',
+        kelly_half: 'Half Kelly',
+        kelly_quarter: 'Quarter Kelly',
+        kelly_tenth: 'Tenth Kelly',
+        stat_opportunities: 'Opportunities',
+        stat_events_scanned: 'Events Scanned',
+        stat_sports: 'Sports',
+        stat_api_calls: 'API Calls',
+        stat_middles_found: 'Middles Found',
+        stat_positive_middles: '+EV Middles',
+        stat_avg_ev: 'Avg EV',
+        stat_best_ev: 'Best EV',
+        stat_plus_ev_bets: '+EV Bets',
+        stat_avg_edge: 'Avg Edge',
+        stat_best_edge: 'Best Edge',
+        stat_total_ev: 'Total EV ($100)',
+        by_roi_band: 'By ROI Band',
+        by_sport: 'By Sport',
+        by_edge_band: 'By Edge Band',
+        key_numbers_label: 'Key Numbers',
+        opportunities_title: 'Opportunities',
+        middles_title: 'Middles',
+        plus_ev_title: '+EV Opportunities',
+        sorted_by_roi: 'Sorted by ROI',
+        sorted_by_ev: 'Sorted by EV',
+        sorted_by_edge: 'Sorted by Edge',
+        table_net_roi: 'Net ROI',
+        table_gross_roi: 'Gross ROI',
+        table_profit: 'Profit',
+        table_exchange: 'Exchange',
+        table_sport: 'Sport',
+        table_event: 'Event',
+        table_time: 'Time',
+        table_market: 'Market',
+        table_outcome_1: 'Outcome 1',
+        table_outcome_2: 'Outcome 2',
+        table_ev: 'EV',
+        table_prob: 'Prob',
+        table_gap: 'Gap',
+        table_side_a: 'Side A',
+        table_side_b: 'Side B',
+        table_middle: 'Middle',
+        table_win_both: 'Win Both',
+        table_miss: 'Miss',
+        table_edge: 'Edge',
+        table_ev_100: 'EV ($100)',
+        table_kelly: 'Kelly',
+        table_bet: 'Bet',
+        table_soft_odds: 'Soft Odds',
+        table_fair_odds: 'Fair Odds',
+        table_true_prob: 'True Prob',
+        empty_arbitrage: 'No arbitrage opportunities yet.',
+        empty_middles: 'No middle opportunities meet your filters.',
+        empty_plus_ev: 'No +EV bets at the current thresholds.',
+        caveat_middles:
+          '<strong>Understanding Middles:</strong> Middles are high-variance plays. They typically lose small amounts and win big when the final score lands inside the gap. Probabilities are estimates based on historical scoring distributions (NFL key numbers like 3 &amp; 7 dramatically boost EV). Treat the EV as guidance, not a guarantee, and stake responsibly.',
+        caveat_plus_ev:
+          '<strong>Understanding +EV Betting:</strong> Sharp books (Pinnacle, Betfair, Matchbook) provide near \"true\" odds. When a soft book posts a higher price than fair value, the bet has positive expected value. +EV bets still lose roughly half the time - the edge shows up over many wagers. Kelly staking helps size bets, but variance can still be high. Always confirm odds before betting; edges disappear quickly.',
+        summary_title: 'Summary',
+        summary_found: 'Found {count} opportunities across {events} events in {sports} sports.',
+        summary_profit: 'Total potential profit: {profit}{staked}',
+        summary_profit_staked: ' on {staked} staked',
+        summary_calls: 'API calls used: {calls}{regions}',
+        summary_regions_suffix: ' | Regions: {regions}',
+        summary_commission: 'Exchange commission applied: {commission}.',
+        summary_roi_note: 'ROI = return on total stake. 2% ROI means $2 profit on a $100 stake.',
+        middle_summary_counts: 'Middles matching filters: {count}, with {positive} positive EV.',
+        middle_summary_avg: 'Average EV: {avg}{best}',
+        middle_summary_best: ' | Best: {event}',
+        middle_spreads_only: 'Spreads only',
+        plus_summary: '+EV bets: {count} | Average edge {avg}{best}',
+        plus_summary_best: ' | Best: {event}',
+        results_count: '{count} results',
+        results_profit: '{count} results | {profit} profit',
+        partial_results: '<strong>Partial results:</strong> Failed to fetch odds for {details}.',
+        tbd: 'TBD',
+        gross: 'Gross',
+        net_at: 'Net @ {odds}',
+        odds_label: 'Odds: {odds}',
+        stake_label: 'Stake: {stake}',
+        exchange: 'Exchange',
+        no: 'No',
+        no_data: 'No data',
+        gap_points: '{points} pts',
+        gap_separator: ' / ',
+        kelly_roll: '{percent}% roll',
+        net_roi_negative: 'Net ROI is negative after commission.',
+        scan_complete: 'Scan complete at {time}',
+        scan_failed: 'Scan failed',
+        enter_api_key: 'Please enter your API key.',
+        select_region: 'Select at least one region.',
+        unknown: 'Unknown',
+        unknown_error: 'Unknown error',
+      },
+      zh: {
+        tagline: '套利 / 中间盘 / +EV',
+        odds_decimal: '十进制',
+        odds_american: '美式',
+        toggle_theme: '切换主题',
+        toggle_language: '切换语言',
+        api_key_label: 'API 密钥',
+        env_key_notice: '✓ 使用 .env 中的 API 密钥',
+        api_key_show: '显示 API 密钥',
+        api_key_hide: '隐藏 API 密钥',
+        total_stake_label: '总下注金额 ($)',
+        stake_helper: '用于套利和中间盘的下注拆分计算。',
+        sports_label: '体育项目',
+        all_sports_label: '扫描所有活跃项目（消耗更多 API 额度）',
+        sports_helper: '每个已选项目会消耗一次 API 请求。',
+        regions_label: '地区',
+        regions_helper: '至少选择一个地区。为锐盘参考将始终包含 EU。',
+        commission_label: '交易所手续费 (%)',
+        commission_helper: '适用于 Betfair、Matchbook、Sportsbet Exchange 等。',
+        commission_note: '净 ROI/EV 已计入该手续费。',
+        scan_now: '开始扫描',
+        scanning: '扫描中...',
+        scanning_wait: '正在扫描，请稍候...',
+        tab_arbitrage: '套利',
+        tab_middles: '中间盘',
+        tab_plus_ev: '+EV',
+        middle_min_gap: '最小间隔（分）',
+        middle_min_gap_helper: '仅显示盘口差至少达到该分数的中间盘。',
+        filters_label: '筛选',
+        positive_ev_only: '仅显示正 EV 的中间盘',
+        sort_by: '排序',
+        sort_ev: '预计 EV',
+        sort_probability: '概率',
+        sort_gap: '间隔大小',
+        sort_time: '比赛时间',
+        sharp_reference_book: '锐盘参考书商',
+        sharp_book_helper: '作为“真实”赔率参考来源，推荐 Pinnacle。',
+        min_edge_label: '最小 Edge (%)',
+        min_edge_helper: '过滤低于该边际的 +EV 投注。',
+        kelly_staking: '凯利下注',
+        kelly_helper: '资金和凯利比例不会在扫描之间保存。',
+        sort_edge: 'Edge %',
+        sort_ev_value: 'EV ($)',
+        sort_kelly: '凯利下注',
+        kelly_full: '全凯利',
+        kelly_half: '半凯利',
+        kelly_quarter: '四分之一凯利',
+        kelly_tenth: '十分之一凯利',
+        stat_opportunities: '机会',
+        stat_events_scanned: '扫描赛事',
+        stat_sports: '项目数',
+        stat_api_calls: 'API 调用',
+        stat_middles_found: '中间盘数量',
+        stat_positive_middles: '+EV 中间盘',
+        stat_avg_ev: '平均 EV',
+        stat_best_ev: '最高 EV',
+        stat_plus_ev_bets: '+EV 投注',
+        stat_avg_edge: '平均 Edge',
+        stat_best_edge: '最高 Edge',
+        stat_total_ev: '总 EV（$100）',
+        by_roi_band: '按 ROI 区间',
+        by_sport: '按项目',
+        by_edge_band: '按 Edge 区间',
+        key_numbers_label: '关键分差',
+        opportunities_title: '机会',
+        middles_title: '中间盘',
+        plus_ev_title: '+EV 机会',
+        sorted_by_roi: '按 ROI 排序',
+        sorted_by_ev: '按 EV 排序',
+        sorted_by_edge: '按 Edge 排序',
+        table_net_roi: '净 ROI',
+        table_gross_roi: '总 ROI',
+        table_profit: '利润',
+        table_exchange: '交易所',
+        table_sport: '项目',
+        table_event: '赛事',
+        table_time: '时间',
+        table_market: '盘口',
+        table_outcome_1: '选项 1',
+        table_outcome_2: '选项 2',
+        table_ev: 'EV',
+        table_prob: '概率',
+        table_gap: '间隔',
+        table_side_a: 'A 边',
+        table_side_b: 'B 边',
+        table_middle: '中间区间',
+        table_win_both: '两边全赢',
+        table_miss: '未命中',
+        table_edge: 'Edge',
+        table_ev_100: 'EV ($100)',
+        table_kelly: '凯利',
+        table_bet: '投注',
+        table_soft_odds: '软盘赔率',
+        table_fair_odds: '公平赔率',
+        table_true_prob: '真实概率',
+        empty_arbitrage: '暂无套利机会。',
+        empty_middles: '没有符合筛选条件的中间盘。',
+        empty_plus_ev: '当前阈值下暂无 +EV 投注。',
+        caveat_middles:
+          '<strong>理解中间盘：</strong>中间盘属于高波动玩法，大多数时候小亏，比分落在区间内时大赢。概率为历史分布估算（NFL 关键分差如 3、7 会显著提升 EV）。请将 EV 视为参考并谨慎下注。',
+        caveat_plus_ev:
+          '<strong>理解 +EV 投注：</strong>锐盘（Pinnacle、Betfair、Matchbook）提供接近“真实”的赔率。当软盘给出高于公平赔率的价格时，该投注为正期望。+EV 投注仍有约一半时间会输，优势来自长期。凯利法可帮助控制下注规模，但波动仍然存在。下注前务必确认赔率，优势会迅速消失。',
+        summary_title: '概览',
+        summary_found: '共发现 {count} 个机会，覆盖 {events} 场赛事、{sports} 个项目。',
+        summary_profit: '潜在总利润：{profit}{staked}',
+        summary_profit_staked: '（总下注 {staked}）',
+        summary_calls: 'API 调用次数：{calls}{regions}',
+        summary_regions_suffix: ' | 地区：{regions}',
+        summary_commission: '已计入交易所手续费：{commission}。',
+        summary_roi_note: 'ROI 为总下注回报率。2% ROI 意味着下注 $100 约盈利 $2。',
+        middle_summary_counts: '符合筛选的中间盘：{count}，其中 {positive} 为正 EV。',
+        middle_summary_avg: '平均 EV：{avg}{best}',
+        middle_summary_best: ' | 最佳：{event}',
+        middle_spreads_only: '仅让分',
+        plus_summary: '+EV 投注：{count} | 平均 Edge {avg}{best}',
+        plus_summary_best: ' | 最佳：{event}',
+        results_count: '{count} 条结果',
+        results_profit: '{count} 条结果 | 利润 {profit}',
+        partial_results: '<strong>部分结果：</strong>以下项目未能获取赔率：{details}。',
+        tbd: '待定',
+        gross: '总',
+        net_at: '净 @ {odds}',
+        odds_label: '赔率：{odds}',
+        stake_label: '下注：{stake}',
+        exchange: '交易所',
+        no: '否',
+        no_data: '暂无数据',
+        gap_points: '{points} 分',
+        gap_separator: ' / ',
+        kelly_roll: '{percent}% 资金',
+        net_roi_negative: '计入手续费后净 ROI 为负。',
+        scan_complete: '扫描完成：{time}',
+        scan_failed: '扫描失败',
+        enter_api_key: '请输入 API 密钥。',
+        select_region: '请至少选择一个地区。',
+        unknown: '未知',
+        unknown_error: '未知错误',
+      },
+    };
+
+    const SPORT_KEY_LABELS = {
+      zh: {
+        americanfootball_nfl: 'NFL',
+        basketball_nba: 'NBA',
+        baseball_mlb: 'MLB',
+        icehockey_nhl: 'NHL',
+        soccer_epl: '英超',
+        soccer_spain_la_liga: '西甲',
+        soccer_germany_bundesliga: '德甲',
+        soccer_italy_serie_a: '意甲',
+        soccer_france_ligue_one: '法甲',
+        soccer_usa_mls: '美职联',
+      },
+    };
+
+    const SPORT_LABELS = {
+      zh: {
+        NFL: 'NFL',
+        NBA: 'NBA',
+        MLB: 'MLB',
+        NHL: 'NHL',
+        'Premier League': '英超',
+        'La Liga': '西甲',
+        Bundesliga: '德甲',
+        'Serie A': '意甲',
+        'Ligue 1': '法甲',
+        MLS: '美职联',
+        Other: '其他',
+      },
+    };
+
+    const REGION_LABELS = {
+      zh: {
+        us: '美国',
+        us2: '美国（更多）',
+        uk: '英国',
+        eu: '欧洲',
+        au: '澳大利亚',
+      },
+    };
+
+    const MARKET_LABELS = {
+      zh: {
+        h2h: '胜负',
+        spreads: '让分',
+        totals: '大小分',
+      },
+    };
+
+    let activeLanguage = localStorage.getItem('edge-language');
+    if (!activeLanguage) {
+      activeLanguage = (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+    }
+    let activeLocale = activeLanguage === 'zh' ? 'zh-CN' : 'en-US';
+    currencyFormatter = createCurrencyFormatter(activeLocale);
+
+    function t(key, params = {}) {
+      const table = TRANSLATIONS[activeLanguage] || TRANSLATIONS.en || {};
+      const fallback = TRANSLATIONS.en || {};
+      let template = table[key] ?? fallback[key] ?? key;
+      Object.entries(params).forEach(([name, value]) => {
+        template = template.replace(new RegExp(`\\{${name}\\}`, 'g'), () => String(value));
+      });
+      return template;
+    }
+
+    function createCurrencyFormatter(locale) {
+      return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' });
+    }
+
+    function applyTranslations() {
+      document.documentElement.lang = activeLocale;
+      document.querySelectorAll('[data-i18n]').forEach((el) => {
+        const key = el.dataset.i18n;
+        el.textContent = t(key);
+      });
+      document.querySelectorAll('[data-i18n-html]').forEach((el) => {
+        const key = el.dataset.i18nHtml;
+        el.innerHTML = t(key);
+      });
+      if (themeToggle) {
+        themeToggle.title = t('toggle_theme');
+      }
+      if (languageToggle) {
+        languageToggle.setAttribute('aria-label', t('toggle_language'));
+      }
+      updateLanguageToggle();
+      updateOddsToggle();
+      updateSportLabels();
+      updateRegionLabels();
+      updateKellyOptions();
+      updateToggleKeyLabel();
+      updateScanButtonText();
+      refreshStatus();
+      setActiveTab(activeTab);
+    }
+
+    function setLanguage(nextLang) {
+      const normalized = TRANSLATIONS[nextLang] ? nextLang : 'en';
+      if (normalized === activeLanguage) return;
+      activeLanguage = normalized;
+      activeLocale = activeLanguage === 'zh' ? 'zh-CN' : 'en-US';
+      localStorage.setItem('edge-language', activeLanguage);
+      currencyFormatter = createCurrencyFormatter(activeLocale);
+      applyTranslations();
+      renderPartialWarning(lastScanData);
+    }
+
+    function updateLanguageToggle() {
+      if (!languageToggle) return;
+      languageToggle.querySelectorAll('span').forEach((span) => {
+        span.classList.toggle('active', span.dataset.lang === activeLanguage);
+      });
+    }
+
+    function updateScanButtonText() {
+      if (!scanBtn) return;
+      scanBtn.textContent = isScanning ? t('scanning') : t('scan_now');
+    }
+
+    function updateToggleKeyLabel() {
+      if (!toggleKeyBtn || !apiKeyInput) return;
+      const key = apiKeyInput.type === 'password' ? 'api_key_show' : 'api_key_hide';
+      toggleKeyBtn.setAttribute('aria-label', t(key));
+    }
+
+    function updateSportLabels() {
+      document.querySelectorAll('[data-sport-key]').forEach((el) => {
+        if (!el.dataset.defaultLabel) {
+          el.dataset.defaultLabel = el.textContent.trim();
+        }
+        const key = el.dataset.sportKey;
+        const fallback = el.dataset.defaultLabel;
+        const translated = translateSportKey(key, fallback);
+        el.textContent = translated;
+      });
+    }
+
+    function updateRegionLabels() {
+      document.querySelectorAll('[data-region-key]').forEach((el) => {
+        if (!el.dataset.defaultLabel) {
+          el.dataset.defaultLabel = el.textContent.trim();
+        }
+        const key = el.dataset.regionKey;
+        const fallback = el.dataset.defaultLabel;
+        const translated = translateRegionKey(key, fallback);
+        el.textContent = translated;
+      });
+    }
+
+    function updateKellyOptions() {
+      if (!kellySelect) return;
+      kellySelect.querySelectorAll('option[data-kelly-value]').forEach((option) => {
+        const value = parseFloat(option.dataset.kellyValue);
+        let key = 'kelly_tenth';
+        if (value === 1) key = 'kelly_full';
+        else if (value === 0.5) key = 'kelly_half';
+        else if (value === 0.25) key = 'kelly_quarter';
+        option.textContent = t(key);
+      });
+    }
+
+    function translateSportKey(key, fallback) {
+      if (activeLanguage !== 'zh') return fallback;
+      const map = SPORT_KEY_LABELS[activeLanguage] || {};
+      return map[key] || fallback;
+    }
+
+    function translateSportLabel(label) {
+      if (!label || activeLanguage !== 'zh') return label || '';
+      const map = SPORT_LABELS[activeLanguage] || {};
+      return map[label] || label;
+    }
+
+    function translateRegionKey(key, fallback) {
+      if (activeLanguage !== 'zh') return fallback;
+      const map = REGION_LABELS[activeLanguage] || {};
+      return map[key] || fallback;
+    }
+
+    function translateMarketLabel(market) {
+      if (!market || activeLanguage !== 'zh') return market || '';
+      const map = MARKET_LABELS[activeLanguage] || {};
+      return map[market] || market;
+    }
+
+    function formatDateTime(value) {
+      if (!value) return t('tbd');
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return t('tbd');
+      return date.toLocaleString(activeLocale);
+    }
+
+    function formatTime(value) {
+      if (!value) return t('tbd');
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return t('tbd');
+      return date.toLocaleTimeString(activeLocale);
+    }
+
+    function refreshStatus() {
+      if (!lastStatus) return;
+      const { key, params, type, message } = lastStatus;
+      if (key) {
+        statusEl.textContent = t(key, params);
+      } else if (message !== undefined) {
+        statusEl.textContent = message;
+      }
+      statusEl.className = type ? `status ${type}` : 'status';
+    }
 
     document.addEventListener('DOMContentLoaded', () => {
       const savedTheme = localStorage.getItem('arb-theme');
@@ -458,7 +955,7 @@
         document.documentElement.dataset.theme = savedTheme;
         themeToggle.textContent = savedTheme === 'dark' ? '☀️' : '🌙';
       }
-      updateOddsToggle();
+      applyTranslations();
     });
 
     if (toggleKeyBtn && apiKeyInput) {
@@ -470,6 +967,7 @@
           apiKeyInput.type = 'password';
           toggleKeyBtn.textContent = '👁';
         }
+        updateToggleKeyLabel();
       });
     }
 
@@ -492,6 +990,15 @@
       });
     }
 
+    if (languageToggle) {
+      languageToggle.addEventListener('click', (event) => {
+        const target = event.target;
+        const selected = target && target.dataset ? target.dataset.lang : null;
+        const nextLang = selected || (activeLanguage === 'en' ? 'zh' : 'en');
+        setLanguage(nextLang);
+      });
+    }
+
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         const target = tab.dataset.tab;
@@ -504,13 +1011,13 @@
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (!hasEnvKey && !apiKeyInput?.value.trim()) {
-        showStatus('Please enter your API key.', 'error');
+        showStatusKey('enter_api_key', 'error');
         return;
       }
       const sports = Array.from(form.querySelectorAll('input[name="sports"]:checked')).map((el) => el.value);
       const regions = Array.from(form.querySelectorAll('input[name="regions"]:checked')).map((el) => el.value);
       if (!regions.length) {
-        showStatus('Select at least one region.', 'error');
+        showStatusKey('select_region', 'error');
         return;
       }
       const stakeValue = parseFloat(stakeInput.value) || 100;
@@ -567,7 +1074,7 @@
         });
         const data = await response.json();
         if (!data.success) {
-          throw new Error(data.error || 'Scan failed');
+          throw new Error(data.error || t('scan_failed'));
         }
         if (data?.middles?.defaults) {
           const defaults = data.middles.defaults;
@@ -583,25 +1090,32 @@
           if (defaults.kelly_fraction !== undefined) kellySelect.value = defaults.kelly_fraction;
         }
         renderScanData(data);
-        showStatus(`Scan complete at ${new Date(data.scan_time).toLocaleTimeString()}`, 'success');
+        showStatusKey('scan_complete', 'success', { time: formatTime(data.scan_time) });
       } catch (err) {
-        showStatus(err.message || 'Scan failed', 'error');
+        showStatus(err.message || t('scan_failed'), 'error');
         renderScanData(null);
       } finally {
         setScanning(false);
       }
     }
 
-    function setScanning(isScanning) {
-      scanBtn.disabled = isScanning;
-      scanBtn.textContent = isScanning ? 'Scanning…' : 'Scan Now';
-      statusEl.textContent = isScanning ? 'Scanning, please wait…' : '';
+    function setScanning(nextState) {
+      isScanning = nextState;
+      scanBtn.disabled = nextState;
+      updateScanButtonText();
+      statusEl.textContent = nextState ? t('scanning_wait') : '';
       statusEl.className = 'status';
+      lastStatus = nextState ? { key: 'scanning_wait', params: {}, type: null } : null;
     }
 
-    function showStatus(message, type) {
+    function showStatus(message, type, key = null, params = {}) {
       statusEl.textContent = message;
       statusEl.className = `status ${type}`;
+      lastStatus = { message, type, key, params };
+    }
+
+    function showStatusKey(key, type, params = {}) {
+      showStatus(t(key, params), type, key, params);
     }
 
     function renderScanData(payload) {
@@ -620,7 +1134,7 @@
       const opportunities = arbData?.opportunities || [];
       const stakeValue = parseFloat(stakeInput.value) || 0;
       resultsBody.innerHTML = '';
-      tableCount.textContent = `${opportunities.length} results`;
+      tableCount.textContent = t('results_count', { count: opportunities.length });
       if (!opportunities.length) {
         emptyState.classList.remove('hidden');
       } else {
@@ -631,7 +1145,7 @@
           const calcNet = calculateStakes(opp, stakeValue, true);
           const netRoi = calcNet?.roi_percent ?? opp.roi_percent;
           row.classList.add(roiBandClass(netRoi));
-          const commence = opp.commence_time ? new Date(opp.commence_time).toLocaleString() : 'TBD';
+          const commence = formatDateTime(opp.commence_time);
           const calcGross = opp.has_exchange ? calculateStakes(opp, stakeValue, false) : null;
           const grossRoi = opp.has_exchange ? calcGross?.roi_percent ?? opp.gross_roi_percent : null;
           const netNegative = typeof netRoi === 'number' && netRoi < 0;
@@ -642,12 +1156,13 @@
           runningProfit += profitValue || 0;
           const profitClass = profitValue > 0 ? 'gain' : profitValue < 0 ? 'loss' : '';
           const grossCell = opp.has_exchange ? formatRoiBadge(grossRoi) : '';
+          const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
           row.innerHTML = `
-            <td><span class="roi-badge">${formatPercent(netRoi)}</span>${netNegative ? '<span class="roi-warning" title="Net ROI is negative after commission.">⚠</span>' : ''}</td>
+            <td><span class="roi-badge">${formatPercent(netRoi)}</span>${netNegative ? `<span class="roi-warning" title="${t('net_roi_negative')}">⚠</span>` : ''}</td>
             <td>${grossCell}</td>
             <td class="profit-cell ${profitClass}">${calcNet ? formatProfit(profitValue) : '-'}</td>
             <td>${formatExchangeCell(opp)}</td>
-            <td>${opp.sport_display || opp.sport || ''}</td>
+            <td>${sportLabel}</td>
             <td>${opp.event || ''}</td>
             <td>${commence}</td>
             <td>${formatMarket(opp)}</td>
@@ -655,7 +1170,10 @@
             <td>${formatOutcome(breakdown[1])}</td>`;
           resultsBody.appendChild(row);
         });
-        tableCount.textContent = `${opportunities.length} results • ${formatCurrency(runningProfit)} profit`;
+        tableCount.textContent = t('results_profit', {
+          count: opportunities.length,
+          profit: formatCurrency(runningProfit),
+        });
       }
       const summary = arbData?.summary;
       if (summary) {
@@ -674,14 +1192,23 @@
         const regionsLabel = Array.isArray(lastScanData?.regions) && lastScanData.regions.length
           ? lastScanData.regions.join(', ').toUpperCase()
           : '';
+        const countText = `<strong>${arbData.opportunities_count || opportunities.length}</strong>`;
+        const eventsText = `<strong>${summary.events_scanned}</strong>`;
+        const sportsText = `<strong>${summary.sports_scanned}</strong>`;
+        const profitText = `<strong>${formatCurrency(totalProfit)}</strong>`;
+        const stakedText = totalStaked
+          ? t('summary_profit_staked', { staked: `<strong>${formatCurrency(totalStaked)}</strong>` })
+          : '';
+        const regionsSuffix = regionsLabel ? t('summary_regions_suffix', { regions: regionsLabel }) : '';
+        const callsText = t('summary_calls', { calls: summary.api_calls_used, regions: regionsSuffix });
         summaryEl.classList.remove('hidden');
         summaryEl.innerHTML = `
-          <h3>Summary</h3>
-          <p>Found <strong>${arbData.opportunities_count || opportunities.length}</strong> opportunities across <strong>${summary.events_scanned}</strong> events in <strong>${summary.sports_scanned}</strong> sports.</p>
-          <p>Total potential profit: <strong>${formatCurrency(totalProfit)}</strong>${totalStaked ? ` on ${formatCurrency(totalStaked)} staked` : ''}</p>
-          <p>API calls used: ${summary.api_calls_used}${regionsLabel ? ` • Regions: ${regionsLabel}` : ''}</p>
-          <p>Exchange commission applied: ${commissionPercent}.</p>
-          <p class="helper">ROI = return on total stake. 2% ROI means $2 profit on a $100 stake.</p>
+          <h3>${t('summary_title')}</h3>
+          <p>${t('summary_found', { count: countText, events: eventsText, sports: sportsText })}</p>
+          <p>${t('summary_profit', { profit: profitText, staked: stakedText })}</p>
+          <p>${callsText}</p>
+          <p>${t('summary_commission', { commission: commissionPercent })}</p>
+          <p class="helper">${t('summary_roi_note')}</p>
         `;
       } else {
         statOpps.textContent = statEvents.textContent = statSports.textContent = statCalls.textContent = '0';
@@ -730,11 +1257,14 @@
       middleStatBest.textContent = formatPercent(stats.best_ev_percent);
       if (stats.count > 0) {
         middleSummaryInfo.classList.remove('hidden');
-        const bestText = stats.best_event ? ` • Best: ${stats.best_event}` : '';
+        const countText = `<strong>${stats.count}</strong>`;
+        const positiveText = `<strong>${stats.positive_count}</strong>`;
+        const avgText = `<strong>${formatPercent(stats.average_ev_percent)}</strong>`;
+        const bestText = stats.best_event ? t('middle_summary_best', { event: stats.best_event }) : '';
         middleSummaryInfo.innerHTML = `
-          <h3>Summary</h3>
-          <p>Middles matching filters: <strong>${stats.count}</strong>, with <strong>${stats.positive_count}</strong> positive EV.</p>
-          <p>Average EV: <strong>${formatPercent(stats.average_ev_percent)}</strong>${bestText}</p>
+          <h3>${t('summary_title')}</h3>
+          <p>${t('middle_summary_counts', { count: countText, positive: positiveText })}</p>
+          <p>${t('middle_summary_avg', { avg: avgText, best: bestText })}</p>
         `;
         renderBars(middleSportBars, stats.by_sport, 'sport');
         if (Object.keys(stats.key_numbers).length) {
@@ -742,18 +1272,18 @@
           renderBars(middleKeyBars, stats.key_numbers, 'sport');
         } else {
           middleKeyCard.classList.add('hidden');
-          middleKeyBars.innerHTML = '<p class="muted">Spreads only</p>';
+          middleKeyBars.innerHTML = `<p class="muted">${t('middle_spreads_only')}</p>`;
         }
       } else {
         middleSummaryInfo.classList.add('hidden');
         middleSummaryInfo.innerHTML = '';
         middleSportBars.innerHTML = '';
         middleKeyCard.classList.add('hidden');
-        middleKeyBars.innerHTML = '<p class="muted">Spreads only</p>';
+        middleKeyBars.innerHTML = `<p class="muted">${t('middle_spreads_only')}</p>`;
       }
 
       middlesTableBody.innerHTML = '';
-      middlesTableCount.textContent = `${filtered.length} results`;
+      middlesTableCount.textContent = t('results_count', { count: filtered.length });
       if (!filtered.length) {
         middlesEmpty.classList.remove('hidden');
       } else {
@@ -763,19 +1293,21 @@
           const evClass = evBandClass(opp.ev_percent);
           if (evClass) row.classList.add(evClass);
           if (opp.has_exchange) row.classList.add('has-exchange');
-          const commence = opp.commence_time ? new Date(opp.commence_time).toLocaleString() : 'TBD';
+          const commence = formatDateTime(opp.commence_time);
           const stakeA = (opp.stakes?.side_a?.stake || 0) * stakeRatio;
           const stakeB = (opp.stakes?.side_b?.stake || 0) * stakeRatio;
           const winBoth = (opp.outcomes?.win_both_profit || 0) * stakeRatio;
           const miss = (opp.outcomes?.typical_miss_profit || 0) * stakeRatio;
+          const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
+          const marketLabel = translateMarketLabel(opp.market || '');
           row.innerHTML = `
-            <td>${formatPercent(opp.ev_percent)}${opp.has_exchange && typeof opp.gross_ev_percent === 'number' ? `<span class="ev-gross">Gross ${formatPercent(opp.gross_ev_percent)}</span>` : ''}</td>
+            <td>${formatPercent(opp.ev_percent)}${opp.has_exchange && typeof opp.gross_ev_percent === 'number' ? `<span class="ev-gross">${t('gross')} ${formatPercent(opp.gross_ev_percent)}</span>` : ''}</td>
             <td>${formatPercent(opp.probability_percent)}</td>
             <td>${formatGapCell(opp)}</td>
-            <td>${opp.sport_display || opp.sport || ''}</td>
+            <td>${sportLabel}</td>
             <td>${opp.event || ''}</td>
             <td>${commence}</td>
-            <td>${opp.market || ''}</td>
+            <td>${marketLabel}</td>
             <td>${formatMiddleSide(opp.side_a, stakeA)}</td>
             <td>${formatMiddleSide(opp.side_b, stakeB)}</td>
             <td>${opp.middle_zone || ''}</td>
@@ -821,22 +1353,24 @@
       plusEvTotal.textContent = formatCurrency(stats.total_ev_per_100);
       if (stats.count > 0) {
         plusEvSummaryInfo.classList.remove('hidden');
-        const bestText = stats.best_event ? `Best: ${stats.best_event}` : '';
+        const countText = `<strong>${stats.count}</strong>`;
+        const avgText = `<strong>${formatPercent(stats.average_edge_percent)}</strong>`;
+        const bestText = stats.best_event ? t('plus_summary_best', { event: stats.best_event }) : '';
         plusEvSummaryInfo.innerHTML = `
-          <h3>Summary</h3>
-          <p>+EV bets: <strong>${stats.count}</strong> • Average edge <strong>${formatPercent(stats.average_edge_percent)}</strong> • ${bestText}</p>
+          <h3>${t('summary_title')}</h3>
+          <p>${t('plus_summary', { count: countText, avg: avgText, best: bestText })}</p>
         `;
         renderBars(plusEvSportBars, stats.by_sport, 'sport');
         renderBars(plusEvEdgeBars, stats.by_edge_band, 'roi');
       } else {
         plusEvSummaryInfo.classList.add('hidden');
         plusEvSummaryInfo.innerHTML = '';
-        plusEvSportBars.innerHTML = '<p class="muted">No data</p>';
-        plusEvEdgeBars.innerHTML = '<p class="muted">No data</p>';
+        plusEvSportBars.innerHTML = `<p class="muted">${t('no_data')}</p>`;
+        plusEvEdgeBars.innerHTML = `<p class="muted">${t('no_data')}</p>`;
       }
 
       plusEvTableBody.innerHTML = '';
-      plusEvTableCount.textContent = `${filtered.length} results`;
+      plusEvTableCount.textContent = t('results_count', { count: filtered.length });
       if (!filtered.length) {
         plusEvEmpty.classList.remove('hidden');
         return;
@@ -845,13 +1379,14 @@
       filtered.forEach((opp) => {
         const row = document.createElement('tr');
         if (opp.has_exchange) row.classList.add('has-exchange');
-        const commence = opp.commence_time ? new Date(opp.commence_time).toLocaleString() : 'TBD';
+        const commence = formatDateTime(opp.commence_time);
         const kellyData = calculateKellyStake(oppTrueProb(opp), oppEffectiveOdds(opp), bankroll, kellyFraction);
+        const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
         row.innerHTML = `
           <td>${formatEdgeCell(opp)}</td>
           <td class="profit-cell">${formatProfit(opp.ev_per_100 || 0)}</td>
           <td>${formatKellyCell(kellyData)}</td>
-          <td>${opp.sport_display || opp.sport || ''}</td>
+          <td>${sportLabel}</td>
           <td>${opp.event || ''}</td>
           <td>${commence}</td>
           <td>${formatPlusMarket(opp)}</td>
@@ -893,7 +1428,7 @@
     function formatEdgeCell(opp) {
       const net = formatPercent(opp.edge_percent);
       if (opp.has_exchange && typeof opp.gross_edge_percent === 'number' && opp.gross_edge_percent !== opp.edge_percent) {
-        return `${net}<span class="ev-gross">Gross ${formatPercent(opp.gross_edge_percent)}</span>`;
+        return `${net}<span class="ev-gross">${t('gross')} ${formatPercent(opp.gross_edge_percent)}</span>`;
       }
       return net;
     }
@@ -902,20 +1437,22 @@
       if (!kellyData) return '';
       const stake = kellyData.recommended || 0;
       const frac = kellyData.fractionPercent || 0;
-      return `<div class="kelly-cell">${formatCurrency(stake)}<span class="mono">${frac.toFixed(2)}% roll</span></div>`;
+      const rollText = t('kelly_roll', { percent: frac.toFixed(2) });
+      return `<div class="kelly-cell">${formatCurrency(stake)}<span class="mono">${rollText}</span></div>`;
     }
 
     function formatPlusMarket(opp) {
       if (!opp) return '';
       if ((opp.market === 'spreads' || opp.market === 'totals') && opp.market_point !== undefined && opp.market_point !== null) {
-        return `${opp.market} (${formatLine(opp.market_point)})`;
+        const label = translateMarketLabel(opp.market || '');
+        return `${label} (${formatLine(opp.market_point)})`;
       }
-      return opp.market || '';
+      return translateMarketLabel(opp.market || '');
     }
 
     function formatPlusBet(opp) {
       if (!opp?.bet) return '';
-      const exchangeBadge = opp.bet.is_exchange ? '<span class="exchange-badge">Exchange</span>' : '';
+      const exchangeBadge = opp.bet.is_exchange ? `<span class="exchange-badge">${t('exchange')}</span>` : '';
       const book = opp.bet.soft_book ? ` @ ${opp.bet.soft_book}` : '';
       const point = opp.bet.point !== undefined && opp.bet.point !== null ? ` (${formatLine(opp.bet.point)})` : '';
       return `<span class="outcome">${exchangeBadge}<strong>${opp.bet.outcome || ''}${point}</strong><span>${book}</span></span>`;
@@ -951,22 +1488,23 @@
       const point = item.point !== undefined && item.point !== null ? ` (${item.point})` : '';
       const stake = item.stake !== undefined ? formatCurrency(item.stake) : '';
       const book = item.bookmaker ? ` @ ${item.bookmaker}` : '';
-      const exchangeBadge = item.is_exchange ? '<span class="exchange-badge">Exchange</span>' : '';
+      const exchangeBadge = item.is_exchange ? `<span class="exchange-badge">${t('exchange')}</span>` : '';
       const effectiveNote =
         item.is_exchange && item.effective_price && item.effective_price !== item.price
-          ? `<span class="mono net-note">Net @ ${formatOddsDisplay(item.effective_price)}</span>`
+          ? `<span class="mono net-note">${t('net_at', { odds: formatOddsDisplay(item.effective_price) })}</span>`
           : '';
       return `<span class="outcome">${exchangeBadge}<strong>${item.outcome || ''}${point}</strong><span>${stake}${book}</span><span class="mono">@ ${formatOddsDisplay(item.price)}</span>${effectiveNote}</span>`;
     }
 
     function formatMarket(opp) {
+      const marketLabel = translateMarketLabel(opp.market || '');
       if (opp.market === 'spreads' || opp.market === 'totals') {
         const point = opp.best_odds?.[0]?.point ?? opp.point;
         if (point !== undefined && point !== null) {
-          return `${opp.market} (${point})`;
+          return `${marketLabel} (${point})`;
         }
       }
-      return opp.market || '';
+      return marketLabel;
     }
 
     function formatPrice(value) {
@@ -1026,9 +1564,9 @@
     function renderPartialWarning(data) {
       if (data && data.partial && Array.isArray(data.sport_errors) && data.sport_errors.length) {
         const details = data.sport_errors
-          .map((err) => `${err.sport || err.sport_key || 'Unknown'} (${err.error || 'Unknown error'})`)
+          .map((err) => `${err.sport || err.sport_key || t('unknown')} (${err.error || t('unknown_error')})`)
           .join(', ');
-        partialWarning.innerHTML = `<strong>Partial results:</strong> Failed to fetch odds for ${details}.`;
+        partialWarning.innerHTML = t('partial_results', { details });
         partialWarning.classList.remove('hidden');
       } else {
         partialWarning.classList.add('hidden');
@@ -1043,10 +1581,10 @@
     }
 
     function formatExchangeCell(opp) {
-      if (!opp || !opp.has_exchange) return '<span class="exchange-flag none">No</span>';
+      if (!opp || !opp.has_exchange) return `<span class="exchange-flag none">${t('no')}</span>`;
       const names = Array.isArray(opp.exchange_books) && opp.exchange_books.length
         ? opp.exchange_books.join(', ')
-        : 'Exchange';
+        : t('exchange');
       const commissionText = formatCommissionPercent(lastCommissionRate);
       return `<span class="exchange-flag">${names}<span class="exchange-note">${commissionText}</span></span>`;
     }
@@ -1071,13 +1609,14 @@
     function formatGapCell(opp) {
       const integers = opp.gap?.middle_integers || [];
       const keyFlag = opp.gap?.includes_key_number ? ' 🏈' : '';
-      const points = typeof opp.gap?.points === 'number' ? `${opp.gap.points.toFixed(1)} pts` : '';
+      const points =
+        typeof opp.gap?.points === 'number' ? t('gap_points', { points: opp.gap.points.toFixed(1) }) : '';
       let range = '';
       if (integers.length) {
         range = integers.length === 1 ? `${integers[0]}` : `${integers[0]}-${integers[integers.length - 1]}`;
       }
       const pieces = [range, points].filter(Boolean);
-      return `${pieces.join(' · ')}${keyFlag}`;
+      return `${pieces.join(t('gap_separator'))}${keyFlag}`;
     }
 
     function formatMiddleSide(side, stakeValue) {
@@ -1085,9 +1624,10 @@
       const line = side.line !== undefined && side.line !== null ? formatLine(side.line) : '';
       const book = side.bookmaker ? ` @ ${side.bookmaker}` : '';
       const odds = side.effective_price ? formatOddsDisplay(side.effective_price) : formatOddsDisplay(side.price);
-      const stake = stakeValue ? `Stake: ${formatCurrency(stakeValue)}` : '';
-      const exchangeBadge = side.is_exchange ? '<span class="exchange-badge">Exchange</span>' : '';
-      return `<span class="outcome">${exchangeBadge}<strong>${side.team || ''} ${line}</strong><span>Odds: ${odds}${book}</span><span>${stake}</span></span>`;
+      const stake = stakeValue ? t('stake_label', { stake: formatCurrency(stakeValue) }) : '';
+      const exchangeBadge = side.is_exchange ? `<span class="exchange-badge">${t('exchange')}</span>` : '';
+      const oddsText = t('odds_label', { odds });
+      return `<span class="outcome">${exchangeBadge}<strong>${side.team || ''} ${line}</strong><span>${oddsText}${book}</span><span>${stake}</span></span>`;
     }
 
     function formatLine(value) {
@@ -1105,7 +1645,7 @@
 
     function renderBars(container, data, type) {
       if (!data || Object.keys(data).length === 0) {
-        container.innerHTML = '<p class="muted">No data</p>';
+        container.innerHTML = `<p class="muted">${t('no_data')}</p>`;
         return;
       }
       const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
@@ -1114,9 +1654,10 @@
         .map(([label, value]) => {
           const width = Math.max((value / max) * 100, 8);
           const bandClass = type === 'roi' ? roiBandLabelClass(label) : '';
+          const displayLabel = type === 'sport' ? translateSportLabel(label) : label;
           return `
             <div class="bar-row">
-              <span>${label}</span>
+              <span>${displayLabel}</span>
               <div class="bar-track">
                 <div class="bar-fill ${bandClass}" style="width: ${width}%"></div>
               </div>
