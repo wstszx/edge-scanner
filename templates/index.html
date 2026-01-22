@@ -9,7 +9,7 @@
   <header class="app-header">
     <div>
       <h1>Edge Scanner</h1>
-      <p data-i18n="tagline">Arbitrage • Middles • +EV</p>
+      <p data-i18n="tagline">Arbitrage &bull; Middles &bull; +EV</p>
     </div>
     <div class="header-controls">
       <div class="odds-format" id="odds-toggle" role="button" tabindex="0">
@@ -17,14 +17,14 @@
         <span data-format="american" data-i18n="odds_american">American</span>
       </div>
       <div class="odds-format" id="language-toggle" role="button" tabindex="0" aria-label="Toggle language">
-        <span data-lang="en" class="active">EN</span>
-        <span data-lang="zh">中文</span>
+        <span data-lang="en" class="active" data-i18n="lang_en">EN</span>
+        <span data-lang="zh" data-i18n="lang_zh">ZH</span>
       </div>
       <div class="odds-format" id="density-toggle" role="button" tabindex="0" aria-label="Toggle density">
         <span data-density="comfort" class="active" data-i18n="density_comfort">Comfort</span>
         <span data-density="compact" data-i18n="density_compact">Compact</span>
       </div>
-      <button class="icon-btn" id="theme-toggle" title="Toggle theme">🌙</button>
+      <button class="icon-btn" id="theme-toggle" title="Toggle theme">Theme</button>
     </div>
   </header>
 
@@ -37,14 +37,14 @@
           {% if has_env_key %}
           <div class="field">
             <label class="field-label" data-i18n="api_key_label">API Key</label>
-            <div class="env-key-notice" data-i18n="env_key_notice">✓ Using API key from .env</div>
+            <div class="env-key-notice" data-i18n="env_key_notice">Using API key from .env</div>
           </div>
           {% else %}
           <div class="field">
             <label class="field-label" data-i18n="api_key_label">API Key</label>
             <div class="input-wrap">
               <input type="password" id="api-key" placeholder="sk_xxx" required />
-              <button type="button" id="toggle-key" class="icon-btn" aria-label="Show API key">👁</button>
+              <button type="button" id="toggle-key" class="icon-btn" aria-label="Show API key">Show</button>
             </div>
           </div>
           {% endif %}
@@ -55,73 +55,85 @@
           </div>
           
         </div>
-        <details class="advanced-settings">
-          <summary data-i18n="advanced_settings">Advanced settings</summary>
-          <p class="helper" data-i18n="advanced_hint">Less frequently adjusted options live here.</p>
-          <div class="config-grid advanced-grid">
-            <div class="field">
-              <label class="field-label" data-i18n="sports_label">Sports</label>
-              <div id="sports-list" class="sports-grid">
-                {% for sport in default_sports %}
-                <label class="checkbox">
-                  <input type="checkbox" name="sports" value="{{ sport.key }}" checked />
-                  <span data-sport-key="{{ sport.key }}">{{ sport.label }}</span>
-                </label>
-                {% endfor %}
-              </div>
-              <label class="checkbox all-toggle">
-                <input type="checkbox" id="all-sports" />
-                <span data-i18n="all_sports_label">Scan all active sports (uses more API credits)</span>
-              </label>
-              <p class="helper" data-i18n="sports_helper">Each selected sport consumes one API request.</p>
+        <div class="advanced-trigger">
+          <button type="button" id="open-advanced" class="secondary-btn" data-i18n="advanced_settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="advanced-modal">Advanced settings</button>
+          <span id="advanced-summary" class="summary-chip"></span>
+        </div>
+        <div class="modal hidden" id="advanced-modal" role="dialog" aria-modal="true" aria-labelledby="advanced-title" aria-hidden="true">
+          <div class="modal-backdrop" data-close="modal"></div>
+          <div class="modal-panel">
+            <div class="modal-head">
+              <h3 id="advanced-title" data-i18n="advanced_settings">Advanced settings</h3>
+              <button type="button" id="close-advanced" class="icon-btn" aria-label="Close" data-i18n="close">Close</button>
             </div>
-            <div class="field">
-              <label class="field-label" data-i18n="regions_label">Regions</label>
-              <div id="regions-list" class="regions-grid">
-                {% for region in region_options %}
-                <label class="checkbox">
-                  <input type="checkbox" name="regions" value="{{ region.key }}" {% if region.default %}checked{% endif %} />
-                  <span data-region-key="{{ region.key }}">{{ region.label }}</span>
-                </label>
-                {% endfor %}
-              </div>
-              <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included for sharp reference.</p>
-            </div>
-            <div class="field">
-              <label class="field-label" data-i18n="bookmakers_label">Bookmakers</label>
-              <div id="bookmakers-list" class="bookmakers-grid">
-                {% for book in bookmaker_options %}
-                <label class="checkbox">
-                  <input type="checkbox" name="bookmakers" value="{{ book.key }}" {% if book.key in default_bookmaker_keys %}checked{% endif %} />
-                  <span data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
-                </label>
-                {% endfor %}
-              </div>
-              <label class="checkbox all-toggle">
-                <input type="checkbox" id="all-bookmakers" {% if not default_bookmaker_keys %}checked{% endif %} />
-                <span data-i18n="all_bookmakers_label">Use all available bookmakers</span>
-              </label>
-              <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected bookmakers.</p>
-            </div>
-            <div class="field commission-field">
-              <div class="commission-box">
-                <div>
-                  <label class="field-label" data-i18n="commission_label">Exchange Commission (%)</label>
-                  <p class="helper" data-i18n="commission_helper">Applied to Betfair, Matchbook, Sportsbet Exchange, etc.</p>
+            <p class="helper" data-i18n="advanced_hint">Less frequently adjusted options live here.</p>
+            <div class="config-grid advanced-grid">
+              <div class="field">
+                <label class="field-label" data-i18n="sports_label">Sports</label>
+                <div id="sports-list" class="sports-grid">
+                  {% for sport in default_sports %}
+                  <label class="checkbox">
+                    <input type="checkbox" name="sports" value="{{ sport.key }}" checked />
+                    <span data-sport-key="{{ sport.key }}">{{ sport.label }}</span>
+                  </label>
+                  {% endfor %}
                 </div>
-                <div class="input-wrap">
-                  <input type="number" id="commission-input" min="0" max="15" step="0.5" value="{{ default_commission_percent }}" />
-                </div>
-                <p class="helper" data-i18n="commission_note">Net ROI/EV already reflects this commission.</p>
+                <label class="checkbox all-toggle">
+                  <input type="checkbox" id="all-sports" />
+                  <span data-i18n="all_sports_label">Scan all active sports (uses more API credits)</span>
+                </label>
+                <p class="helper" data-i18n="sports_helper">Each selected sport consumes one API request.</p>
               </div>
+              <div class="field">
+                <label class="field-label" data-i18n="regions_label">Regions</label>
+                <div id="regions-list" class="regions-grid">
+                  {% for region in region_options %}
+                  <label class="checkbox">
+                    <input type="checkbox" name="regions" value="{{ region.key }}" {% if region.default %}checked{% endif %} />
+                    <span data-region-key="{{ region.key }}">{{ region.label }}</span>
+                  </label>
+                  {% endfor %}
+                </div>
+                <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included for sharp reference.</p>
+              </div>
+              <div class="field">
+                <label class="field-label" data-i18n="bookmakers_label">Bookmakers</label>
+                <div id="bookmakers-list" class="bookmakers-grid">
+                  {% for book in bookmaker_options %}
+                  <label class="checkbox">
+                    <input type="checkbox" name="bookmakers" value="{{ book.key }}" {% if book.key in default_bookmaker_keys %}checked{% endif %} />
+                    <span data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
+                  </label>
+                  {% endfor %}
+                </div>
+                <label class="checkbox all-toggle">
+                  <input type="checkbox" id="all-bookmakers" {% if not default_bookmaker_keys %}checked{% endif %} />
+                  <span data-i18n="all_bookmakers_label">Use all available bookmakers</span>
+                </label>
+                <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected bookmakers.</p>
+              </div>
+              <div class="field commission-field">
+                <div class="commission-box">
+                  <div>
+                    <label class="field-label" data-i18n="commission_label">Exchange Commission (%)</label>
+                    <p class="helper" data-i18n="commission_helper">Applied to Betfair, Matchbook, Sportsbet Exchange, etc.</p>
+                  </div>
+                  <div class="input-wrap">
+                    <input type="number" id="commission-input" min="0" max="15" step="0.5" value="{{ default_commission_percent }}" />
+                  </div>
+                  <p class="helper" data-i18n="commission_note">Net ROI/EV already reflects this commission.</p>
+                </div>
+              </div>
+            </div>
+            <div class="advanced-actions">
+              <button type="button" id="save-settings" class="secondary-btn" data-i18n="save_settings">Save Settings</button>
             </div>
           </div>
-        </details>
+        </div>
 
         <div class="actions">
           <div class="action-buttons">
             <button type="submit" id="scan-btn" data-i18n="scan_now">Scan Now</button>
-            <button type="button" id="save-settings" class="secondary-btn" data-i18n="save_settings">Save Settings</button>
           </div>
           <div id="status" class="status"></div>
         </div>
@@ -502,7 +514,10 @@
     const allBookmakersToggle = document.getElementById('all-bookmakers');
     const bookmakersList = document.getElementById('bookmakers-list');
     const saveSettingsBtn = document.getElementById('save-settings');
-    const advancedDetails = document.querySelector('.advanced-settings');
+    const advancedSummary = document.getElementById('advanced-summary');
+    const advancedModal = document.getElementById('advanced-modal');
+    const openAdvancedBtn = document.getElementById('open-advanced');
+    const closeAdvancedBtn = document.getElementById('close-advanced');
     const summaryROI = document.getElementById('roi-bars');
     const summarySport = document.getElementById('sport-bars');
     const tableCount = document.getElementById('table-count');
@@ -575,6 +590,7 @@
     let densityMode = localStorage.getItem('edge-density') || 'comfort';
     let isScanning = false;
     let lastStatus = null;
+    let lastFocusedElement = null;
 
     const TRANSLATIONS = {
       en: {
@@ -584,10 +600,16 @@
         toggle_theme: 'Toggle theme',
         toggle_language: 'Toggle language',
         toggle_density: 'Toggle density',
+        lang_en: 'EN',
+        lang_zh: '\u4e2d\u6587',
         api_key_label: 'API Key',
-        env_key_notice: '✓ Using API key from .env',
+                env_key_notice: 'Using API key from .env',
         api_key_show: 'Show API key',
-        api_key_hide: 'Hide API key',
+                api_key_hide: 'Hide API key',
+        show_short: 'Show',
+        hide_short: 'Hide',
+        theme_light: 'Light',
+        theme_dark: 'Dark',
         total_stake_label: 'Total Stake ($)',
         stake_helper: 'Used for arbitrage + middles stake splits.',
         sports_label: 'Sports',
@@ -598,6 +620,9 @@
         bookmakers_helper: 'Optional: limit results to the selected bookmakers.',
         advanced_settings: 'Advanced settings',
         advanced_hint: 'Less frequently adjusted options live here.',
+        advanced_summary: 'Sports {sports} | Regions {regions} | Books {books}',
+        summary_all: 'All',
+        close: 'Close',
         regions_label: 'Regions',
         regions_helper: 'Select at least one region. EU is always included for sharp reference.',
         commission_label: 'Exchange Commission (%)',
@@ -757,10 +782,16 @@
         toggle_theme: '切换主题',
         toggle_language: '切换语言',
         toggle_density: '切换密度',
+        lang_en: 'EN',
+        lang_zh: '\u4e2d\u6587',
         api_key_label: 'API 密钥',
-        env_key_notice: '✓ 使用 .env 中的 API 密钥',
+                        env_key_notice: '使用 .env 中的 API 密钥',
         api_key_show: '显示 API 密钥',
-        api_key_hide: '隐藏 API 密钥',
+                        api_key_hide: '隐藏 API 密钥',
+                show_short: '显示',
+                hide_short: '隐藏',
+                theme_light: '浅色',
+                theme_dark: '深色',
         total_stake_label: '总下注金额 ($)',
         stake_helper: '用于套利和中间盘的下注拆分计算。',
         sports_label: '体育项目',
@@ -771,6 +802,9 @@
         bookmakers_helper: '可选：仅扫描选定的平台。',
         advanced_settings: '高级设置',
         advanced_hint: '不常调整的选项放在这里。',
+                advanced_summary: '项目 {sports} | 地区 {regions} | 平台 {books}',
+        summary_all: '全部',
+        close: '关闭',
         regions_label: '地区',
         regions_helper: '至少选择一个地区。为锐盘参考将始终包含 EU。',
         commission_label: '交易所手续费 (%)',
@@ -1009,6 +1043,9 @@
       if (themeToggle) {
         themeToggle.title = t('toggle_theme');
       }
+      if (closeAdvancedBtn) {
+        closeAdvancedBtn.setAttribute('aria-label', t('close'));
+      }
       if (languageToggle) {
         languageToggle.setAttribute('aria-label', t('toggle_language'));
       }
@@ -1021,7 +1058,9 @@
       updateSportLabels();
       updateRegionLabels();
       updateKellyOptions();
+      updateThemeToggleText();
       updateToggleKeyLabel();
+      updateAdvancedSummary();
       updateScanButtonText();
       updateArbSortLabel();
       updateMiddlesSortLabel();
@@ -1064,10 +1103,63 @@
       scanBtn.textContent = isScanning ? t('scanning') : t('scan_now');
     }
 
+    function updateThemeToggleText() {
+      if (!themeToggle) return;
+      const current = document.documentElement.dataset.theme || 'light';
+      const key = current === 'dark' ? 'theme_dark' : 'theme_light';
+      themeToggle.textContent = t(key);
+    }
+
     function updateToggleKeyLabel() {
       if (!toggleKeyBtn || !apiKeyInput) return;
       const key = apiKeyInput.type === 'password' ? 'api_key_show' : 'api_key_hide';
       toggleKeyBtn.setAttribute('aria-label', t(key));
+      const shortKey = apiKeyInput.type === 'password' ? 'show_short' : 'hide_short';
+      toggleKeyBtn.textContent = t(shortKey);
+    }
+
+    function collectCheckedLabels(name) {
+      if (!form) return [];
+      return Array.from(form.querySelectorAll(`input[name="${name}"]:checked`))
+        .map((input) => {
+          const label = input.closest('label');
+          const span = label ? label.querySelector('span') : null;
+          return (span ? span.textContent : input.value || '').trim();
+        })
+        .filter(Boolean);
+    }
+
+    function updateAdvancedSummary() {
+      if (!advancedSummary || !form) return;
+      const sportsLabels = collectCheckedLabels('sports');
+      const regionsLabels = collectCheckedLabels('regions');
+      const booksLabels = collectCheckedLabels('bookmakers');
+      const sportsSelected = sportsLabels.length;
+      const regionsSelected = regionsLabels.length;
+      const booksSelected = booksLabels.length;
+      const sportsText = allSportsToggle && allSportsToggle.checked ? t('summary_all') : sportsSelected;
+      const booksText = allBookmakersToggle && allBookmakersToggle.checked ? t('summary_all') : booksSelected;
+      advancedSummary.textContent = t('advanced_summary', {
+        sports: sportsText,
+        regions: regionsSelected,
+        books: booksText,
+      });
+      const sportsDetail =
+        allSportsToggle && allSportsToggle.checked
+          ? t('summary_all')
+          : sportsLabels.length
+            ? sportsLabels.join(', ')
+            : '0';
+      const regionsDetail = regionsLabels.length ? regionsLabels.join(', ') : '0';
+      const booksDetail =
+        allBookmakersToggle && allBookmakersToggle.checked
+          ? t('summary_all')
+          : booksLabels.length
+            ? booksLabels.join(', ')
+            : '0';
+      advancedSummary.title = `${t('sports_label')}: ${sportsDetail}\n${t('regions_label')}: ${regionsDetail}\n${t(
+        'bookmakers_label',
+      )}: ${booksDetail}`;
     }
 
     function updateSportLabels() {
@@ -1241,7 +1333,6 @@
       const savedTheme = localStorage.getItem('arb-theme');
       if (savedTheme) {
         document.documentElement.dataset.theme = savedTheme;
-        themeToggle.textContent = savedTheme === 'dark' ? '☀️' : '🌙';
       }
       applyTranslations();
       loadSettings();
@@ -1252,10 +1343,8 @@
       toggleKeyBtn.addEventListener('click', () => {
         if (apiKeyInput.type === 'password') {
           apiKeyInput.type = 'text';
-          toggleKeyBtn.textContent = '🙈';
         } else {
           apiKeyInput.type = 'password';
-          toggleKeyBtn.textContent = '👁';
         }
         updateToggleKeyLabel();
       });
@@ -1266,7 +1355,7 @@
       const next = current === 'light' ? 'dark' : 'light';
       document.documentElement.dataset.theme = next;
       localStorage.setItem('arb-theme', next);
-      themeToggle.textContent = next === 'dark' ? '☀️' : '🌙';
+      updateThemeToggleText();
     });
 
     if (oddsToggle) {
@@ -1324,6 +1413,97 @@
       allBookmakersToggle.addEventListener('change', updateBookmakerState);
     }
 
+    function getFocusableElements(container) {
+      if (!container) return [];
+      const selector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex=\"-1\"])';
+      return Array.from(container.querySelectorAll(selector)).filter((el) => !el.disabled);
+    }
+
+    function handleModalKeydown(event) {
+      if (event.key !== 'Tab') return;
+      const focusables = getFocusableElements(advancedModal);
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    function openAdvancedModal() {
+      if (!advancedModal) return;
+      lastFocusedElement = document.activeElement;
+      advancedModal.classList.remove('hidden');
+      advancedModal.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('modal-open');
+      if (openAdvancedBtn) {
+        openAdvancedBtn.setAttribute('aria-expanded', 'true');
+      }
+      advancedModal.addEventListener('keydown', handleModalKeydown);
+      const focusables = getFocusableElements(advancedModal);
+      const focusTarget = (closeAdvancedBtn || focusables[0]);
+      if (focusTarget && focusTarget.focus) {
+        focusTarget.focus();
+      }
+    }
+
+    function closeAdvancedModal() {
+      if (!advancedModal) return;
+      advancedModal.classList.add('hidden');
+      advancedModal.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('modal-open');
+      advancedModal.removeEventListener('keydown', handleModalKeydown);
+      if (openAdvancedBtn) {
+        openAdvancedBtn.setAttribute('aria-expanded', 'false');
+      }
+      if (lastFocusedElement && lastFocusedElement.focus) {
+        lastFocusedElement.focus();
+      }
+    }
+
+    if (openAdvancedBtn) {
+      openAdvancedBtn.addEventListener('click', openAdvancedModal);
+    }
+
+    if (closeAdvancedBtn) {
+      closeAdvancedBtn.addEventListener('click', closeAdvancedModal);
+    }
+
+    if (advancedModal) {
+      advancedModal.addEventListener('click', (event) => {
+        const target = event.target;
+        if (target && target.dataset && target.dataset.close === 'modal') {
+          closeAdvancedModal();
+        }
+      });
+    }
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && advancedModal && !advancedModal.classList.contains('hidden')) {
+        closeAdvancedModal();
+      }
+    });
+
+    if (form) {
+      form.addEventListener('change', (event) => {
+        const target = event.target;
+        if (!target || !target.matches) return;
+        if (
+          target.matches('input[name="sports"]') ||
+          target.matches('input[name="regions"]') ||
+          target.matches('input[name="bookmakers"]') ||
+          target.id === 'all-sports' ||
+          target.id === 'all-bookmakers'
+        ) {
+          updateAdvancedSummary();
+        }
+      });
+    }
+
     function setCheckboxGroup(name, values) {
       if (!Array.isArray(values)) return;
       const boxes = form ? form.querySelectorAll(`input[name="${name}"]`) : [];
@@ -1357,7 +1537,6 @@
         kellyFraction: kellySelect ? kellySelect.value : '',
         plusEvSort: plusEvSortSelect ? plusEvSortSelect.value : '',
         activeTab,
-        advancedOpen: advancedDetails ? advancedDetails.open : false,
       };
     }
 
@@ -1383,9 +1562,9 @@
       if (bankrollInput && settings.bankroll !== undefined) bankrollInput.value = settings.bankroll;
       if (kellySelect && settings.kellyFraction !== undefined) kellySelect.value = settings.kellyFraction;
       if (plusEvSortSelect && settings.plusEvSort) plusEvSortSelect.value = settings.plusEvSort;
-      if (advancedDetails && settings.advancedOpen !== undefined) advancedDetails.open = settings.advancedOpen;
       if (settings.activeTab) setActiveTab(settings.activeTab);
       updateBookmakerState();
+      updateAdvancedSummary();
     }
 
     function loadSettings() {

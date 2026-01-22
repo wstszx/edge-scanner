@@ -111,31 +111,75 @@ main {
   gap: 1.5rem;
 }
 
-.advanced-settings {
+.advanced-trigger {
   margin-top: 1rem;
-  border: 1px dashed var(--card-border);
-  border-radius: 12px;
-  padding: 0.8rem 1rem;
-  background: rgba(59, 130, 246, 0.04);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
 }
 
-.advanced-settings summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--text);
-  list-style: none;
+.summary-chip {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--card-border);
 }
 
-.advanced-settings summary::-webkit-details-marker {
+.advanced-actions {
+  margin-top: 0.8rem;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.modal.hidden {
   display: none;
 }
 
-.advanced-settings[open] {
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
 }
 
-.advanced-settings .helper {
-  margin-top: 0.35rem;
+.modal-panel {
+  position: relative;
+  z-index: 1;
+  width: min(900px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.25);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.modal-head h3 {
+  margin: 0;
+}
+
+body.modal-open {
+  overflow: hidden;
 }
 
 .advanced-grid {
@@ -333,6 +377,7 @@ main {
   align-items: center;
   gap: 0.6rem;
   flex-wrap: wrap;
+  flex: 0 0 auto;
 }
 
 #scan-btn {
@@ -368,6 +413,11 @@ main {
 .status {
   min-height: 1.4rem;
   color: var(--text-muted);
+  flex: 1 1 auto;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .status.success {
