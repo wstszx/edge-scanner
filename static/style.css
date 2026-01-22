@@ -321,8 +321,8 @@ body.modal-open {
 
 .bookmakers-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 0.35rem 1rem;
+  grid-template-columns: 1fr;
+  gap: 0.6rem;
   max-height: 220px;
   overflow-y: auto;
   border: 1px solid var(--card-border);
@@ -332,6 +332,30 @@ body.modal-open {
 
 .bookmakers-grid.is-disabled {
   opacity: 0.55;
+}
+
+.bookmaker-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.bookmaker-row .checkbox {
+  margin: 0;
+}
+
+.bookmaker-row span {
+  font-size: 0.9rem;
+}
+
+.bookmaker-url {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  background: var(--card);
+  color: inherit;
 }
 
 .regions-grid {
@@ -408,6 +432,17 @@ body.modal-open {
 
 .secondary-btn:hover {
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.open-cell {
+  white-space: nowrap;
+}
+
+.open-books-btn {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  white-space: nowrap;
 }
 
 .status {
@@ -940,6 +975,11 @@ body.modal-open {
   #plus-ev-table th:nth-child(5),
   #plus-ev-table td:nth-child(5) {
     display: none;
+  }
+
+  .bookmaker-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .app-header {

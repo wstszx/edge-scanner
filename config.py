@@ -197,6 +197,32 @@ BOOKMAKER_LABELS = {
     "polymarket": "Polymarket",
 }
 
+BOOKMAKER_URLS = {
+    "draftkings": "https://sportsbook.draftkings.com/",
+    "fanduel": "https://sportsbook.fanduel.com/",
+    "betmgm": "https://sports.betmgm.com/",
+    "caesars": "https://www.caesars.com/sportsbook-and-casino",
+    "pointsbetus": "https://pointsbet.com/",
+    "pointsbet": "https://pointsbet.com.au/",
+    "betrivers": "https://www.betrivers.com/",
+    "unibet": "https://www.unibet.com/",
+    "888sport": "https://www.888sport.com/",
+    "bovada": "https://www.bovada.lv/",
+    "betonlineag": "https://www.betonline.ag/",
+    "lowvig": "https://www.lowvig.ag/",
+    "williamhill_us": "https://www.williamhill.com/us/",
+    "betway": "https://www.betway.com/",
+    "sportsbettingag": "https://www.sportsbetting.ag/",
+    "barstool": "https://www.barstoolsportsbook.com/",
+    "pinnacle": "https://www.pinnacle.com/",
+    "matchbook": "https://www.matchbook.com/",
+    "betfair_ex_eu": "https://www.betfair.com/exchange/",
+    "betfair_ex_uk": "https://www.betfair.com/exchange/",
+    "betfair_ex_au": "https://www.betfair.com.au/exchange/",
+    "sportsbet_ex": "https://www.sportsbet.com.au/",
+    "polymarket": "https://polymarket.com/",
+}
+
 BOOKMAKER_KEYS: list[str] = []
 for key in ["pinnacle", "polymarket"]:
     if key not in BOOKMAKER_KEYS:

@@ -85,44 +85,31 @@
                 <p class="helper" data-i18n="sports_helper">Each selected sport consumes one API request.</p>
               </div>
               <div class="field">
-                <label class="field-label" data-i18n="regions_label">Regions</label>
-                <div id="regions-list" class="regions-grid">
-                  {% for region in region_options %}
-                  <label class="checkbox">
-                    <input type="checkbox" name="regions" value="{{ region.key }}" {% if region.default %}checked{% endif %} />
-                    <span data-region-key="{{ region.key }}">{{ region.label }}</span>
-                  </label>
-                  {% endfor %}
-                </div>
-                <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included for sharp reference.</p>
-              </div>
-              <div class="field">
                 <label class="field-label" data-i18n="bookmakers_label">Bookmakers</label>
                 <div id="bookmakers-list" class="bookmakers-grid">
                   {% for book in bookmaker_options %}
-                  <label class="checkbox">
-                    <input type="checkbox" name="bookmakers" value="{{ book.key }}" {% if book.key in default_bookmaker_keys %}checked{% endif %} />
-                    <span data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
-                  </label>
+                  <div class="bookmaker-row">
+                    <label class="checkbox">
+                      <input type="checkbox" name="bookmakers" value="{{ book.key }}" {% if book.key in default_bookmaker_keys %}checked{% endif %} />
+                      <span data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
+                    </label>
+                    <input
+                      type="url"
+                      inputmode="url"
+                      class="bookmaker-url"
+                      data-bookmaker-key="{{ book.key }}"
+                      value="{{ bookmaker_links.get(book.key, '') }}"
+                      placeholder="https://..."
+                    />
+                  </div>
                   {% endfor %}
                 </div>
+                <p class="helper" data-i18n="bookmaker_links_helper">Customize base URLs used when opening books.</p>
                 <label class="checkbox all-toggle">
                   <input type="checkbox" id="all-bookmakers" {% if not default_bookmaker_keys %}checked{% endif %} />
                   <span data-i18n="all_bookmakers_label">Use all available bookmakers</span>
                 </label>
                 <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected bookmakers.</p>
-              </div>
-              <div class="field commission-field">
-                <div class="commission-box">
-                  <div>
-                    <label class="field-label" data-i18n="commission_label">Exchange Commission (%)</label>
-                    <p class="helper" data-i18n="commission_helper">Applied to Betfair, Matchbook, Sportsbet Exchange, etc.</p>
-                  </div>
-                  <div class="input-wrap">
-                    <input type="number" id="commission-input" min="0" max="15" step="0.5" value="{{ default_commission_percent }}" />
-                  </div>
-                  <p class="helper" data-i18n="commission_note">Net ROI/EV already reflects this commission.</p>
-                </div>
               </div>
             </div>
             <div class="advanced-actions">
@@ -327,6 +314,7 @@
                 <th data-i18n="table_market">Market</th>
                 <th data-i18n="table_outcome_1">Outcome 1</th>
                 <th data-i18n="table_outcome_2">Outcome 2</th>
+                <th data-i18n="table_open">Open</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -495,12 +483,14 @@
       defaultMinEdgePercent: {{ default_min_edge_percent }},
       defaultBankroll: {{ default_bankroll }},
       defaultKellyFraction: {{ default_kelly_fraction }},
-      kellyOptions: {{ kelly_options | tojson }}
+      kellyOptions: {{ kelly_options | tojson }},
+      bookmakerLinks: {{ bookmaker_links | tojson }}
     };
   </script>
 
   <script>
     const appConfig = window.edgeScannerConfig || {};
+    let bookmakerLinks = { ...(appConfig.bookmakerLinks || {}) };
     const hasEnvKey = appConfig.hasEnvKey === true || appConfig.hasEnvKey === 'true';
     const form = document.getElementById('scan-form');
     const apiKeyInput = document.getElementById('api-key');
@@ -513,6 +503,7 @@
     const allSportsToggle = document.getElementById('all-sports');
     const allBookmakersToggle = document.getElementById('all-bookmakers');
     const bookmakersList = document.getElementById('bookmakers-list');
+    const bookmakerLinksList = bookmakersList;
     const saveSettingsBtn = document.getElementById('save-settings');
     const advancedSummary = document.getElementById('advanced-summary');
     const advancedModal = document.getElementById('advanced-modal');
@@ -582,7 +573,7 @@
     const scanEvents = document.getElementById('scan-events');
     const scanSports = document.getElementById('scan-sports');
     const scanErrors = document.getElementById('scan-errors');
-    const defaultCommissionPercent = parseFloat(commissionInput.value) || 5;
+    const defaultCommissionPercent = commissionInput ? parseFloat(commissionInput.value) || 5 : 5;
     let lastCommissionRate = defaultCommissionPercent / 100;
     let lastScanData = null;
     let activeTab = 'arbitrage';
@@ -618,9 +609,11 @@
         bookmakers_label: 'Bookmakers',
         all_bookmakers_label: 'Use all available bookmakers',
         bookmakers_helper: 'Optional: limit results to the selected bookmakers.',
+        bookmaker_links_label: 'Bookmaker Links',
+        bookmaker_links_helper: 'Customize base URLs used when opening books. Leave blank to skip opening that book.',
         advanced_settings: 'Advanced settings',
         advanced_hint: 'Less frequently adjusted options live here.',
-        advanced_summary: 'Sports {sports} | Regions {regions} | Books {books}',
+        advanced_summary: 'Sports {sports} | Books {books}',
         summary_all: 'All',
         close: 'Close',
         regions_label: 'Regions',
@@ -714,6 +707,7 @@
         table_market: 'Market',
         table_outcome_1: 'Outcome 1',
         table_outcome_2: 'Outcome 2',
+        table_open: 'Open',
         table_ev: 'EV',
         table_prob: 'Prob',
         table_gap: 'Gap',
@@ -762,6 +756,9 @@
         exchange: 'Exchange',
         no: 'No',
         no_data: 'No data',
+        open_books: 'Open',
+        open_books_missing: 'No bookmaker links available for this opportunity.',
+        open_books_blocked: 'Pop-up blocked. Allow pop-ups to open bookmakers.',
         gap_points: '{points} pts',
         gap_separator: ' / ',
         kelly_roll: '{percent}% roll',
@@ -800,9 +797,11 @@
         bookmakers_label: '博彩平台',
         all_bookmakers_label: '使用所有可用平台',
         bookmakers_helper: '可选：仅扫描选定的平台。',
+        bookmaker_links_label: '平台链接',
+        bookmaker_links_helper: '自定义自动打开时使用的基础网址，留空则不打开该平台。',
         advanced_settings: '高级设置',
         advanced_hint: '不常调整的选项放在这里。',
-                advanced_summary: '项目 {sports} | 地区 {regions} | 平台 {books}',
+                advanced_summary: '项目 {sports} | 平台 {books}',
         summary_all: '全部',
         close: '关闭',
         regions_label: '地区',
@@ -896,6 +895,7 @@
         table_market: '盘口',
         table_outcome_1: '选项 1',
         table_outcome_2: '选项 2',
+        table_open: '打开',
         table_ev: 'EV',
         table_prob: '概率',
         table_gap: '间隔',
@@ -944,6 +944,9 @@
         exchange: '交易所',
         no: '否',
         no_data: '暂无数据',
+        open_books: '打开',
+        open_books_missing: '暂无可打开的平台链接。',
+        open_books_blocked: '弹窗被拦截，请允许弹窗后重试。',
         gap_points: '{points} 分',
         gap_separator: ' / ',
         kelly_roll: '{percent}% 资金',
@@ -1132,16 +1135,13 @@
     function updateAdvancedSummary() {
       if (!advancedSummary || !form) return;
       const sportsLabels = collectCheckedLabels('sports');
-      const regionsLabels = collectCheckedLabels('regions');
       const booksLabels = collectCheckedLabels('bookmakers');
       const sportsSelected = sportsLabels.length;
-      const regionsSelected = regionsLabels.length;
       const booksSelected = booksLabels.length;
       const sportsText = allSportsToggle && allSportsToggle.checked ? t('summary_all') : sportsSelected;
       const booksText = allBookmakersToggle && allBookmakersToggle.checked ? t('summary_all') : booksSelected;
       advancedSummary.textContent = t('advanced_summary', {
         sports: sportsText,
-        regions: regionsSelected,
         books: booksText,
       });
       const sportsDetail =
@@ -1150,16 +1150,13 @@
           : sportsLabels.length
             ? sportsLabels.join(', ')
             : '0';
-      const regionsDetail = regionsLabels.length ? regionsLabels.join(', ') : '0';
       const booksDetail =
         allBookmakersToggle && allBookmakersToggle.checked
           ? t('summary_all')
           : booksLabels.length
             ? booksLabels.join(', ')
             : '0';
-      advancedSummary.title = `${t('sports_label')}: ${sportsDetail}\n${t('regions_label')}: ${regionsDetail}\n${t(
-        'bookmakers_label',
-      )}: ${booksDetail}`;
+      advancedSummary.title = `${t('sports_label')}: ${sportsDetail}\n${t('bookmakers_label')}: ${booksDetail}`;
     }
 
     function updateSportLabels() {
@@ -1337,6 +1334,7 @@
       applyTranslations();
       loadSettings();
       updateBookmakerState();
+      syncBookmakerLinksFromInputs();
     });
 
     if (toggleKeyBtn && apiKeyInput) {
@@ -1494,13 +1492,18 @@
         if (!target || !target.matches) return;
         if (
           target.matches('input[name="sports"]') ||
-          target.matches('input[name="regions"]') ||
           target.matches('input[name="bookmakers"]') ||
           target.id === 'all-sports' ||
           target.id === 'all-bookmakers'
         ) {
           updateAdvancedSummary();
         }
+      });
+    }
+
+    if (bookmakerLinksList) {
+      bookmakerLinksList.addEventListener('input', () => {
+        syncBookmakerLinksFromInputs();
       });
     }
 
@@ -1513,18 +1516,63 @@
       });
     }
 
+    function getBookmakerLinkInputs() {
+      if (!bookmakerLinksList) return [];
+      return Array.from(bookmakerLinksList.querySelectorAll('input[data-bookmaker-key]'));
+    }
+
+    function collectBookmakerLinks() {
+      const inputs = getBookmakerLinkInputs();
+      const links = {};
+      inputs.forEach((input) => {
+        const key = input.dataset.bookmakerKey;
+        if (!key) return;
+        links[key] = (input.value || '').trim();
+      });
+      return links;
+    }
+
+    function syncBookmakerLinksFromInputs() {
+      const inputs = getBookmakerLinkInputs();
+      const next = { ...(appConfig.bookmakerLinks || {}) };
+      inputs.forEach((input) => {
+        const key = input.dataset.bookmakerKey;
+        if (!key) return;
+        const value = (input.value || '').trim();
+        if (value) {
+          next[key] = value;
+        } else {
+          delete next[key];
+        }
+      });
+      bookmakerLinks = next;
+    }
+
+    function applyBookmakerLinks(values) {
+      if (!values) {
+        syncBookmakerLinksFromInputs();
+        return;
+      }
+      const inputs = getBookmakerLinkInputs();
+      inputs.forEach((input) => {
+        const key = input.dataset.bookmakerKey;
+        if (!key) return;
+        if (Object.prototype.hasOwnProperty.call(values, key)) {
+          input.value = values[key] || '';
+        }
+      });
+      syncBookmakerLinksFromInputs();
+    }
+
     function collectSettings() {
       const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
-      const regions = Array.from(form?.querySelectorAll('input[name="regions"]:checked') || []).map((el) => el.value);
       const bookmakers = Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
       return {
         stake: stakeInput ? stakeInput.value : '',
         allSports: allSportsToggle ? allSportsToggle.checked : false,
         sports,
-        regions,
         allBookmakers: allBookmakersToggle ? allBookmakersToggle.checked : true,
         bookmakers,
-        commission: commissionInput ? commissionInput.value : '',
         minRoi: minRoiInput ? minRoiInput.value : '',
         exchangeOnly: exchangeOnlyToggle ? exchangeOnlyToggle.checked : false,
         arbitrageSort: arbitrageSortSelect ? arbitrageSortSelect.value : '',
@@ -1537,6 +1585,7 @@
         kellyFraction: kellySelect ? kellySelect.value : '',
         plusEvSort: plusEvSortSelect ? plusEvSortSelect.value : '',
         activeTab,
+        bookmakerUrls: collectBookmakerLinks(),
       };
     }
 
@@ -1545,12 +1594,10 @@
       if (stakeInput && settings.stake !== undefined) stakeInput.value = settings.stake;
       if (allSportsToggle && settings.allSports !== undefined) allSportsToggle.checked = Boolean(settings.allSports);
       setCheckboxGroup('sports', settings.sports);
-      setCheckboxGroup('regions', settings.regions);
       if (allBookmakersToggle && settings.allBookmakers !== undefined) {
         allBookmakersToggle.checked = Boolean(settings.allBookmakers);
       }
       setCheckboxGroup('bookmakers', settings.bookmakers);
-      if (commissionInput && settings.commission !== undefined) commissionInput.value = settings.commission;
       if (minRoiInput && settings.minRoi !== undefined) minRoiInput.value = settings.minRoi;
       if (exchangeOnlyToggle && settings.exchangeOnly !== undefined) exchangeOnlyToggle.checked = settings.exchangeOnly;
       if (arbitrageSortSelect && settings.arbitrageSort) arbitrageSortSelect.value = settings.arbitrageSort;
@@ -1563,6 +1610,11 @@
       if (kellySelect && settings.kellyFraction !== undefined) kellySelect.value = settings.kellyFraction;
       if (plusEvSortSelect && settings.plusEvSort) plusEvSortSelect.value = settings.plusEvSort;
       if (settings.activeTab) setActiveTab(settings.activeTab);
+      if (settings.bookmakerUrls) {
+        applyBookmakerLinks(settings.bookmakerUrls);
+      } else {
+        syncBookmakerLinksFromInputs();
+      }
       updateBookmakerState();
       updateAdvancedSummary();
     }
@@ -1599,24 +1651,18 @@
       const bookmakers = useAllBookmakers
         ? []
         : Array.from(form.querySelectorAll('input[name="bookmakers"]:checked')).map((el) => el.value);
-      const regions = Array.from(form.querySelectorAll('input[name="regions"]:checked')).map((el) => el.value);
       if (!useAllBookmakers && !bookmakers.length) {
         showStatusKey('select_bookmakers', 'error');
         return;
       }
-      if (!regions.length) {
-        showStatusKey('select_region', 'error');
-        return;
-      }
       const stakeValue = parseFloat(stakeInput.value) || 100;
-      const commissionValue = Number.isFinite(parseFloat(commissionInput.value))
+      const commissionValue = commissionInput && Number.isFinite(parseFloat(commissionInput.value))
         ? parseFloat(commissionInput.value)
         : defaultCommissionPercent;
       await runScan({
         apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
         sports,
         bookmakers,
-        regions,
         commission: commissionValue,
         allSports: allSportsToggle.checked,
         stake: stakeValue,
@@ -1794,6 +1840,7 @@
           const profitClass = profitValue > 0 ? 'gain' : profitValue < 0 ? 'loss' : '';
           const grossCell = opp.has_exchange ? formatRoiBadge(grossRoi) : '';
           const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
+          const openLabel = t('open_books');
           row.innerHTML = `
             <td><span class="roi-badge">${formatPercent(netRoi)}</span>${netNegative ? `<span class="roi-warning" title="${t('net_roi_negative')}">⚠</span>` : ''}</td>
             <td>${grossCell}</td>
@@ -1804,7 +1851,16 @@
             <td>${commence}</td>
             <td>${formatMarket(opp)}</td>
             <td>${formatOutcome(breakdown[0])}</td>
-            <td>${formatOutcome(breakdown[1])}</td>`;
+            <td>${formatOutcome(breakdown[1])}</td>
+            <td class="open-cell"><button type="button" class="secondary-btn open-books-btn">${openLabel}</button></td>`;
+          const openBtn = row.querySelector('.open-books-btn');
+          if (openBtn) {
+            openBtn.addEventListener('click', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              openBookmakerTabs(opp);
+            });
+          }
           resultsBody.appendChild(row);
         });
         tableCount.textContent = t('results_profit', {
@@ -2141,6 +2197,83 @@
           ? `<span class="mono net-note">${t('net_at', { odds: formatOddsDisplay(item.effective_price) })}</span>`
           : '';
       return `<span class="outcome">${exchangeBadge}<strong>${item.outcome || ''}${point}</strong><span>${stake}${book}</span><span class="mono">@ ${formatOddsDisplay(item.price)}</span>${effectiveNote}</span>`;
+    }
+
+    function collectBookTargets(opp) {
+      const odds = Array.isArray(opp?.best_odds) ? opp.best_odds : [];
+      const seen = new Set();
+      const entries = [];
+      odds.forEach((item) => {
+        const key = (item.bookmaker_key || '').trim();
+        const name = (item.bookmaker || '').trim();
+        const id = key || name;
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        entries.push({ key, name });
+      });
+      return entries;
+    }
+
+    function buildEventQuery(opp) {
+      if (!opp) return '';
+      const home = opp.home_team || '';
+      const away = opp.away_team || '';
+      const eventName = opp.event || (home && away ? `${away} vs ${home}` : '');
+      const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
+      const timeLabel = opp.commence_time ? formatDateTime(opp.commence_time) : '';
+      return [eventName, sportLabel, timeLabel].filter(Boolean).join(' ');
+    }
+
+    function normalizeUrl(value) {
+      const trimmed = (value || '').trim();
+      if (!trimmed) return '';
+      if (/^https?:\/\//i.test(trimmed)) return trimmed;
+      return `https://${trimmed}`;
+    }
+
+    function openExternalTab(url) {
+      const target = normalizeUrl(url);
+      if (!target) return 0;
+      const opened = window.open(target, '_blank', 'noopener,noreferrer');
+      return opened ? 1 : 0;
+    }
+
+    function buildBookSearchUrl(book, eventQuery, baseUrl) {
+      const queryText = (eventQuery || '').trim();
+      const nameText = (book?.name || book?.key || '').trim();
+      if (!queryText && !nameText) return '';
+      const normalizedBase = normalizeUrl(baseUrl);
+      if (normalizedBase) {
+        try {
+          const domain = new URL(normalizedBase).hostname;
+          if (domain) {
+            const siteQuery = `site:${domain} ${queryText || nameText}`;
+            return `https://www.google.com/search?q=${encodeURIComponent(siteQuery)}`;
+          }
+        } catch (err) {
+          // Ignore URL parse issues; fall back to a generic search.
+        }
+      }
+      const fallbackQuery = [nameText, queryText].filter(Boolean).join(' ');
+      return `https://www.google.com/search?q=${encodeURIComponent(fallbackQuery)}`;
+    }
+
+    function openBookmakerTabs(opp) {
+      const books = collectBookTargets(opp);
+      if (!books.length) {
+        showStatusKey('open_books_missing', 'error');
+        return;
+      }
+      const eventQuery = buildEventQuery(opp);
+      let openedCount = 0;
+      books.forEach((book) => {
+        const baseUrl = bookmakerLinks[book.key];
+        openedCount += openExternalTab(baseUrl);
+        openedCount += openExternalTab(buildBookSearchUrl(book, eventQuery, baseUrl));
+      });
+      if (!openedCount) {
+        showStatusKey('open_books_blocked', 'error');
+      }
     }
 
     function formatMarket(opp) {

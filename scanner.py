@@ -520,6 +520,9 @@ def _collect_market_entries(
             "sport_display": game.get("sport_display")
             or SPORT_DISPLAY_NAMES.get(game.get("sport_key", ""), game.get("sport_key")),
             "sport_title": game.get("sport_title"),
+            "event_id": game.get("id"),
+            "home_team": game.get("home_team"),
+            "away_team": game.get("away_team"),
             "event": f"{game.get('away_team')} vs {game.get('home_team')}",
             "commence_time": game.get("commence_time"),
             "market": market_key,

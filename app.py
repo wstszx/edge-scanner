@@ -13,6 +13,7 @@ from flask import Flask, jsonify, render_template, request
 
 from config import (
     BOOKMAKER_OPTIONS,
+    BOOKMAKER_URLS,
     DEFAULT_BANKROLL,
     DEFAULT_BOOKMAKER_KEYS,
     DEFAULT_COMMISSION,
@@ -49,6 +50,7 @@ def index() -> str:
         default_bankroll=DEFAULT_BANKROLL,
         default_kelly_fraction=DEFAULT_KELLY_FRACTION,
         kelly_options=KELLY_OPTIONS,
+        bookmaker_links=BOOKMAKER_URLS,
     )
 
 
