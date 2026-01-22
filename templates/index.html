@@ -111,6 +111,20 @@
                 </label>
                 <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected bookmakers.</p>
               </div>
+              <div class="field auto-scan-field">
+                <label class="field-label" data-i18n="auto_scan_label">Auto Scan</label>
+                <div class="auto-scan-controls">
+                  <label class="checkbox">
+                    <input type="checkbox" id="auto-scan-toggle" />
+                    <span data-i18n="auto_scan_enable">Enable auto scan</span>
+                  </label>
+                  <div class="auto-scan-interval">
+                    <span class="auto-scan-label" data-i18n="auto_scan_interval_label">Interval (min)</span>
+                    <input type="number" id="auto-scan-interval" min="1" step="1" value="10" />
+                  </div>
+                </div>
+                <p class="helper" data-i18n="auto_scan_helper">Runs a scan on a timer using your current filters.</p>
+              </div>
             </div>
             <div class="advanced-actions">
               <button type="button" id="save-settings" class="secondary-btn" data-i18n="save_settings">Save Settings</button>
@@ -573,6 +587,8 @@
     const scanEvents = document.getElementById('scan-events');
     const scanSports = document.getElementById('scan-sports');
     const scanErrors = document.getElementById('scan-errors');
+    const autoScanToggle = document.getElementById('auto-scan-toggle');
+    const autoScanIntervalInput = document.getElementById('auto-scan-interval');
     const defaultCommissionPercent = commissionInput ? parseFloat(commissionInput.value) || 5 : 5;
     let lastCommissionRate = defaultCommissionPercent / 100;
     let lastScanData = null;
@@ -582,6 +598,7 @@
     let isScanning = false;
     let lastStatus = null;
     let lastFocusedElement = null;
+    let autoScanTimer = null;
 
     const TRANSLATIONS = {
       en: {
@@ -611,6 +628,10 @@
         bookmakers_helper: 'Optional: limit results to the selected bookmakers.',
         bookmaker_links_label: 'Bookmaker Links',
         bookmaker_links_helper: 'Customize base URLs used when opening books. Leave blank to skip opening that book.',
+        auto_scan_label: 'Auto Scan',
+        auto_scan_enable: 'Enable auto scan',
+        auto_scan_interval_label: 'Interval (min)',
+        auto_scan_helper: 'Runs a scan on a timer using your current filters.',
         advanced_settings: 'Advanced settings',
         advanced_hint: 'Less frequently adjusted options live here.',
         advanced_summary: 'Sports {sports} | Books {books}',
@@ -799,6 +820,10 @@
         bookmakers_helper: '可选：仅扫描选定的平台。',
         bookmaker_links_label: '平台链接',
         bookmaker_links_helper: '自定义自动打开时使用的基础网址，留空则不打开该平台。',
+        auto_scan_label: '自动扫描',
+        auto_scan_enable: '启用自动扫描',
+        auto_scan_interval_label: '扫描间隔（分钟）',
+        auto_scan_helper: '按当前筛选条件定时自动扫描。',
         advanced_settings: '高级设置',
         advanced_hint: '不常调整的选项放在这里。',
                 advanced_summary: '项目 {sports} | 平台 {books}',
@@ -1548,6 +1573,56 @@
       bookmakerLinks = next;
     }
 
+    function readAutoScanMinutes() {
+      if (!autoScanIntervalInput) return 10;
+      const value = parseFloat(autoScanIntervalInput.value);
+      if (!Number.isFinite(value) || value <= 0) return 10;
+      return value;
+    }
+
+    function triggerAutoScan() {
+      if (isScanning) return;
+      if (!hasEnvKey && !apiKeyInput?.value.trim()) return;
+      const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
+      const useAllSports = allSportsToggle ? allSportsToggle.checked : false;
+      if (!useAllSports && !sports.length) return;
+      const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
+      const bookmakers = useAllBookmakers
+        ? []
+        : Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
+      if (!useAllBookmakers && !bookmakers.length) return;
+      const stakeValue = parseFloat(stakeInput?.value) || 100;
+      const commissionValue = commissionInput && Number.isFinite(parseFloat(commissionInput.value))
+        ? parseFloat(commissionInput.value)
+        : defaultCommissionPercent;
+      runScan({
+        apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
+        sports,
+        bookmakers,
+        commission: commissionValue,
+        allSports: useAllSports,
+        stake: stakeValue,
+        sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
+        minEdgePercent: parseFloat(minEdgeInput?.value) || appConfig.defaultMinEdgePercent || 1,
+        bankroll: parseFloat(bankrollInput?.value) || appConfig.defaultBankroll || 1000,
+        kellyFraction: parseFloat(kellySelect?.value) || appConfig.defaultKellyFraction || 0.25,
+      });
+    }
+
+    function configureAutoScan() {
+      if (!autoScanToggle) return;
+      if (autoScanTimer) {
+        clearInterval(autoScanTimer);
+        autoScanTimer = null;
+      }
+      if (!autoScanToggle.checked) return;
+      const minutes = readAutoScanMinutes();
+      if (autoScanIntervalInput) {
+        autoScanIntervalInput.value = String(minutes);
+      }
+      autoScanTimer = setInterval(triggerAutoScan, minutes * 60 * 1000);
+    }
+
     function applyBookmakerLinks(values) {
       if (!values) {
         syncBookmakerLinksFromInputs();
@@ -1586,6 +1661,8 @@
         plusEvSort: plusEvSortSelect ? plusEvSortSelect.value : '',
         activeTab,
         bookmakerUrls: collectBookmakerLinks(),
+        autoScanEnabled: autoScanToggle ? autoScanToggle.checked : false,
+        autoScanMinutes: autoScanIntervalInput ? autoScanIntervalInput.value : '',
       };
     }
 
@@ -1609,12 +1686,19 @@
       if (bankrollInput && settings.bankroll !== undefined) bankrollInput.value = settings.bankroll;
       if (kellySelect && settings.kellyFraction !== undefined) kellySelect.value = settings.kellyFraction;
       if (plusEvSortSelect && settings.plusEvSort) plusEvSortSelect.value = settings.plusEvSort;
+      if (autoScanToggle && settings.autoScanEnabled !== undefined) {
+        autoScanToggle.checked = Boolean(settings.autoScanEnabled);
+      }
+      if (autoScanIntervalInput && settings.autoScanMinutes !== undefined) {
+        autoScanIntervalInput.value = settings.autoScanMinutes;
+      }
       if (settings.activeTab) setActiveTab(settings.activeTab);
       if (settings.bookmakerUrls) {
         applyBookmakerLinks(settings.bookmakerUrls);
       } else {
         syncBookmakerLinksFromInputs();
       }
+      configureAutoScan();
       updateBookmakerState();
       updateAdvancedSummary();
     }
@@ -1633,11 +1717,21 @@
     function saveSettings() {
       const payload = collectSettings();
       localStorage.setItem('edge-scan-settings', JSON.stringify(payload));
+      configureAutoScan();
       showStatusKey('settings_saved', 'success');
+      closeAdvancedModal();
     }
 
     if (saveSettingsBtn) {
       saveSettingsBtn.addEventListener('click', saveSettings);
+    }
+
+    if (autoScanToggle) {
+      autoScanToggle.addEventListener('change', configureAutoScan);
+    }
+
+    if (autoScanIntervalInput) {
+      autoScanIntervalInput.addEventListener('change', configureAutoScan);
     }
 
     form.addEventListener('submit', async (event) => {

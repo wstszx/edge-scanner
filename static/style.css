@@ -184,6 +184,7 @@ body.modal-open {
 
 .advanced-grid {
   margin-top: 0.8rem;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
 }
 
 .tabs {
@@ -351,6 +352,39 @@ body.modal-open {
 
 .bookmaker-url {
   width: 100%;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  background: var(--card);
+  color: inherit;
+}
+
+.auto-scan-field {
+  grid-column: 1 / -1;
+}
+
+.auto-scan-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.auto-scan-interval {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.auto-scan-label {
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.auto-scan-interval input {
+  width: 90px;
   padding: 0.5rem 0.6rem;
   border-radius: 8px;
   border: 1px solid var(--card-border);
@@ -927,6 +961,10 @@ body.modal-open {
 
   .sidebar {
     position: static;
+  }
+
+  .advanced-grid {
+    grid-template-columns: 1fr;
   }
 
   #results-table th:nth-child(2),
