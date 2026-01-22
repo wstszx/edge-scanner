@@ -64,6 +64,22 @@ def _normalize_regions(regions: Optional[Sequence[str]]) -> List[str]:
     return valid or list(DEFAULT_REGION_KEYS)
 
 
+def _normalize_bookmakers(bookmakers: Optional[Sequence[str]]) -> List[str]:
+    if not bookmakers:
+        return []
+    normalized = []
+    seen = set()
+    for book in bookmakers:
+        if not isinstance(book, str):
+            continue
+        key = book.strip()
+        if not key or key in seen:
+            continue
+        normalized.append(key)
+        seen.add(key)
+    return normalized
+
+
 def _ensure_sharp_region(regions: List[str], sharp_key: str) -> List[str]:
     """Always include the region required for the sharp reference (usually EU)."""
     required_region = SHARP_BOOK_MAP.get(sharp_key, {}).get("region", "eu")
@@ -359,7 +375,11 @@ def filter_sports(
 
 
 def fetch_odds_for_sport(
-    api_key: str, sport_key: str, markets: Sequence[str], regions: Sequence[str]
+    api_key: str,
+    sport_key: str,
+    markets: Sequence[str],
+    regions: Sequence[str],
+    bookmakers: Optional[Sequence[str]] = None,
 ) -> List[dict]:
     url = f"{BASE_URL}/sports/{sport_key}/odds/"
     params = {
@@ -369,6 +389,8 @@ def fetch_odds_for_sport(
         "oddsFormat": "decimal",
         "commenceTimeFrom": _iso_now(),
     }
+    if bookmakers:
+        params["bookmakers"] = ",".join(bookmakers)
     resp = _request(url, params)
     try:
         return resp.json()
@@ -1038,6 +1060,7 @@ def run_scan(
     all_sports: bool = False,
     stake_amount: float = 100.0,
     regions: Optional[Sequence[str]] = None,
+    bookmakers: Optional[Sequence[str]] = None,
     commission_rate: float = DEFAULT_COMMISSION,
     sharp_book: str = DEFAULT_SHARP_BOOK,
     min_edge_percent: float = MIN_EDGE_PERCENT,
@@ -1050,6 +1073,7 @@ def run_scan(
         stake_amount = 100.0
     normalized_regions = _normalize_regions(regions)
     normalized_regions = _ensure_sharp_region(normalized_regions, sharp_book or DEFAULT_SHARP_BOOK)
+    normalized_bookmakers = _normalize_bookmakers(bookmakers)
     if not normalized_regions:
         return {
             "success": False,
@@ -1109,7 +1133,13 @@ def run_scan(
         markets = markets_for_sport(sport_key)
         api_calls_used += 1
         try:
-            events = fetch_odds_for_sport(api_key, sport_key, markets, normalized_regions)
+            events = fetch_odds_for_sport(
+                api_key,
+                sport_key,
+                markets,
+                normalized_regions,
+                bookmakers=normalized_bookmakers,
+            )
         except ScannerError as exc:
             sport_errors.append(
                 {

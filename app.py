@@ -12,7 +12,9 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 
 from config import (
+    BOOKMAKER_OPTIONS,
     DEFAULT_BANKROLL,
+    DEFAULT_BOOKMAKER_KEYS,
     DEFAULT_COMMISSION,
     DEFAULT_KELLY_FRACTION,
     DEFAULT_REGION_KEYS,
@@ -37,6 +39,8 @@ def index() -> str:
         "index.html",
         default_sports=DEFAULT_SPORT_OPTIONS,
         region_options=REGION_OPTIONS,
+        bookmaker_options=BOOKMAKER_OPTIONS,
+        default_bookmaker_keys=DEFAULT_BOOKMAKER_KEYS,
         default_commission_percent=int(DEFAULT_COMMISSION * 100),
         has_env_key=bool(ENV_API_KEY),
         sharp_books=SHARP_BOOKS,
@@ -56,6 +60,7 @@ def scan() -> tuple:
     all_sports = bool(payload.get("allSports"))
     stake = payload.get("stake")
     regions = payload.get("regions")
+    bookmakers = payload.get("bookmakers")
     commission = payload.get("commission")
     sharp_book = (payload.get("sharpBook") or DEFAULT_SHARP_BOOK).strip().lower()
     try:
@@ -87,6 +92,10 @@ def scan() -> tuple:
         regions_value = [str(region) for region in regions if isinstance(region, str)]
     else:
         regions_value = None
+    if isinstance(bookmakers, list):
+        bookmakers_value = [str(book) for book in bookmakers if isinstance(book, str) and book.strip()]
+    else:
+        bookmakers_value = None
     try:
         commission_percent = float(commission) if commission is not None else None
     except (TypeError, ValueError):
@@ -95,12 +104,13 @@ def scan() -> tuple:
         commission_percent / 100.0 if commission_percent is not None else DEFAULT_COMMISSION
     )
     result = run_scan(
-        api_key,
-        sports,
-        all_sports,
-        stake_value,
-        regions_value or DEFAULT_REGION_KEYS,
-        commission_rate,
+        api_key=api_key,
+        sports=sports,
+        all_sports=all_sports,
+        stake_amount=stake_value,
+        regions=regions_value or DEFAULT_REGION_KEYS,
+        bookmakers=bookmakers_value,
+        commission_rate=commission_rate,
         sharp_book=sharp_book,
         min_edge_percent=min_edge_percent,
         bankroll=bankroll_value,

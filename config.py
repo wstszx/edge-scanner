@@ -171,6 +171,53 @@ SOFT_BOOK_KEYS = [
     "barstool",
 ]
 
+SOFT_BOOK_LABELS = {
+    "draftkings": "DraftKings",
+    "fanduel": "FanDuel",
+    "betmgm": "BetMGM",
+    "caesars": "Caesars",
+    "pointsbetus": "PointsBet US",
+    "pointsbet": "PointsBet",
+    "betrivers": "BetRivers",
+    "unibet": "Unibet",
+    "888sport": "888sport",
+    "bovada": "Bovada",
+    "betonlineag": "BetOnline",
+    "lowvig": "LowVig",
+    "williamhill_us": "William Hill US",
+    "betway": "Betway",
+    "sportsbettingag": "SportsBetting",
+    "barstool": "Barstool",
+}
+
+BOOKMAKER_LABELS = {
+    **{key: meta["name"] for key, meta in EXCHANGE_BOOKMAKERS.items()},
+    **{book["key"]: book["name"] for book in SHARP_BOOKS if book.get("key")},
+    **SOFT_BOOK_LABELS,
+    "polymarket": "Polymarket",
+}
+
+BOOKMAKER_KEYS: list[str] = []
+for key in ["pinnacle", "polymarket"]:
+    if key not in BOOKMAKER_KEYS:
+        BOOKMAKER_KEYS.append(key)
+for key in EXCHANGE_BOOKMAKERS:
+    if key not in BOOKMAKER_KEYS:
+        BOOKMAKER_KEYS.append(key)
+for book in SHARP_BOOKS:
+    key = book.get("key")
+    if key and key not in BOOKMAKER_KEYS:
+        BOOKMAKER_KEYS.append(key)
+for key in SOFT_BOOK_KEYS:
+    if key not in BOOKMAKER_KEYS:
+        BOOKMAKER_KEYS.append(key)
+
+BOOKMAKER_OPTIONS = [
+    {"key": key, "label": BOOKMAKER_LABELS.get(key, key)}
+    for key in BOOKMAKER_KEYS
+]
+DEFAULT_BOOKMAKER_KEYS: list[str] = []
+
 EDGE_BANDS = [
     (1.0, 3.0, "1-3%"),
     (3.0, 5.0, "3-5%"),

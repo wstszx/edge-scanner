@@ -79,6 +79,22 @@
             </div>
             <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included for sharp reference.</p>
           </div>
+          <div class="field">
+            <label class="field-label" data-i18n="bookmakers_label">Bookmakers</label>
+            <div id="bookmakers-list" class="bookmakers-grid">
+              {% for book in bookmaker_options %}
+              <label class="checkbox">
+                <input type="checkbox" name="bookmakers" value="{{ book.key }}" {% if book.key in default_bookmaker_keys %}checked{% endif %} />
+                <span data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
+              </label>
+              {% endfor %}
+            </div>
+            <label class="checkbox all-toggle">
+              <input type="checkbox" id="all-bookmakers" {% if not default_bookmaker_keys %}checked{% endif %} />
+              <span data-i18n="all_bookmakers_label">Use all available bookmakers</span>
+            </label>
+            <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected bookmakers.</p>
+          </div>
           <div class="field commission-field">
             <div class="commission-box">
               <div>
@@ -466,6 +482,8 @@
     const resultsBody = document.querySelector('#results-table tbody');
     const emptyState = document.getElementById('table-empty');
     const allSportsToggle = document.getElementById('all-sports');
+    const allBookmakersToggle = document.getElementById('all-bookmakers');
+    const bookmakersList = document.getElementById('bookmakers-list');
     const summaryROI = document.getElementById('roi-bars');
     const summarySport = document.getElementById('sport-bars');
     const tableCount = document.getElementById('table-count');
@@ -556,6 +574,9 @@
         sports_label: 'Sports',
         all_sports_label: 'Scan all active sports (uses more API credits)',
         sports_helper: 'Each selected sport consumes one API request.',
+        bookmakers_label: 'Bookmakers',
+        all_bookmakers_label: 'Use all available bookmakers',
+        bookmakers_helper: 'Optional: limit results to the selected bookmakers.',
         regions_label: 'Regions',
         regions_helper: 'Select at least one region. EU is always included for sharp reference.',
         commission_label: 'Exchange Commission (%)',
@@ -702,6 +723,7 @@
         scan_failed: 'Scan failed',
         enter_api_key: 'Please enter your API key.',
         select_region: 'Select at least one region.',
+        select_bookmakers: 'Select at least one bookmaker.',
         unknown: 'Unknown',
         unknown_error: 'Unknown error',
       },
@@ -721,6 +743,9 @@
         sports_label: '体育项目',
         all_sports_label: '扫描所有活跃项目（消耗更多 API 额度）',
         sports_helper: '每个已选项目会消耗一次 API 请求。',
+        bookmakers_label: '博彩平台',
+        all_bookmakers_label: '使用所有可用平台',
+        bookmakers_helper: '可选：仅扫描选定的平台。',
         regions_label: '地区',
         regions_helper: '至少选择一个地区。为锐盘参考将始终包含 EU。',
         commission_label: '交易所手续费 (%)',
@@ -867,6 +892,7 @@
         scan_failed: '扫描失败',
         enter_api_key: '请输入 API 密钥。',
         select_region: '请至少选择一个地区。',
+        select_bookmakers: '请至少选择一个平台。',
         unknown: '未知',
         unknown_error: '未知错误',
       },
@@ -1191,6 +1217,7 @@
         themeToggle.textContent = savedTheme === 'dark' ? '☀️' : '🌙';
       }
       applyTranslations();
+      updateBookmakerState();
     });
 
     if (toggleKeyBtn && apiKeyInput) {
@@ -1253,6 +1280,22 @@
       });
     });
 
+    function updateBookmakerState() {
+      if (!allBookmakersToggle) return;
+      const useAll = allBookmakersToggle.checked;
+      const boxes = form ? form.querySelectorAll('input[name="bookmakers"]') : [];
+      boxes.forEach((box) => {
+        box.disabled = useAll;
+      });
+      if (bookmakersList) {
+        bookmakersList.classList.toggle('is-disabled', useAll);
+      }
+    }
+
+    if (allBookmakersToggle) {
+      allBookmakersToggle.addEventListener('change', updateBookmakerState);
+    }
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (!hasEnvKey && !apiKeyInput?.value.trim()) {
@@ -1260,7 +1303,15 @@
         return;
       }
       const sports = Array.from(form.querySelectorAll('input[name="sports"]:checked')).map((el) => el.value);
+      const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
+      const bookmakers = useAllBookmakers
+        ? []
+        : Array.from(form.querySelectorAll('input[name="bookmakers"]:checked')).map((el) => el.value);
       const regions = Array.from(form.querySelectorAll('input[name="regions"]:checked')).map((el) => el.value);
+      if (!useAllBookmakers && !bookmakers.length) {
+        showStatusKey('select_bookmakers', 'error');
+        return;
+      }
       if (!regions.length) {
         showStatusKey('select_region', 'error');
         return;
@@ -1272,6 +1323,7 @@
       await runScan({
         apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
         sports,
+        bookmakers,
         regions,
         commission: commissionValue,
         allSports: allSportsToggle.checked,
@@ -1313,6 +1365,7 @@
             allSports: payload.allSports,
             stake: payload.stake,
             regions: payload.regions,
+            bookmakers: payload.bookmakers,
             commission: payload.commission,
             sharpBook: payload.sharpBook,
             minEdgePercent: payload.minEdgePercent,
