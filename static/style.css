@@ -58,9 +58,26 @@ body {
 }
 
 main {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto 3rem;
   padding: 0 4vw;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.sidebar {
+  position: sticky;
+  top: 1.2rem;
+  align-self: start;
+}
+
+.content {
+  min-width: 0;
 }
 
 .card {
@@ -92,6 +109,37 @@ main {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 1.5rem;
+}
+
+.advanced-settings {
+  margin-top: 1rem;
+  border: 1px dashed var(--card-border);
+  border-radius: 12px;
+  padding: 0.8rem 1rem;
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.advanced-settings summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  list-style: none;
+}
+
+.advanced-settings summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-settings[open] {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+}
+
+.advanced-settings .helper {
+  margin-top: 0.35rem;
+}
+
+.advanced-grid {
+  margin-top: 0.8rem;
 }
 
 .tabs {
@@ -280,6 +328,13 @@ main {
   gap: 1rem;
 }
 
+.action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
 #scan-btn {
   padding: 0.75rem 1.8rem;
   font-size: 1rem;
@@ -294,6 +349,20 @@ main {
 #scan-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.secondary-btn {
+  padding: 0.7rem 1.4rem;
+  font-size: 0.95rem;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.secondary-btn:hover {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
 }
 
 .status {
@@ -767,6 +836,14 @@ main {
 }
 
 @media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+  }
+
   #results-table th:nth-child(2),
   #results-table td:nth-child(2),
   #results-table th:nth-child(4),

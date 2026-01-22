@@ -29,6 +29,8 @@
   </header>
 
   <main>
+    <div class="layout">
+      <aside class="sidebar">
     <section class="card config-card">
       <form id="scan-form">
         <div class="config-grid">
@@ -51,70 +53,111 @@
             <input type="number" id="stake-input" min="1" step="1" value="100" />
             <p class="helper" data-i18n="stake_helper">Used for arbitrage + middles stake splits.</p>
           </div>
-          <div class="field">
-            <label class="field-label" data-i18n="sports_label">Sports</label>
-            <div id="sports-list" class="sports-grid">
-              {% for sport in default_sports %}
-              <label class="checkbox">
-                <input type="checkbox" name="sports" value="{{ sport.key }}" checked />
-                <span data-sport-key="{{ sport.key }}">{{ sport.label }}</span>
-              </label>
-              {% endfor %}
-            </div>
-            <label class="checkbox all-toggle">
-              <input type="checkbox" id="all-sports" />
-              <span data-i18n="all_sports_label">Scan all active sports (uses more API credits)</span>
-            </label>
-            <p class="helper" data-i18n="sports_helper">Each selected sport consumes one API request.</p>
-          </div>
-          <div class="field">
-            <label class="field-label" data-i18n="regions_label">Regions</label>
-            <div id="regions-list" class="regions-grid">
-              {% for region in region_options %}
-              <label class="checkbox">
-                <input type="checkbox" name="regions" value="{{ region.key }}" {% if region.default %}checked{% endif %} />
-                <span data-region-key="{{ region.key }}">{{ region.label }}</span>
-              </label>
-              {% endfor %}
-            </div>
-            <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included for sharp reference.</p>
-          </div>
-          <div class="field">
-            <label class="field-label" data-i18n="bookmakers_label">Bookmakers</label>
-            <div id="bookmakers-list" class="bookmakers-grid">
-              {% for book in bookmaker_options %}
-              <label class="checkbox">
-                <input type="checkbox" name="bookmakers" value="{{ book.key }}" {% if book.key in default_bookmaker_keys %}checked{% endif %} />
-                <span data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
-              </label>
-              {% endfor %}
-            </div>
-            <label class="checkbox all-toggle">
-              <input type="checkbox" id="all-bookmakers" {% if not default_bookmaker_keys %}checked{% endif %} />
-              <span data-i18n="all_bookmakers_label">Use all available bookmakers</span>
-            </label>
-            <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected bookmakers.</p>
-          </div>
-          <div class="field commission-field">
-            <div class="commission-box">
-              <div>
-                <label class="field-label" data-i18n="commission_label">Exchange Commission (%)</label>
-                <p class="helper" data-i18n="commission_helper">Applied to Betfair, Matchbook, Sportsbet Exchange, etc.</p>
-              </div>
-              <div class="input-wrap">
-                <input type="number" id="commission-input" min="0" max="15" step="0.5" value="{{ default_commission_percent }}" />
-              </div>
-              <p class="helper" data-i18n="commission_note">Net ROI/EV already reflects this commission.</p>
-            </div>
-          </div>
+          
         </div>
+        <details class="advanced-settings">
+          <summary data-i18n="advanced_settings">Advanced settings</summary>
+          <p class="helper" data-i18n="advanced_hint">Less frequently adjusted options live here.</p>
+          <div class="config-grid advanced-grid">
+            <div class="field">
+              <label class="field-label" data-i18n="sports_label">Sports</label>
+              <div id="sports-list" class="sports-grid">
+                {% for sport in default_sports %}
+                <label class="checkbox">
+                  <input type="checkbox" name="sports" value="{{ sport.key }}" checked />
+                  <span data-sport-key="{{ sport.key }}">{{ sport.label }}</span>
+                </label>
+                {% endfor %}
+              </div>
+              <label class="checkbox all-toggle">
+                <input type="checkbox" id="all-sports" />
+                <span data-i18n="all_sports_label">Scan all active sports (uses more API credits)</span>
+              </label>
+              <p class="helper" data-i18n="sports_helper">Each selected sport consumes one API request.</p>
+            </div>
+            <div class="field">
+              <label class="field-label" data-i18n="regions_label">Regions</label>
+              <div id="regions-list" class="regions-grid">
+                {% for region in region_options %}
+                <label class="checkbox">
+                  <input type="checkbox" name="regions" value="{{ region.key }}" {% if region.default %}checked{% endif %} />
+                  <span data-region-key="{{ region.key }}">{{ region.label }}</span>
+                </label>
+                {% endfor %}
+              </div>
+              <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included for sharp reference.</p>
+            </div>
+            <div class="field">
+              <label class="field-label" data-i18n="bookmakers_label">Bookmakers</label>
+              <div id="bookmakers-list" class="bookmakers-grid">
+                {% for book in bookmaker_options %}
+                <label class="checkbox">
+                  <input type="checkbox" name="bookmakers" value="{{ book.key }}" {% if book.key in default_bookmaker_keys %}checked{% endif %} />
+                  <span data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
+                </label>
+                {% endfor %}
+              </div>
+              <label class="checkbox all-toggle">
+                <input type="checkbox" id="all-bookmakers" {% if not default_bookmaker_keys %}checked{% endif %} />
+                <span data-i18n="all_bookmakers_label">Use all available bookmakers</span>
+              </label>
+              <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected bookmakers.</p>
+            </div>
+            <div class="field commission-field">
+              <div class="commission-box">
+                <div>
+                  <label class="field-label" data-i18n="commission_label">Exchange Commission (%)</label>
+                  <p class="helper" data-i18n="commission_helper">Applied to Betfair, Matchbook, Sportsbet Exchange, etc.</p>
+                </div>
+                <div class="input-wrap">
+                  <input type="number" id="commission-input" min="0" max="15" step="0.5" value="{{ default_commission_percent }}" />
+                </div>
+                <p class="helper" data-i18n="commission_note">Net ROI/EV already reflects this commission.</p>
+              </div>
+            </div>
+          </div>
+        </details>
+
         <div class="actions">
-          <button type="submit" id="scan-btn" data-i18n="scan_now">Scan Now</button>
+          <div class="action-buttons">
+            <button type="submit" id="scan-btn" data-i18n="scan_now">Scan Now</button>
+            <button type="button" id="save-settings" class="secondary-btn" data-i18n="save_settings">Save Settings</button>
+          </div>
           <div id="status" class="status"></div>
         </div>
       </form>
     </section>
 
+    <section class="card scan-status" id="scan-status">
+      <div class="scan-status-head">
+        <h3 data-i18n="scan_status_title">Scan Status</h3>
+      </div>
+      <div class="scan-status-grid">
+        <div class="status-chip" id="scan-status-chip" data-status="idle">
+          <span class="status-label" data-i18n="scan_status_label">Status</span>
+          <span id="scan-status-text">Idle</span>
+        </div>
+        <div class="status-chip">
+          <span class="status-label" data-i18n="scan_last_scan">Last Scan</span>
+          <span id="scan-last-time">-</span>
+        </div>
+        <div class="status-chip">
+          <span class="status-label" data-i18n="scan_api_calls">API Calls</span>
+          <span id="scan-api-calls">-</span>
+        </div>
+        <div class="status-chip">
+          <span class="status-label" data-i18n="scan_events">Events</span>
+          <span id="scan-events">-</span>
+        </div>
+        <div class="status-chip">
+          <span class="status-label" data-i18n="scan_sports">Sports</span>
+          <span id="scan-sports">-</span>
+        </div>
+      </div>
+      <div id="scan-errors" class="scan-errors hidden"></div>
+    </section>
+      </aside>
+      <section class="content">
     <nav class="tabs">
       <button type="button" class="tab-btn active" data-tab="arbitrage" data-i18n="tab_arbitrage">Arbitrage</button>
       <button type="button" class="tab-btn" data-tab="middles" data-i18n="tab_middles">Middles</button>
@@ -210,35 +253,6 @@
           </select>
         </div>
       </div>
-    </section>
-
-    <section class="card scan-status" id="scan-status">
-      <div class="scan-status-head">
-        <h3 data-i18n="scan_status_title">Scan Status</h3>
-      </div>
-      <div class="scan-status-grid">
-        <div class="status-chip" id="scan-status-chip" data-status="idle">
-          <span class="status-label" data-i18n="scan_status_label">Status</span>
-          <span id="scan-status-text">Idle</span>
-        </div>
-        <div class="status-chip">
-          <span class="status-label" data-i18n="scan_last_scan">Last Scan</span>
-          <span id="scan-last-time">-</span>
-        </div>
-        <div class="status-chip">
-          <span class="status-label" data-i18n="scan_api_calls">API Calls</span>
-          <span id="scan-api-calls">-</span>
-        </div>
-        <div class="status-chip">
-          <span class="status-label" data-i18n="scan_events">Events</span>
-          <span id="scan-events">-</span>
-        </div>
-        <div class="status-chip">
-          <span class="status-label" data-i18n="scan_sports">Sports</span>
-          <span id="scan-sports">-</span>
-        </div>
-      </div>
-      <div id="scan-errors" class="scan-errors hidden"></div>
     </section>
 
     <section id="arbitrage-panel">
@@ -456,7 +470,10 @@
         <p data-i18n-html="caveat_plus_ev"><strong>Understanding +EV Betting:</strong> Sharp books (Pinnacle, Betfair, Matchbook) provide near "true" odds. When a soft book posts a higher price than fair value, the bet has positive expected value. +EV bets still lose roughly half the time—the edge shows up over many wagers. Kelly staking helps size bets, but variance can still be high. Always confirm odds before betting; edges disappear quickly.</p>
       </section>
     </section>
-  </main>
+  
+      </section>
+    </div>
+</main>
 
   <script>
     window.edgeScannerConfig = {
@@ -484,6 +501,8 @@
     const allSportsToggle = document.getElementById('all-sports');
     const allBookmakersToggle = document.getElementById('all-bookmakers');
     const bookmakersList = document.getElementById('bookmakers-list');
+    const saveSettingsBtn = document.getElementById('save-settings');
+    const advancedDetails = document.querySelector('.advanced-settings');
     const summaryROI = document.getElementById('roi-bars');
     const summarySport = document.getElementById('sport-bars');
     const tableCount = document.getElementById('table-count');
@@ -577,12 +596,15 @@
         bookmakers_label: 'Bookmakers',
         all_bookmakers_label: 'Use all available bookmakers',
         bookmakers_helper: 'Optional: limit results to the selected bookmakers.',
+        advanced_settings: 'Advanced settings',
+        advanced_hint: 'Less frequently adjusted options live here.',
         regions_label: 'Regions',
         regions_helper: 'Select at least one region. EU is always included for sharp reference.',
         commission_label: 'Exchange Commission (%)',
         commission_helper: 'Applied to Betfair, Matchbook, Sportsbet Exchange, etc.',
         commission_note: 'Net ROI/EV already reflects this commission.',
         scan_now: 'Scan Now',
+        save_settings: 'Save settings',
         scanning: 'Scanning...',
         scanning_wait: 'Scanning, please wait...',
         density_comfort: 'Comfort',
@@ -721,6 +743,7 @@
         net_roi_negative: 'Net ROI is negative after commission.',
         scan_complete: 'Scan complete at {time}',
         scan_failed: 'Scan failed',
+        settings_saved: 'Settings saved',
         enter_api_key: 'Please enter your API key.',
         select_region: 'Select at least one region.',
         select_bookmakers: 'Select at least one bookmaker.',
@@ -746,12 +769,15 @@
         bookmakers_label: '博彩平台',
         all_bookmakers_label: '使用所有可用平台',
         bookmakers_helper: '可选：仅扫描选定的平台。',
+        advanced_settings: '高级设置',
+        advanced_hint: '不常调整的选项放在这里。',
         regions_label: '地区',
         regions_helper: '至少选择一个地区。为锐盘参考将始终包含 EU。',
         commission_label: '交易所手续费 (%)',
         commission_helper: '适用于 Betfair、Matchbook、Sportsbet Exchange 等。',
         commission_note: '净 ROI/EV 已计入该手续费。',
         scan_now: '开始扫描',
+        save_settings: '保存设置',
         scanning: '扫描中...',
         scanning_wait: '正在扫描，请稍候...',
         density_comfort: '舒适',
@@ -890,6 +916,7 @@
         net_roi_negative: '计入手续费后净 ROI 为负。',
         scan_complete: '扫描完成：{time}',
         scan_failed: '扫描失败',
+        settings_saved: '设置已保存',
         enter_api_key: '请输入 API 密钥。',
         select_region: '请至少选择一个地区。',
         select_bookmakers: '请至少选择一个平台。',
@@ -1217,6 +1244,7 @@
         themeToggle.textContent = savedTheme === 'dark' ? '☀️' : '🌙';
       }
       applyTranslations();
+      loadSettings();
       updateBookmakerState();
     });
 
@@ -1294,6 +1322,91 @@
 
     if (allBookmakersToggle) {
       allBookmakersToggle.addEventListener('change', updateBookmakerState);
+    }
+
+    function setCheckboxGroup(name, values) {
+      if (!Array.isArray(values)) return;
+      const boxes = form ? form.querySelectorAll(`input[name="${name}"]`) : [];
+      const selected = new Set(values);
+      boxes.forEach((box) => {
+        box.checked = selected.has(box.value);
+      });
+    }
+
+    function collectSettings() {
+      const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
+      const regions = Array.from(form?.querySelectorAll('input[name="regions"]:checked') || []).map((el) => el.value);
+      const bookmakers = Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
+      return {
+        stake: stakeInput ? stakeInput.value : '',
+        allSports: allSportsToggle ? allSportsToggle.checked : false,
+        sports,
+        regions,
+        allBookmakers: allBookmakersToggle ? allBookmakersToggle.checked : true,
+        bookmakers,
+        commission: commissionInput ? commissionInput.value : '',
+        minRoi: minRoiInput ? minRoiInput.value : '',
+        exchangeOnly: exchangeOnlyToggle ? exchangeOnlyToggle.checked : false,
+        arbitrageSort: arbitrageSortSelect ? arbitrageSortSelect.value : '',
+        minGap: minGapInput ? minGapInput.value : '',
+        positiveEvOnly: positiveEvToggle ? positiveEvToggle.checked : false,
+        middleSort: middleSortSelect ? middleSortSelect.value : '',
+        sharpBook: sharpSelect ? sharpSelect.value : '',
+        minEdge: minEdgeInput ? minEdgeInput.value : '',
+        bankroll: bankrollInput ? bankrollInput.value : '',
+        kellyFraction: kellySelect ? kellySelect.value : '',
+        plusEvSort: plusEvSortSelect ? plusEvSortSelect.value : '',
+        activeTab,
+        advancedOpen: advancedDetails ? advancedDetails.open : false,
+      };
+    }
+
+    function applySettings(settings) {
+      if (!settings) return;
+      if (stakeInput && settings.stake !== undefined) stakeInput.value = settings.stake;
+      if (allSportsToggle && settings.allSports !== undefined) allSportsToggle.checked = Boolean(settings.allSports);
+      setCheckboxGroup('sports', settings.sports);
+      setCheckboxGroup('regions', settings.regions);
+      if (allBookmakersToggle && settings.allBookmakers !== undefined) {
+        allBookmakersToggle.checked = Boolean(settings.allBookmakers);
+      }
+      setCheckboxGroup('bookmakers', settings.bookmakers);
+      if (commissionInput && settings.commission !== undefined) commissionInput.value = settings.commission;
+      if (minRoiInput && settings.minRoi !== undefined) minRoiInput.value = settings.minRoi;
+      if (exchangeOnlyToggle && settings.exchangeOnly !== undefined) exchangeOnlyToggle.checked = settings.exchangeOnly;
+      if (arbitrageSortSelect && settings.arbitrageSort) arbitrageSortSelect.value = settings.arbitrageSort;
+      if (minGapInput && settings.minGap !== undefined) minGapInput.value = settings.minGap;
+      if (positiveEvToggle && settings.positiveEvOnly !== undefined) positiveEvToggle.checked = settings.positiveEvOnly;
+      if (middleSortSelect && settings.middleSort) middleSortSelect.value = settings.middleSort;
+      if (sharpSelect && settings.sharpBook) sharpSelect.value = settings.sharpBook;
+      if (minEdgeInput && settings.minEdge !== undefined) minEdgeInput.value = settings.minEdge;
+      if (bankrollInput && settings.bankroll !== undefined) bankrollInput.value = settings.bankroll;
+      if (kellySelect && settings.kellyFraction !== undefined) kellySelect.value = settings.kellyFraction;
+      if (plusEvSortSelect && settings.plusEvSort) plusEvSortSelect.value = settings.plusEvSort;
+      if (advancedDetails && settings.advancedOpen !== undefined) advancedDetails.open = settings.advancedOpen;
+      if (settings.activeTab) setActiveTab(settings.activeTab);
+      updateBookmakerState();
+    }
+
+    function loadSettings() {
+      const raw = localStorage.getItem('edge-scan-settings');
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw);
+        applySettings(parsed);
+      } catch (err) {
+        return;
+      }
+    }
+
+    function saveSettings() {
+      const payload = collectSettings();
+      localStorage.setItem('edge-scan-settings', JSON.stringify(payload));
+      showStatusKey('settings_saved', 'success');
+    }
+
+    if (saveSettingsBtn) {
+      saveSettingsBtn.addEventListener('click', saveSettings);
     }
 
     form.addEventListener('submit', async (event) => {
