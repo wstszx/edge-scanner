@@ -134,6 +134,24 @@
               <section class="advanced-panel advanced-panel-wide">
                 <div class="panel-head">
                   <div class="panel-title">
+                    <span class="field-label" data-i18n="notify_label">Notifications</span>
+                    <p class="helper" data-i18n="notify_helper">Browser permission is required for popup notifications.</p>
+                  </div>
+                </div>
+                <div class="panel-body">
+                  <label class="checkbox">
+                    <input type="checkbox" id="notify-sound-toggle" />
+                    <span data-i18n="notify_sound">Sound alert</span>
+                  </label>
+                  <label class="checkbox">
+                    <input type="checkbox" id="notify-popup-toggle" />
+                    <span data-i18n="notify_popup">Popup notification</span>
+                  </label>
+                </div>
+              </section>
+              <section class="advanced-panel advanced-panel-wide">
+                <div class="panel-head">
+                  <div class="panel-title">
                     <span class="field-label" data-i18n="auto_scan_label">Auto Scan</span>
                     <p class="helper" data-i18n="auto_scan_helper">Runs a scan on a timer using your current filters.</p>
                   </div>
@@ -631,11 +649,13 @@
     const scanStatusText = document.getElementById('scan-status-text');
     const scanLastTime = document.getElementById('scan-last-time');
     const scanApiCalls = document.getElementById('scan-api-calls');
-    const scanEvents = document.getElementById('scan-events');
-    const scanSports = document.getElementById('scan-sports');
-    const scanErrors = document.getElementById('scan-errors');
-    const autoScanToggle = document.getElementById('auto-scan-toggle');
-    const autoScanIntervalInput = document.getElementById('auto-scan-interval');
+      const scanEvents = document.getElementById('scan-events');
+      const scanSports = document.getElementById('scan-sports');
+      const scanErrors = document.getElementById('scan-errors');
+      const autoScanToggle = document.getElementById('auto-scan-toggle');
+      const autoScanIntervalInput = document.getElementById('auto-scan-interval');
+      const notifySoundToggle = document.getElementById('notify-sound-toggle');
+      const notifyPopupToggle = document.getElementById('notify-popup-toggle');
     const defaultCommissionPercent = commissionInput ? parseFloat(commissionInput.value) || 5 : 5;
     let lastCommissionRate = defaultCommissionPercent / 100;
     let lastScanData = null;
@@ -643,9 +663,10 @@
     let oddsFormat = localStorage.getItem('edge-odds-format') || 'decimal';
     let densityMode = localStorage.getItem('edge-density') || 'comfort';
     let isScanning = false;
-    let lastStatus = null;
-    let lastFocusedElement = null;
-    let autoScanTimer = null;
+      let lastStatus = null;
+      let lastFocusedElement = null;
+      let autoScanTimer = null;
+      let notificationAudioContext = null;
 
     const TRANSLATIONS = {
       en: {
@@ -683,6 +704,11 @@
           advanced_hint: 'Less frequently adjusted options live here.',
           advanced_summary: 'Sports {sports} | Books {books}',
           summary_all: 'All',
+          notify_label: 'Notifications',
+          notify_sound: 'Sound alert',
+          notify_popup: 'Popup notification',
+          notify_helper: 'Browser permission is required for popup notifications.',
+          notify_body: 'Arb {arb} | Middles {middle} | +EV {plus}',
           select_all: 'Select all',
           clear_all: 'Clear',
           close: 'Close',
@@ -877,6 +903,11 @@
         advanced_hint: '不常调整的选项放在这里。',
                 advanced_summary: '项目 {sports} | 平台 {books}',
           summary_all: '全部',
+          notify_label: '通知',
+          notify_sound: '铃声提示',
+          notify_popup: '弹窗通知',
+          notify_helper: '弹窗通知需要浏览器授权。',
+          notify_body: '套利 {arb} | 中盘 {middle} | +EV {plus}',
           select_all: '全选',
           clear_all: '清空',
           close: '关闭',
@@ -1235,6 +1266,78 @@
       advancedSummary.title = `${t('sports_label')}: ${sportsDetail}\n${t('bookmakers_label')}: ${booksDetail}`;
     }
 
+    function getOpportunityCount(section) {
+      if (!section) return 0;
+      if (typeof section.opportunities_count === 'number') return section.opportunities_count;
+      if (Array.isArray(section.opportunities)) return section.opportunities.length;
+      return 0;
+    }
+
+    function playNotificationSound() {
+      if (!notifySoundToggle || !notifySoundToggle.checked) return;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+      if (!notificationAudioContext) {
+        notificationAudioContext = new AudioContextClass();
+      }
+      const context = notificationAudioContext;
+      if (context.state === 'suspended') {
+        context.resume().catch(() => {});
+      }
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.2, context.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.3);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.35);
+    }
+
+    async function requestNotificationPermission() {
+      if (!('Notification' in window)) return 'unsupported';
+      if (Notification.permission === 'granted') return 'granted';
+      if (Notification.permission === 'denied') return 'denied';
+      try {
+        return await Notification.requestPermission();
+      } catch (error) {
+        return 'denied';
+      }
+    }
+
+    function reconcileNotificationToggles() {
+      if (!notifyPopupToggle) return;
+      if (!('Notification' in window)) {
+        notifyPopupToggle.checked = false;
+        notifyPopupToggle.disabled = true;
+        return;
+      }
+      if (Notification.permission === 'denied') {
+        notifyPopupToggle.checked = false;
+      }
+    }
+
+    function notifyScanComplete(payload) {
+      if (!payload) return;
+      playNotificationSound();
+      if (!notifyPopupToggle || !notifyPopupToggle.checked) return;
+      if (!('Notification' in window) || Notification.permission !== 'granted') return;
+      const title = t('scan_complete', { time: formatTime(payload.scan_time) });
+      const body = t('notify_body', {
+        arb: getOpportunityCount(payload.arbitrage),
+        middle: getOpportunityCount(payload.middles),
+        plus: getOpportunityCount(payload.plus_ev),
+      });
+      try {
+        new Notification(title, { body });
+      } catch (error) {
+        return;
+      }
+    }
+
     function updateSportLabels() {
       document.querySelectorAll('[data-sport-key]').forEach((el) => {
         if (!el.dataset.defaultLabel) {
@@ -1409,6 +1512,7 @@
       }
       applyTranslations();
       loadSettings();
+      reconcileNotificationToggles();
       updateBookmakerState();
       syncBookmakerLinksFromInputs();
     });
@@ -1533,6 +1637,16 @@
         button.addEventListener('click', () => {
           applyQuickAction(button.dataset.quickTarget, button.dataset.quickAction);
         });
+      });
+    }
+
+    if (notifyPopupToggle) {
+      notifyPopupToggle.addEventListener('change', async () => {
+        if (!notifyPopupToggle.checked) return;
+        const permission = await requestNotificationPermission();
+        if (permission !== 'granted') {
+          notifyPopupToggle.checked = false;
+        }
       });
     }
 
@@ -1763,6 +1877,8 @@
         bookmakerUrls: collectBookmakerLinks(),
         autoScanEnabled: autoScanToggle ? autoScanToggle.checked : false,
         autoScanMinutes: autoScanIntervalInput ? autoScanIntervalInput.value : '',
+        notifySoundEnabled: notifySoundToggle ? notifySoundToggle.checked : false,
+        notifyPopupEnabled: notifyPopupToggle ? notifyPopupToggle.checked : false,
       };
     }
 
@@ -1792,6 +1908,12 @@
       if (autoScanIntervalInput && settings.autoScanMinutes !== undefined) {
         autoScanIntervalInput.value = settings.autoScanMinutes;
       }
+      if (notifySoundToggle && settings.notifySoundEnabled !== undefined) {
+        notifySoundToggle.checked = Boolean(settings.notifySoundEnabled);
+      }
+      if (notifyPopupToggle && settings.notifyPopupEnabled !== undefined) {
+        notifyPopupToggle.checked = Boolean(settings.notifyPopupEnabled);
+      }
       if (settings.activeTab) setActiveTab(settings.activeTab);
       if (settings.bookmakerUrls) {
         applyBookmakerLinks(settings.bookmakerUrls);
@@ -1802,6 +1924,7 @@
       updateBookmakerState();
       updateAdvancedSummary();
       updateQuickActionState();
+      reconcileNotificationToggles();
     }
 
     function loadSettings() {
@@ -1925,6 +2048,7 @@
         }
         renderScanData(data);
         showStatusKey('scan_complete', 'success', { time: formatTime(data.scan_time) });
+        notifyScanComplete(data);
       } catch (err) {
         showStatus(err.message || t('scan_failed'), 'error');
         renderScanData(null);
