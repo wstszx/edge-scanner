@@ -485,21 +485,41 @@
     </div>
 </main>
 
-  <script>
-    window.edgeScannerConfig = {
-      hasEnvKey: {{ 'true' if has_env_key else 'false' }},
-      sharpBooks: {{ sharp_books | tojson }},
-      defaultSharpBook: "{{ default_sharp_book }}",
-      defaultMinEdgePercent: {{ default_min_edge_percent }},
-      defaultBankroll: {{ default_bankroll }},
-      defaultKellyFraction: {{ default_kelly_fraction }},
-      kellyOptions: {{ kelly_options | tojson }},
-      bookmakerLinks: {{ bookmaker_links | tojson }}
-    };
-  </script>
+  <div
+    id="edge-scanner-config"
+    data-has-env-key="{{ 'true' if has_env_key else 'false' }}"
+    data-sharp-books='{{ sharp_books | tojson }}'
+    data-default-sharp-book="{{ default_sharp_book }}"
+    data-default-min-edge-percent="{{ default_min_edge_percent }}"
+    data-default-bankroll="{{ default_bankroll }}"
+    data-default-kelly-fraction="{{ default_kelly_fraction }}"
+    data-kelly-options='{{ kelly_options | tojson }}'
+    data-bookmaker-links='{{ bookmaker_links | tojson }}'
+    hidden
+  ></div>
 
   <script>
-    const appConfig = window.edgeScannerConfig || {};
+    const configEl = document.getElementById('edge-scanner-config');
+    const parseConfigJson = (value, fallback) => {
+      if (!value) return fallback;
+      try {
+        return JSON.parse(value);
+      } catch (error) {
+        return fallback;
+      }
+    };
+    const appConfig = configEl
+      ? {
+          hasEnvKey: configEl.dataset.hasEnvKey === 'true',
+          sharpBooks: parseConfigJson(configEl.dataset.sharpBooks, []),
+          defaultSharpBook: configEl.dataset.defaultSharpBook || '',
+          defaultMinEdgePercent: parseFloat(configEl.dataset.defaultMinEdgePercent || '0'),
+          defaultBankroll: parseFloat(configEl.dataset.defaultBankroll || '0'),
+          defaultKellyFraction: parseFloat(configEl.dataset.defaultKellyFraction || '0'),
+          kellyOptions: parseConfigJson(configEl.dataset.kellyOptions, []),
+          bookmakerLinks: parseConfigJson(configEl.dataset.bookmakerLinks, {})
+        }
+      : {};
     let bookmakerLinks = { ...(appConfig.bookmakerLinks || {}) };
     const hasEnvKey = appConfig.hasEnvKey === true || appConfig.hasEnvKey === 'true';
     const form = document.getElementById('scan-form');
