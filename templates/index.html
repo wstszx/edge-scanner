@@ -63,64 +63,94 @@
               <button type="button" id="close-advanced" class="icon-btn" aria-label="Close" data-i18n="close">Close</button>
             </div>
             <p class="helper" data-i18n="advanced_hint">Less frequently adjusted options live here.</p>
-            <div class="config-grid advanced-grid">
-              <div class="field">
-                <label class="field-label" data-i18n="sports_label">Sports</label>
-                <div id="sports-list" class="sports-grid">
-                  {% for sport in default_sports %}
-                  <label class="checkbox">
-                    <input type="checkbox" name="sports" value="{{ sport.key }}" checked />
-                    <span data-sport-key="{{ sport.key }}">{{ sport.label }}</span>
-                  </label>
-                  {% endfor %}
+            <div class="advanced-layout">
+              <section class="advanced-panel">
+                <div class="panel-head">
+                  <div class="panel-title">
+                    <span class="field-label" data-i18n="sports_label">Sports</span>
+                    <p class="helper" data-i18n="sports_helper">Each selected sport consumes one API request.</p>
+                  </div>
+                  <div class="panel-actions">
+                    <button type="button" class="chip-btn" data-quick-action="select" data-quick-target="sports" data-i18n="select_all">Select all</button>
+                    <button type="button" class="chip-btn" data-quick-action="clear" data-quick-target="sports" data-i18n="clear_all">Clear</button>
+                  </div>
                 </div>
-                <label class="checkbox all-toggle">
-                  <input type="checkbox" id="all-sports" />
-                  <span data-i18n="all_sports_label">Scan all active sports (uses more API credits)</span>
-                </label>
-                <p class="helper" data-i18n="sports_helper">Each selected sport consumes one API request.</p>
-              </div>
-              <div class="field">
-                <label class="field-label" data-i18n="bookmakers_label">Bookmakers</label>
-                <div id="bookmakers-list" class="bookmakers-grid">
-                  {% for book in bookmaker_options %}
-                  <div class="bookmaker-row">
+                <div class="panel-body">
+                  <div id="sports-list" class="sports-grid">
+                    {% for sport in default_sports %}
                     <label class="checkbox">
-                      <input type="checkbox" name="bookmakers" value="{{ book.key }}" {% if book.key in default_bookmaker_keys %}checked{% endif %} />
-                      <span data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
+                      <input type="checkbox" name="sports" value="{{ sport.key }}" checked />
+                      <span data-sport-key="{{ sport.key }}">{{ sport.label }}</span>
                     </label>
-                    <input
-                      type="url"
-                      inputmode="url"
-                      class="bookmaker-url"
-                      data-bookmaker-key="{{ book.key }}"
-                      value="{{ bookmaker_links.get(book.key, '') }}"
-                      placeholder="https://..."
-                    />
+                    {% endfor %}
                   </div>
-                  {% endfor %}
                 </div>
-                <p class="helper" data-i18n="bookmaker_links_helper">Customize base URLs used when opening books.</p>
-                <label class="checkbox all-toggle">
-                  <input type="checkbox" id="all-bookmakers" {% if not default_bookmaker_keys %}checked{% endif %} />
-                  <span data-i18n="all_bookmakers_label">Use all available bookmakers</span>
-                </label>
-                <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected bookmakers.</p>
-              </div>
-              <div class="field auto-scan-field">
-                <label class="field-label" data-i18n="auto_scan_label">Auto Scan</label>
-                <div class="auto-scan-controls">
-                  <label class="checkbox">
-                    <input type="checkbox" id="auto-scan-toggle" />
-                    <span data-i18n="auto_scan_enable">Enable auto scan</span>
+                <div class="panel-foot">
+                  <label class="checkbox all-toggle">
+                    <input type="checkbox" id="all-sports" />
+                    <span data-i18n="all_sports_label">Scan all active sports (uses more API credits)</span>
                   </label>
-                  <div class="auto-scan-interval">
-                    <span class="auto-scan-label" data-i18n="auto_scan_interval_label">Interval (min)</span>
-                    <input type="number" id="auto-scan-interval" min="1" step="1" value="10" />
+                </div>
+              </section>
+              <section class="advanced-panel">
+                <div class="panel-head">
+                  <div class="panel-title">
+                    <span class="field-label" data-i18n="bookmakers_label">Bookmakers</span>
+                    <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected bookmakers.</p>
+                  </div>
+                  <div class="panel-actions">
+                    <button type="button" class="chip-btn" data-quick-action="select" data-quick-target="bookmakers" data-i18n="select_all">Select all</button>
+                    <button type="button" class="chip-btn" data-quick-action="clear" data-quick-target="bookmakers" data-i18n="clear_all">Clear</button>
                   </div>
                 </div>
-                <p class="helper" data-i18n="auto_scan_helper">Runs a scan on a timer using your current filters.</p>
-              </div>
+                <div class="panel-body">
+                  <div id="bookmakers-list" class="bookmakers-grid">
+                    {% for book in bookmaker_options %}
+                    <div class="bookmaker-row">
+                      <label class="checkbox">
+                        <input type="checkbox" name="bookmakers" value="{{ book.key }}" {% if book.key in default_bookmaker_keys %}checked{% endif %} />
+                        <span data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
+                      </label>
+                      <input
+                        type="url"
+                        inputmode="url"
+                        class="bookmaker-url"
+                        data-bookmaker-key="{{ book.key }}"
+                        value="{{ bookmaker_links.get(book.key, '') }}"
+                        placeholder="https://..."
+                      />
+                    </div>
+                    {% endfor %}
+                  </div>
+                </div>
+                <div class="panel-foot">
+                  <p class="helper" data-i18n="bookmaker_links_helper">Customize base URLs used when opening books.</p>
+                  <label class="checkbox all-toggle">
+                    <input type="checkbox" id="all-bookmakers" {% if not default_bookmaker_keys %}checked{% endif %} />
+                    <span data-i18n="all_bookmakers_label">Use all available bookmakers</span>
+                  </label>
+                </div>
+              </section>
+              <section class="advanced-panel advanced-panel-wide">
+                <div class="panel-head">
+                  <div class="panel-title">
+                    <span class="field-label" data-i18n="auto_scan_label">Auto Scan</span>
+                    <p class="helper" data-i18n="auto_scan_helper">Runs a scan on a timer using your current filters.</p>
+                  </div>
+                </div>
+                <div class="panel-body">
+                  <div class="auto-scan-controls">
+                    <label class="checkbox">
+                      <input type="checkbox" id="auto-scan-toggle" />
+                      <span data-i18n="auto_scan_enable">Enable auto scan</span>
+                    </label>
+                    <div class="auto-scan-interval">
+                      <span class="auto-scan-label" data-i18n="auto_scan_interval_label">Interval (min)</span>
+                      <input type="number" id="auto-scan-interval" min="1" step="1" value="10" />
+                    </div>
+                  </div>
+                </div>
+              </section>
             </div>
             <div class="advanced-actions">
               <button type="button" id="save-settings" class="secondary-btn" data-i18n="save_settings">Save Settings</button>
@@ -535,10 +565,11 @@
     const bookmakersList = document.getElementById('bookmakers-list');
     const bookmakerLinksList = bookmakersList;
     const saveSettingsBtn = document.getElementById('save-settings');
-    const advancedSummary = document.getElementById('advanced-summary');
-    const advancedModal = document.getElementById('advanced-modal');
-    const openAdvancedBtn = document.getElementById('open-advanced');
-    const closeAdvancedBtn = document.getElementById('close-advanced');
+      const advancedSummary = document.getElementById('advanced-summary');
+      const advancedModal = document.getElementById('advanced-modal');
+      const openAdvancedBtn = document.getElementById('open-advanced');
+      const closeAdvancedBtn = document.getElementById('close-advanced');
+      const quickActionButtons = document.querySelectorAll('[data-quick-action][data-quick-target]');
     const summaryROI = document.getElementById('roi-bars');
     const summarySport = document.getElementById('sport-bars');
     const tableCount = document.getElementById('table-count');
@@ -648,11 +679,13 @@
         auto_scan_enable: 'Enable auto scan',
         auto_scan_interval_label: 'Interval (min)',
         auto_scan_helper: 'Runs a scan on a timer using your current filters.',
-        advanced_settings: 'Advanced settings',
-        advanced_hint: 'Less frequently adjusted options live here.',
-        advanced_summary: 'Sports {sports} | Books {books}',
-        summary_all: 'All',
-        close: 'Close',
+          advanced_settings: 'Advanced settings',
+          advanced_hint: 'Less frequently adjusted options live here.',
+          advanced_summary: 'Sports {sports} | Books {books}',
+          summary_all: 'All',
+          select_all: 'Select all',
+          clear_all: 'Clear',
+          close: 'Close',
         regions_label: 'Regions',
         regions_helper: 'Select at least one region. EU is always included for sharp reference.',
         commission_label: 'Exchange Commission (%)',
@@ -843,8 +876,10 @@
         advanced_settings: '高级设置',
         advanced_hint: '不常调整的选项放在这里。',
                 advanced_summary: '项目 {sports} | 平台 {books}',
-        summary_all: '全部',
-        close: '关闭',
+          summary_all: '全部',
+          select_all: '全选',
+          clear_all: '清空',
+          close: '关闭',
         regions_label: '地区',
         regions_helper: '至少选择一个地区。为锐盘参考将始终包含 EU。',
         commission_label: '交易所手续费 (%)',
@@ -1436,6 +1471,42 @@
       });
     });
 
+    function updateQuickActionState() {
+      if (!quickActionButtons || !quickActionButtons.length) return;
+      quickActionButtons.forEach((button) => {
+        const target = button.dataset.quickTarget;
+        if (target === 'bookmakers' && allBookmakersToggle) {
+          button.disabled = allBookmakersToggle.checked;
+          return;
+        }
+        if (target === 'sports' && allSportsToggle) {
+          button.disabled = allSportsToggle.checked;
+          return;
+        }
+        button.disabled = false;
+      });
+    }
+
+    function applyQuickAction(target, action) {
+      if (!form || !target || !action) return;
+      const boxes = form.querySelectorAll(`input[name="${target}"]`);
+      if (!boxes.length) return;
+      if (target === 'sports' && allSportsToggle) {
+        allSportsToggle.checked = false;
+      }
+      if (target === 'bookmakers' && allBookmakersToggle) {
+        allBookmakersToggle.checked = false;
+        updateBookmakerState();
+      }
+      const shouldCheck = action === 'select';
+      boxes.forEach((box) => {
+        if (box.disabled) return;
+        box.checked = shouldCheck;
+      });
+      updateAdvancedSummary();
+      updateQuickActionState();
+    }
+
     function updateBookmakerState() {
       if (!allBookmakersToggle) return;
       const useAll = allBookmakersToggle.checked;
@@ -1446,10 +1517,23 @@
       if (bookmakersList) {
         bookmakersList.classList.toggle('is-disabled', useAll);
       }
+      updateQuickActionState();
     }
 
     if (allBookmakersToggle) {
       allBookmakersToggle.addEventListener('change', updateBookmakerState);
+    }
+
+    if (allSportsToggle) {
+      allSportsToggle.addEventListener('change', updateQuickActionState);
+    }
+
+    if (quickActionButtons && quickActionButtons.length) {
+      quickActionButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          applyQuickAction(button.dataset.quickTarget, button.dataset.quickAction);
+        });
+      });
     }
 
     function getFocusableElements(container) {
@@ -1717,6 +1801,7 @@
       configureAutoScan();
       updateBookmakerState();
       updateAdvancedSummary();
+      updateQuickActionState();
     }
 
     function loadSettings() {

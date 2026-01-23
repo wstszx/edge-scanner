@@ -186,9 +186,87 @@ body.modal-open {
   overflow: hidden;
 }
 
-.advanced-grid {
-  margin-top: 0.8rem;
-  grid-template-columns: repeat(2, minmax(260px, 1fr));
+.advanced-layout {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.2rem;
+}
+
+.advanced-panel {
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  background: var(--bg);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.advanced-panel-wide {
+  grid-column: 1 / -1;
+}
+
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.panel-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.panel-title .helper {
+  margin: 0;
+}
+
+.panel-title .field-label {
+  margin: 0;
+}
+
+.panel-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.chip-btn {
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text-muted);
+  padding: 0.25rem 0.7rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chip-btn:hover {
+  color: var(--text);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.chip-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 0;
+}
+
+.panel-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .tabs {
@@ -317,22 +395,24 @@ body.modal-open {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 0.35rem 1rem;
-  max-height: 220px;
+  max-height: 280px;
   overflow-y: auto;
   border: 1px solid var(--card-border);
   border-radius: 10px;
   padding: 0.7rem;
+  background: var(--card);
 }
 
 .bookmakers-grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: 0.6rem;
-  max-height: 220px;
+  max-height: 280px;
   overflow-y: auto;
   border: 1px solid var(--card-border);
   border-radius: 10px;
   padding: 0.7rem;
+  background: var(--card);
 }
 
 .bookmakers-grid.is-disabled {
@@ -967,8 +1047,13 @@ body.modal-open {
     position: static;
   }
 
-  .advanced-grid {
+  .advanced-layout {
     grid-template-columns: 1fr;
+  }
+
+  .panel-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   #results-table th:nth-child(2),
