@@ -34,6 +34,10 @@ load_dotenv()
 app = Flask(__name__)
 
 
+def _env_flag(value: Optional[str]) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _split_api_keys(value: Optional[str]) -> list[str]:
     if not value:
         return []
@@ -80,6 +84,9 @@ if not ENV_API_KEYS:
         os.getenv("ODDS_API_KEY") or os.getenv("THEODDSAPI_API_KEY")
     )
 
+ENV_ALL_MARKETS = _env_flag(os.getenv("ARBITRAGE_ALL_MARKETS"))
+ENV_PUREBET_ENABLED = _env_flag(os.getenv("PUREBET_ENABLED"))
+
 
 @app.route("/")
 def index() -> str:
@@ -107,10 +114,14 @@ def scan() -> tuple:
     api_keys = ENV_API_KEYS or _payload_api_keys(payload)
     sports = payload.get("sports") or []
     all_sports = bool(payload.get("allSports"))
+    all_markets = bool(payload.get("allMarkets")) if "allMarkets" in payload else ENV_ALL_MARKETS
     stake = payload.get("stake")
     regions = payload.get("regions")
     bookmakers = payload.get("bookmakers")
     commission = payload.get("commission")
+    include_purebet = (
+        bool(payload.get("includePurebet")) if "includePurebet" in payload else ENV_PUREBET_ENABLED
+    )
     sharp_book = (payload.get("sharpBook") or DEFAULT_SHARP_BOOK).strip().lower()
     try:
         min_edge_percent = (
@@ -156,6 +167,7 @@ def scan() -> tuple:
         api_key=api_keys,
         sports=sports,
         all_sports=all_sports,
+        all_markets=all_markets,
         stake_amount=stake_value,
         regions=regions_value or DEFAULT_REGION_KEYS,
         bookmakers=bookmakers_value,
@@ -164,6 +176,7 @@ def scan() -> tuple:
         min_edge_percent=min_edge_percent,
         bankroll=bankroll_value,
         kelly_fraction=kelly_fraction,
+        include_purebet=include_purebet,
     )
     status = 200 if result.get("success") else result.get("error_code", 500)
     return jsonify(result), status

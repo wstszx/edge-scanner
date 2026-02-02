@@ -38,6 +38,22 @@ Or provide a key pool (comma/space separated) to rotate when a key is exhausted:
 ODDS_API_KEYS=key_one,key_two,key_three
 ```
 
+Optional Purebet (Solana) integration (read-only for now):
+```
+PUREBET_ENABLED=1
+PUREBET_SOURCE=file
+PUREBET_SAMPLE_PATH=data/purebet_sample.json
+```
+`PUREBET_SAMPLE_PATH` should be a JSON array of events normalized to the Odds API event schema
+(bookmakers -> markets -> outcomes). API mode is stubbed until credentials are available.
+
+Optional: scan all available markets for arbitrage (per event data returned by providers):
+```
+ARBITRAGE_ALL_MARKETS=1
+```
+Note: The Odds API still only returns the markets you request, so this mainly affects
+providers that already supply multiple markets in their payloads.
+
 ## Markets Scanned
 
 | Sport | Markets |

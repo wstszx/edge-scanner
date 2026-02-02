@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import datetime as dt
 import itertools
+import json
 import math
+import os
 import re
 import uuid
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import requests
@@ -42,6 +45,14 @@ MIDDLE_MARKETS = {"spreads", "totals"}
 ALLOWED_PLUS_EV_MARKETS = {"h2h", "spreads", "totals"}
 SOFT_BOOK_KEY_SET = set(SOFT_BOOK_KEYS)
 SHARP_BOOK_MAP = {book["key"]: book for book in SHARP_BOOKS}
+PUREBET_BOOK_KEY = "purebet"
+PUREBET_TITLE = "Purebet"
+PUREBET_ENV_ENABLED = os.getenv("PUREBET_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+PUREBET_SOURCE = os.getenv("PUREBET_SOURCE", "api").strip().lower()
+PUREBET_SAMPLE_PATH = os.getenv(
+    "PUREBET_SAMPLE_PATH", str(Path("data") / "purebet_sample.json")
+).strip()
+PUREBET_API_BASE = os.getenv("PUREBET_API_BASE", "").strip()
 
 
 class ScannerError(Exception):
@@ -54,6 +65,12 @@ class ScannerError(Exception):
 
 def _iso_now() -> str:
     return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _resolve_purebet_enabled(value: Optional[bool]) -> bool:
+    if value is None:
+        return PUREBET_ENV_ENABLED
+    return bool(value)
 
 
 def _clamp_commission(rate: float) -> float:
@@ -106,6 +123,122 @@ def _normalize_api_keys(api_key: Optional[Sequence[str] | str]) -> List[str]:
         normalized.append(key)
         seen.add(key)
     return normalized
+
+
+def _load_event_list(path: str) -> List[dict]:
+    if not path:
+        raise ScannerError("Purebet source file path is empty")
+    path_obj = Path(path)
+    if not path_obj.exists():
+        raise ScannerError(f"Purebet source file not found: {path}")
+    try:
+        with path_obj.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError) as exc:
+        raise ScannerError(f"Failed to read Purebet source file: {exc}") from exc
+    if not isinstance(payload, list):
+        raise ScannerError("Purebet source file must be a JSON array of events")
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _normalize_purebet_events(events: List[dict]) -> List[dict]:
+    normalized: List[dict] = []
+    for event in events:
+        bookmakers = event.get("bookmakers")
+        if not isinstance(bookmakers, list):
+            continue
+        for book in bookmakers:
+            if not isinstance(book, dict):
+                continue
+            if not book.get("key"):
+                book["key"] = PUREBET_BOOK_KEY
+            if not book.get("title"):
+                book["title"] = PUREBET_TITLE
+        normalized.append(event)
+    return normalized
+
+
+def _event_identity(event: dict) -> Optional[Tuple[str, str, str, str]]:
+    sport = (event.get("sport_key") or "").strip().lower()
+    home = (event.get("home_team") or "").strip().lower()
+    away = (event.get("away_team") or "").strip().lower()
+    commence = (event.get("commence_time") or "").strip()
+    if not (sport and home and away and commence):
+        return None
+    return (sport, home, away, commence)
+
+
+def _merge_bookmakers(target: List[dict], incoming: List[dict]) -> None:
+    seen = set()
+    for book in target:
+        key = (book.get("key") or book.get("title") or "").strip().lower()
+        if key:
+            seen.add(key)
+    for book in incoming:
+        key = (book.get("key") or book.get("title") or "").strip().lower()
+        if not key or key in seen:
+            continue
+        target.append(book)
+        seen.add(key)
+
+
+def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dict]:
+    index: Dict[Tuple[str, str, str, str], dict] = {}
+    for event in base_events:
+        identity = _event_identity(event)
+        if identity and identity not in index:
+            index[identity] = event
+    for extra in extra_events:
+        identity = _event_identity(extra)
+        if identity and identity in index:
+            base = index[identity]
+            base_books = base.setdefault("bookmakers", [])
+            extra_books = extra.get("bookmakers") or []
+            if isinstance(base_books, list) and isinstance(extra_books, list):
+                _merge_bookmakers(base_books, extra_books)
+        else:
+            base_events.append(extra)
+            if identity:
+                index[identity] = extra
+    return base_events
+
+
+def fetch_purebet_events(
+    sport_key: str,
+    markets: Sequence[str],
+    regions: Sequence[str],
+    bookmakers: Optional[Sequence[str]] = None,
+) -> List[dict]:
+    source = PUREBET_SOURCE or "api"
+    if source == "file":
+        events = _normalize_purebet_events(_load_event_list(PUREBET_SAMPLE_PATH))
+    else:
+        if not PUREBET_API_BASE:
+            raise ScannerError(
+                "Purebet API base URL not configured. Set PUREBET_API_BASE or use PUREBET_SOURCE=file."
+            )
+        raise ScannerError(
+            "Purebet API integration is not configured yet. Set PUREBET_SOURCE=file or implement the API fetch."
+        )
+    if sport_key:
+        events = [event for event in events if event.get("sport_key") == sport_key]
+    if bookmakers:
+        filtered = []
+        for event in events:
+            books = event.get("bookmakers") or []
+            if not isinstance(books, list):
+                continue
+            kept = [
+                book
+                for book in books
+                if (book.get("key") or "").strip() in bookmakers
+                or (book.get("title") or "").strip() in bookmakers
+            ]
+            if kept:
+                event["bookmakers"] = kept
+                filtered.append(event)
+        events = filtered
+    return events
 
 
 def _ensure_sharp_region(regions: List[str], sharp_key: str) -> List[str]:
@@ -448,7 +581,6 @@ def fetch_odds_for_sport(
 ) -> List[dict]:
     url = f"{BASE_URL}/sports/{sport_key}/odds/"
     params = {
-        "apiKey": api_key,
         "regions": ",".join(regions),
         "markets": ",".join(markets),
         "oddsFormat": "decimal",
@@ -472,14 +604,16 @@ def _line_key(market: str, outcome: dict) -> Optional[str]:
         return "moneyline"
     point = outcome.get("point")
     if point is None:
-        return None
+        return f"{market}_nopoint"
     try:
         point_val = float(point)
     except (TypeError, ValueError):
         return None
     if market == "spreads":
         return f"spread_{abs(point_val):.2f}"
-    return f"total_{point_val:.2f}"
+    if market == "totals":
+        return f"total_{point_val:.2f}"
+    return f"{market}_{point_val:.2f}"
 
 
 def _record_best_prices(
@@ -517,6 +651,16 @@ def _record_best_prices(
                         "is_exchange": is_exchange,
                     }
     return lines
+
+
+def _available_markets(game: dict) -> List[str]:
+    keys = set()
+    for book in game.get("bookmakers", []):
+        for market in book.get("markets", []):
+            key = market.get("key")
+            if key:
+                keys.add(key)
+    return sorted(keys)
 
 
 def _collect_market_entries(
@@ -1126,6 +1270,7 @@ def run_scan(
     api_key: str | Sequence[str],
     sports: Optional[List[str]] = None,
     all_sports: bool = False,
+    all_markets: bool = False,
     stake_amount: float = 100.0,
     regions: Optional[Sequence[str]] = None,
     bookmakers: Optional[Sequence[str]] = None,
@@ -1134,12 +1279,15 @@ def run_scan(
     min_edge_percent: float = MIN_EDGE_PERCENT,
     bankroll: float = DEFAULT_BANKROLL,
     kelly_fraction: float = DEFAULT_KELLY_FRACTION,
+    include_purebet: Optional[bool] = None,
 ) -> dict:
     api_keys = _normalize_api_keys(api_key)
     if not api_keys:
         return {"success": False, "error": "API key is required", "error_code": 400}
     if stake_amount is None or stake_amount <= 0:
         stake_amount = 100.0
+    all_markets = bool(all_markets)
+    include_purebet = _resolve_purebet_enabled(include_purebet)
     normalized_regions = _normalize_regions(regions)
     normalized_regions = _ensure_sharp_region(normalized_regions, sharp_book or DEFAULT_SHARP_BOOK)
     normalized_bookmakers = _normalize_bookmakers(bookmakers)
@@ -1199,12 +1347,12 @@ def run_scan(
         sport_key = sport.get("key")
         if not sport_key:
             continue
-        markets = markets_for_sport(sport_key)
+        base_markets = markets_for_sport(sport_key)
         try:
             events = fetch_odds_for_sport(
                 api_pool,
                 sport_key,
-                markets,
+                base_markets,
                 normalized_regions,
                 bookmakers=normalized_bookmakers,
             )
@@ -1218,13 +1366,33 @@ def run_scan(
                 }
             )
             continue
+        if include_purebet:
+            try:
+                purebet_events = fetch_purebet_events(
+                    sport_key,
+                    base_markets,
+                    normalized_regions,
+                    bookmakers=normalized_bookmakers,
+                )
+                if purebet_events:
+                    events = _merge_events(events, purebet_events)
+            except ScannerError as exc:
+                sport_errors.append(
+                    {
+                        "sport_key": sport_key,
+                        "sport": sport.get("title")
+                        or SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
+                        "error": f"Purebet: {exc}",
+                    }
+                )
         successful_sports += 1
         events_scanned += len(events)
         for game in events:
             game["sport_key"] = sport_key
             game["sport_title"] = sport.get("title")
             game["sport_display"] = SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
-            for market_key in markets:
+            arb_markets = _available_markets(game) if all_markets else base_markets
+            for market_key in arb_markets:
                 new_entries = _collect_market_entries(
                     game, market_key, stake_amount, commission_rate
                 )
@@ -1238,7 +1406,7 @@ def run_scan(
                     middle_opportunities.extend(middle_entries)
             plus_entries = _collect_plus_ev_opportunities(
                 game,
-                markets,
+                base_markets,
                 sharp_priority,
                 commission_rate,
                 min_edge_percent,

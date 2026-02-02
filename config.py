@@ -195,6 +195,7 @@ BOOKMAKER_LABELS = {
     **{book["key"]: book["name"] for book in SHARP_BOOKS if book.get("key")},
     **SOFT_BOOK_LABELS,
     "polymarket": "Polymarket",
+    "purebet": "Purebet",
 }
 
 BOOKMAKER_URLS = {
@@ -221,10 +222,11 @@ BOOKMAKER_URLS = {
     "betfair_ex_au": "https://www.betfair.com.au/exchange/",
     "sportsbet_ex": "https://www.sportsbet.com.au/",
     "polymarket": "https://polymarket.com/",
+    "purebet": "",
 }
 
 BOOKMAKER_KEYS: list[str] = []
-for key in ["pinnacle", "polymarket"]:
+for key in ["pinnacle", "polymarket", "purebet"]:
     if key not in BOOKMAKER_KEYS:
         BOOKMAKER_KEYS.append(key)
 for key in EXCHANGE_BOOKMAKERS:
