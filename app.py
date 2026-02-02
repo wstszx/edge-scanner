@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import socket
 import threading
 import webbrowser
@@ -31,7 +32,53 @@ from scanner import run_scan
 load_dotenv()
 
 app = Flask(__name__)
-ENV_API_KEY = os.getenv("ODDS_API_KEY") or os.getenv("THEODDSAPI_API_KEY")
+
+
+def _split_api_keys(value: Optional[str]) -> list[str]:
+    if not value:
+        return []
+    parts = [item.strip() for item in re.split(r"[,\s]+", value) if item.strip()]
+    keys = []
+    seen = set()
+    for key in parts:
+        if key in seen:
+            continue
+        keys.append(key)
+        seen.add(key)
+    return keys
+
+
+def _payload_api_keys(payload: dict) -> list[str]:
+    keys = payload.get("apiKeys")
+    if isinstance(keys, list):
+        normalized = []
+        seen = set()
+        for key in keys:
+            if not isinstance(key, str):
+                continue
+            cleaned = key.strip()
+            if cleaned and cleaned not in seen:
+                normalized.append(cleaned)
+                seen.add(cleaned)
+        if normalized:
+            return normalized
+    elif isinstance(keys, str):
+        normalized = _split_api_keys(keys)
+        if normalized:
+            return normalized
+    single = payload.get("apiKey")
+    if isinstance(single, str):
+        return _split_api_keys(single)
+    return []
+
+
+ENV_API_KEYS = _split_api_keys(
+    os.getenv("ODDS_API_KEYS") or os.getenv("THEODDSAPI_API_KEYS")
+)
+if not ENV_API_KEYS:
+    ENV_API_KEYS = _split_api_keys(
+        os.getenv("ODDS_API_KEY") or os.getenv("THEODDSAPI_API_KEY")
+    )
 
 
 @app.route("/")
@@ -43,7 +90,7 @@ def index() -> str:
         bookmaker_options=BOOKMAKER_OPTIONS,
         default_bookmaker_keys=DEFAULT_BOOKMAKER_KEYS,
         default_commission_percent=int(DEFAULT_COMMISSION * 100),
-        has_env_key=bool(ENV_API_KEY),
+        has_env_key=bool(ENV_API_KEYS),
         sharp_books=SHARP_BOOKS,
         default_sharp_book=DEFAULT_SHARP_BOOK,
         default_min_edge_percent=MIN_EDGE_PERCENT,
@@ -57,7 +104,7 @@ def index() -> str:
 @app.route("/scan", methods=["POST"])
 def scan() -> tuple:
     payload = request.get_json(force=True, silent=True) or {}
-    api_key = ENV_API_KEY or (payload.get("apiKey") or "").strip()
+    api_keys = ENV_API_KEYS or _payload_api_keys(payload)
     sports = payload.get("sports") or []
     all_sports = bool(payload.get("allSports"))
     stake = payload.get("stake")
@@ -106,7 +153,7 @@ def scan() -> tuple:
         commission_percent / 100.0 if commission_percent is not None else DEFAULT_COMMISSION
     )
     result = run_scan(
-        api_key=api_key,
+        api_key=api_keys,
         sports=sports,
         all_sports=all_sports,
         stake_amount=stake_value,

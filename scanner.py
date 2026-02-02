@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import itertools
 import math
+import re
 import uuid
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -46,6 +47,10 @@ SHARP_BOOK_MAP = {book["key"]: book for book in SHARP_BOOKS}
 class ScannerError(Exception):
     """Raised for recoverable scanner issues."""
 
+    def __init__(self, message: str, status_code: Optional[int] = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 def _iso_now() -> str:
     return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
@@ -74,6 +79,29 @@ def _normalize_bookmakers(bookmakers: Optional[Sequence[str]]) -> List[str]:
             continue
         key = book.strip()
         if not key or key in seen:
+            continue
+        normalized.append(key)
+        seen.add(key)
+    return normalized
+
+
+def _normalize_api_keys(api_key: Optional[Sequence[str] | str]) -> List[str]:
+    if not api_key:
+        return []
+    if isinstance(api_key, str):
+        raw_keys = [item.strip() for item in re.split(r"[,\s]+", api_key) if item.strip()]
+    else:
+        raw_keys = []
+        for key in api_key:
+            if not isinstance(key, str):
+                continue
+            cleaned = key.strip()
+            if cleaned:
+                raw_keys.append(cleaned)
+    normalized = []
+    seen = set()
+    for key in raw_keys:
+        if key in seen:
             continue
         normalized.append(key)
         seen.add(key)
@@ -352,13 +380,50 @@ def _request(url: str, params: Dict[str, str]) -> requests.Response:
             message = payload.get("message") or payload.get("error")
         except ValueError:
             message = resp.text or "Unknown error"
-        raise ScannerError(message or f"API request failed ({resp.status_code})")
+        raise ScannerError(message or f"API request failed ({resp.status_code})", status_code=resp.status_code)
     return resp
 
 
-def fetch_sports(api_key: str) -> List[dict]:
+def _should_rotate_key(error: ScannerError) -> bool:
+    return error.status_code in {401, 403, 429}
+
+
+class ApiKeyPool:
+    def __init__(self, keys: Sequence[str]) -> None:
+        normalized = []
+        seen = set()
+        for key in keys:
+            if not isinstance(key, str):
+                continue
+            cleaned = key.strip()
+            if cleaned and cleaned not in seen:
+                normalized.append(cleaned)
+                seen.add(cleaned)
+        self._keys = normalized
+        self._cycle = itertools.cycle(self._keys)
+        self.calls_made = 0
+
+    def request(self, url: str, params: Dict[str, str]) -> requests.Response:
+        if not self._keys:
+            raise ScannerError("API key is required", status_code=401)
+        last_error: Optional[ScannerError] = None
+        for _ in range(len(self._keys)):
+            key = next(self._cycle)
+            self.calls_made += 1
+            try:
+                return _request(url, {**params, "apiKey": key})
+            except ScannerError as exc:
+                last_error = exc
+                if not _should_rotate_key(exc):
+                    raise
+        if last_error:
+            raise last_error
+        raise ScannerError("API key is required", status_code=401)
+
+
+def fetch_sports(api_pool: ApiKeyPool) -> List[dict]:
     url = f"{BASE_URL}/sports/"
-    resp = _request(url, {"apiKey": api_key})
+    resp = api_pool.request(url, {})
     try:
         return resp.json()
     except ValueError as exc:  # pragma: no cover - malformed payload
@@ -375,7 +440,7 @@ def filter_sports(
 
 
 def fetch_odds_for_sport(
-    api_key: str,
+    api_pool: ApiKeyPool,
     sport_key: str,
     markets: Sequence[str],
     regions: Sequence[str],
@@ -391,7 +456,7 @@ def fetch_odds_for_sport(
     }
     if bookmakers:
         params["bookmakers"] = ",".join(bookmakers)
-    resp = _request(url, params)
+    resp = api_pool.request(url, params)
     try:
         return resp.json()
     except ValueError as exc:  # pragma: no cover
@@ -1058,7 +1123,7 @@ def _deduplicate_plus_ev(opportunities: List[dict]) -> List[dict]:
 
 
 def run_scan(
-    api_key: str,
+    api_key: str | Sequence[str],
     sports: Optional[List[str]] = None,
     all_sports: bool = False,
     stake_amount: float = 100.0,
@@ -1070,7 +1135,8 @@ def run_scan(
     bankroll: float = DEFAULT_BANKROLL,
     kelly_fraction: float = DEFAULT_KELLY_FRACTION,
 ) -> dict:
-    if not api_key:
+    api_keys = _normalize_api_keys(api_key)
+    if not api_keys:
         return {"success": False, "error": "API key is required", "error_code": 400}
     if stake_amount is None or stake_amount <= 0:
         stake_amount = 100.0
@@ -1084,14 +1150,15 @@ def run_scan(
             "error_code": 400,
         }
     commission_rate = _clamp_commission(commission_rate)
+    api_pool = ApiKeyPool(api_keys)
     try:
-        sports_list = fetch_sports(api_key)
+        sports_list = fetch_sports(api_pool)
     except ScannerError as exc:
         return {"success": False, "error": str(exc), "error_code": 500}
 
     filtered = filter_sports(sports_list, sports or DEFAULT_SPORT_KEYS, all_sports)
     if not filtered:
-        arb_summary = _summaries([], 0, 0, 0.0, 0)
+        arb_summary = _summaries([], 0, 0, 0.0, api_pool.calls_made)
         middle_summary = _middle_summary([])
         return {
             "success": True,
@@ -1126,7 +1193,6 @@ def run_scan(
     total_profit = 0.0
     sport_errors: List[dict] = []
     successful_sports = 0
-    api_calls_used = 0
     sharp_priority = _sharp_priority(sharp_book or DEFAULT_SHARP_BOOK)
 
     for sport in filtered:
@@ -1134,10 +1200,9 @@ def run_scan(
         if not sport_key:
             continue
         markets = markets_for_sport(sport_key)
-        api_calls_used += 1
         try:
             events = fetch_odds_for_sport(
-                api_key,
+                api_pool,
                 sport_key,
                 markets,
                 normalized_regions,
@@ -1182,6 +1247,7 @@ def run_scan(
             )
             plus_ev_opportunities.extend(plus_entries)
 
+    api_calls_used = api_pool.calls_made
     arb_opportunities.sort(key=lambda x: x["roi_percent"], reverse=True)
     middle_opportunities.sort(key=lambda x: x["ev_percent"], reverse=True)
     middle_opportunities = _deduplicate_middles(middle_opportunities)

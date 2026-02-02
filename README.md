@@ -33,6 +33,10 @@ Your browser opens automatically. Enter your API key and scan.
 ```
 ODDS_API_KEY=your_api_key_here
 ```
+Or provide a key pool (comma/space separated) to rotate when a key is exhausted:
+```
+ODDS_API_KEYS=key_one,key_two,key_three
+```
 
 ## Markets Scanned
 
