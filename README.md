@@ -45,7 +45,17 @@ PUREBET_SOURCE=file
 PUREBET_SAMPLE_PATH=data/purebet_sample.json
 ```
 `PUREBET_SAMPLE_PATH` should be a JSON array of events normalized to the Odds API event schema
-(bookmakers -> markets -> outcomes). API mode is stubbed until credentials are available.
+(bookmakers -> markets -> outcomes).
+V3 API mode (default):
+```
+PUREBET_ENABLED=1
+PUREBET_SOURCE=api
+PUREBET_API_BASE=https://v3api.purebet.io
+PUREBET_LIVE=0
+PUREBET_LEAGUE_MAP={"487":"basketball_nba","1980":"soccer_epl"}
+```
+`PUREBET_LEAGUE_MAP` lets you map Purebet league IDs to the Odds API sport keys so events
+merge correctly with other bookmakers.
 
 Optional: scan all available markets for arbitrage (per event data returned by providers):
 ```

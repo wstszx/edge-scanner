@@ -53,6 +53,21 @@ PUREBET_SAMPLE_PATH = os.getenv(
     "PUREBET_SAMPLE_PATH", str(Path("data") / "purebet_sample.json")
 ).strip()
 PUREBET_API_BASE = os.getenv("PUREBET_API_BASE", "").strip()
+PUREBET_DEFAULT_BASE = "https://v3api.purebet.io"
+PUREBET_LIVE = os.getenv("PUREBET_LIVE", "").strip().lower() in {"1", "true", "yes", "on"}
+PUREBET_DEFAULT_LEAGUE_MAP = {
+    487: "basketball_nba",
+    493: "basketball_ncaab",
+    889: "americanfootball_nfl",
+    1980: "soccer_epl",
+    2196: "soccer_spain_la_liga",
+    1842: "soccer_germany_bundesliga",
+    2436: "soccer_italy_serie_a",
+    2036: "soccer_france_ligue_one",
+    2663: "soccer_usa_mls",
+}
+PUREBET_LEAGUE_MAP_RAW = os.getenv("PUREBET_LEAGUE_MAP", "").strip()
+PUREBET_SUPPORTED_MARKETS = {"h2h"}
 
 
 class ScannerError(Exception):
@@ -203,6 +218,204 @@ def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dic
     return base_events
 
 
+def _load_purebet_league_map() -> Dict[str, str]:
+    mapping = {str(key): value for key, value in PUREBET_DEFAULT_LEAGUE_MAP.items()}
+    if not PUREBET_LEAGUE_MAP_RAW:
+        return mapping
+    try:
+        payload = json.loads(PUREBET_LEAGUE_MAP_RAW)
+    except ValueError:
+        return mapping
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if isinstance(value, str) and value.strip():
+                mapping[str(key)] = value.strip()
+    return mapping
+
+
+def _safe_float(value) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_text(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return str(value).strip().lower()
+
+
+def _epoch_to_iso(value: float) -> Optional[str]:
+    try:
+        timestamp = float(value)
+    except (TypeError, ValueError):
+        return None
+    if timestamp <= 0:
+        return None
+    if timestamp > 1e12:
+        timestamp /= 1000.0
+    try:
+        return dt.datetime.utcfromtimestamp(timestamp).replace(microsecond=0).isoformat() + "Z"
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def _normalize_commence_time(value) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return _epoch_to_iso(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.isdigit():
+            return _epoch_to_iso(int(text))
+        try:
+            if text.endswith("Z"):
+                dt.datetime.fromisoformat(text[:-1])
+                return text
+            parsed = dt.datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return (
+            parsed.astimezone(dt.timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    return None
+
+
+def _resolve_purebet_sport_key(event: dict, league_map: Dict[str, str]) -> Optional[str]:
+    for key in ("sport_key", "sportKey", "sport"):
+        raw = event.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    league_id = event.get("leagueId") or event.get("league") or event.get("league_id")
+    if league_id is None:
+        return None
+    return league_map.get(str(league_id))
+
+
+def _is_moneyline_market(market_type: str) -> bool:
+    if not market_type:
+        return False
+    for token in ("moneyline", "ml", "h2h", "match_winner", "matchwinner", "winner", "win"):
+        if token in market_type:
+            return True
+    return False
+
+
+def _normalize_purebet_h2h_markets(odds: Sequence[dict], home: str, away: str) -> List[dict]:
+    groups: Dict[str, dict] = {}
+    for item in odds:
+        if not isinstance(item, dict):
+            continue
+        market = item.get("market") if isinstance(item.get("market"), dict) else {}
+        market_id = market.get("id") or item.get("marketId") or "default"
+        market_type = _normalize_text(
+            market.get("type") or market.get("marketType") or item.get("marketType")
+        )
+        side = market.get("side") if "side" in market else item.get("side")
+        try:
+            side_val = int(side)
+        except (TypeError, ValueError):
+            continue
+        if side_val not in (0, 1):
+            continue
+        price = _safe_float(item.get("odds") or item.get("price") or item.get("decimalOdds"))
+        if price is None or price <= 1:
+            continue
+        point = market.get("point") if isinstance(market, dict) else None
+        if point is None:
+            point = item.get("point")
+        if point not in (None, 0, 0.0, "0", "0.0"):
+            if not _is_moneyline_market(market_type):
+                continue
+        group = groups.setdefault(str(market_id), {"type": market_type, "sides": {}})
+        if market_type and not group["type"]:
+            group["type"] = market_type
+        group["sides"][side_val] = {"price": price}
+
+    candidates = [
+        group
+        for group in groups.values()
+        if 0 in group["sides"] and 1 in group["sides"]
+    ]
+    if not candidates:
+        return []
+    moneyline = [group for group in candidates if _is_moneyline_market(group["type"])]
+    if moneyline:
+        candidates = moneyline
+    best = max(
+        candidates,
+        key=lambda group: min(group["sides"][0]["price"], group["sides"][1]["price"]),
+    )
+    return [
+        {
+            "key": "h2h",
+            "outcomes": [
+                {"name": home, "price": best["sides"][0]["price"]},
+                {"name": away, "price": best["sides"][1]["price"]},
+            ],
+        }
+    ]
+
+
+def _normalize_purebet_v3_events(
+    payload: Sequence[dict], sport_key: str, markets: Sequence[str]
+) -> List[dict]:
+    supported_markets = PUREBET_SUPPORTED_MARKETS.intersection(markets or [])
+    if not supported_markets:
+        return []
+    league_map = _load_purebet_league_map()
+    normalized: List[dict] = []
+    for event in payload:
+        if not isinstance(event, dict):
+            continue
+        event_sport_key = _resolve_purebet_sport_key(event, league_map)
+        if not event_sport_key:
+            continue
+        if sport_key and event_sport_key != sport_key:
+            continue
+        home = (event.get("homeTeam") or event.get("home_team") or "").strip()
+        away = (event.get("awayTeam") or event.get("away_team") or "").strip()
+        commence = _normalize_commence_time(
+            event.get("startTime") or event.get("start_time") or event.get("start")
+        )
+        if not (home and away and commence):
+            continue
+        odds = event.get("odds")
+        if not isinstance(odds, list):
+            continue
+        markets_out: List[dict] = []
+        if "h2h" in supported_markets:
+            markets_out.extend(_normalize_purebet_h2h_markets(odds, home, away))
+        if not markets_out:
+            continue
+        normalized.append(
+            {
+                "id": event.get("event") or event.get("eventId") or event.get("id"),
+                "sport_key": event_sport_key,
+                "home_team": home,
+                "away_team": away,
+                "commence_time": commence,
+                "bookmakers": [
+                    {
+                        "key": PUREBET_BOOK_KEY,
+                        "title": PUREBET_TITLE,
+                        "markets": markets_out,
+                    }
+                ],
+            }
+        )
+    return normalized
+
+
 def fetch_purebet_events(
     sport_key: str,
     markets: Sequence[str],
@@ -213,13 +426,28 @@ def fetch_purebet_events(
     if source == "file":
         events = _normalize_purebet_events(_load_event_list(PUREBET_SAMPLE_PATH))
     else:
-        if not PUREBET_API_BASE:
+        base_url = PUREBET_API_BASE or PUREBET_DEFAULT_BASE
+        if not base_url:
             raise ScannerError(
                 "Purebet API base URL not configured. Set PUREBET_API_BASE or use PUREBET_SOURCE=file."
             )
-        raise ScannerError(
-            "Purebet API integration is not configured yet. Set PUREBET_SOURCE=file or implement the API fetch."
-        )
+        url = f"{base_url.rstrip('/')}/events"
+        params = {"live": "true" if PUREBET_LIVE else "false"}
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+        except requests.RequestException as exc:
+            raise ScannerError(f"Purebet network error: {exc}") from exc
+        if resp.status_code >= 400:
+            raise ScannerError(
+                f"Purebet API request failed ({resp.status_code})", status_code=resp.status_code
+            )
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise ScannerError("Failed to parse Purebet API response") from exc
+        if not isinstance(payload, list):
+            raise ScannerError("Purebet API response must be a JSON array of events")
+        events = _normalize_purebet_v3_events(payload, sport_key, markets)
     if sport_key:
         events = [event for event in events if event.get("sport_key") == sport_key]
     if bookmakers:
