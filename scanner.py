@@ -55,6 +55,7 @@ PUREBET_SAMPLE_PATH = os.getenv(
 PUREBET_API_BASE = os.getenv("PUREBET_API_BASE", "").strip()
 PUREBET_DEFAULT_BASE = "https://v3api.purebet.io"
 PUREBET_LIVE = os.getenv("PUREBET_LIVE", "").strip().lower() in {"1", "true", "yes", "on"}
+EVENT_TIME_TOLERANCE_MINUTES = os.getenv("EVENT_TIME_TOLERANCE_MINUTES", "15").strip()
 PUREBET_DEFAULT_LEAGUE_MAP = {
     487: "basketball_nba",
     493: "basketball_ncaab",
@@ -173,14 +174,39 @@ def _normalize_purebet_events(events: List[dict]) -> List[dict]:
     return normalized
 
 
-def _event_identity(event: dict) -> Optional[Tuple[str, str, str, str]]:
+def _event_team_key(event: dict) -> Optional[Tuple[str, str, str]]:
     sport = (event.get("sport_key") or "").strip().lower()
     home = (event.get("home_team") or "").strip().lower()
     away = (event.get("away_team") or "").strip().lower()
-    commence = (event.get("commence_time") or "").strip()
-    if not (sport and home and away and commence):
+    if not (sport and home and away):
         return None
-    return (sport, home, away, commence)
+    return (sport, home, away)
+
+
+def _event_identity(event: dict) -> Optional[Tuple[str, str, str, str]]:
+    key = _event_team_key(event)
+    if not key:
+        return None
+    commence = _normalize_commence_time(event.get("commence_time"))
+    if not commence:
+        return None
+    return (*key, commence)
+
+
+def _event_time_seconds(event: dict) -> Optional[int]:
+    commence = _normalize_commence_time(event.get("commence_time"))
+    if not commence:
+        return None
+    try:
+        if commence.endswith("Z"):
+            parsed = dt.datetime.fromisoformat(commence[:-1] + "+00:00")
+        else:
+            parsed = dt.datetime.fromisoformat(commence)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return int(parsed.timestamp())
 
 
 def _merge_bookmakers(target: List[dict], incoming: List[dict]) -> None:
@@ -199,10 +225,21 @@ def _merge_bookmakers(target: List[dict], incoming: List[dict]) -> None:
 
 def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dict]:
     index: Dict[Tuple[str, str, str, str], dict] = {}
+    by_team: Dict[Tuple[str, str, str], List[Tuple[int, dict]]] = {}
+    try:
+        tolerance_minutes = int(EVENT_TIME_TOLERANCE_MINUTES)
+    except ValueError:
+        tolerance_minutes = 15
+    tolerance_seconds = max(0, tolerance_minutes) * 60
     for event in base_events:
         identity = _event_identity(event)
         if identity and identity not in index:
             index[identity] = event
+        team_key = _event_team_key(event)
+        if team_key:
+            epoch = _event_time_seconds(event)
+            if epoch is not None:
+                by_team.setdefault(team_key, []).append((epoch, event))
     for extra in extra_events:
         identity = _event_identity(extra)
         if identity and identity in index:
@@ -211,10 +248,33 @@ def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dic
             extra_books = extra.get("bookmakers") or []
             if isinstance(base_books, list) and isinstance(extra_books, list):
                 _merge_bookmakers(base_books, extra_books)
-        else:
-            base_events.append(extra)
-            if identity:
-                index[identity] = extra
+            continue
+        matched_event = None
+        if tolerance_seconds > 0:
+            team_key = _event_team_key(extra)
+            if team_key and team_key in by_team:
+                extra_epoch = _event_time_seconds(extra)
+                if extra_epoch is not None:
+                    best_diff = None
+                    for base_epoch, base_event in by_team[team_key]:
+                        diff = abs(base_epoch - extra_epoch)
+                        if diff <= tolerance_seconds and (best_diff is None or diff < best_diff):
+                            best_diff = diff
+                            matched_event = base_event
+        if matched_event is not None:
+            base_books = matched_event.setdefault("bookmakers", [])
+            extra_books = extra.get("bookmakers") or []
+            if isinstance(base_books, list) and isinstance(extra_books, list):
+                _merge_bookmakers(base_books, extra_books)
+            continue
+        base_events.append(extra)
+        if identity:
+            index[identity] = extra
+        team_key = _event_team_key(extra)
+        if team_key:
+            epoch = _event_time_seconds(extra)
+            if epoch is not None:
+                by_team.setdefault(team_key, []).append((epoch, extra))
     return base_events
 
 
