@@ -3,16 +3,29 @@
 from __future__ import annotations
 
 import datetime as dt
+import difflib
 import itertools
 import json
 import math
 import os
 import re
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import requests
+
+try:  # Optional when running scanner standalone
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover
+    load_dotenv = None
+
+from settings import apply_config_env
+
+if load_dotenv:
+    load_dotenv()
+apply_config_env()
 
 from config import (
     DEFAULT_BANKROLL,
@@ -22,6 +35,7 @@ from config import (
     DEFAULT_REGION_KEYS,
     DEFAULT_SHARP_BOOK,
     DEFAULT_SPORT_KEYS,
+    DEFAULT_STAKE_AMOUNT,
     EDGE_BANDS,
     EXCHANGE_BOOKMAKERS,
     EXCHANGE_KEYS,
@@ -55,6 +69,22 @@ PUREBET_SAMPLE_PATH = os.getenv(
 PUREBET_API_BASE = os.getenv("PUREBET_API_BASE", "").strip()
 PUREBET_DEFAULT_BASE = "https://v3api.purebet.io"
 PUREBET_LIVE = os.getenv("PUREBET_LIVE", "").strip().lower() in {"1", "true", "yes", "on"}
+PUREBET_USER_AGENT = os.getenv(
+    "PUREBET_USER_AGENT",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+).strip()
+PUREBET_ORIGIN = os.getenv("PUREBET_ORIGIN", "https://purebet.io").strip()
+PUREBET_REFERER = os.getenv("PUREBET_REFERER", "https://purebet.io/").strip()
+PUREBET_MIN_STAKE_RAW = os.getenv("PUREBET_MIN_STAKE", "50").strip()
+PUREBET_MAX_AGE_SECONDS_RAW = os.getenv("PUREBET_MAX_AGE_SECONDS", "60").strip()
+PUREBET_FUZZY_THRESHOLD_RAW = os.getenv("PUREBET_FUZZY_MATCH_THRESHOLD", "0.85").strip()
+PUREBET_MARKETS_ENABLED = os.getenv("PUREBET_MARKETS_ENABLED", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 EVENT_TIME_TOLERANCE_MINUTES = os.getenv("EVENT_TIME_TOLERANCE_MINUTES", "15").strip()
 PUREBET_DEFAULT_LEAGUE_MAP = {
     487: "basketball_nba",
@@ -68,7 +98,7 @@ PUREBET_DEFAULT_LEAGUE_MAP = {
     2663: "soccer_usa_mls",
 }
 PUREBET_LEAGUE_MAP_RAW = os.getenv("PUREBET_LEAGUE_MAP", "").strip()
-PUREBET_SUPPORTED_MARKETS = {"h2h"}
+PUREBET_SUPPORTED_MARKETS = {"h2h", "spreads", "totals"}
 
 
 class ScannerError(Exception):
@@ -93,6 +123,38 @@ def _clamp_commission(rate: float) -> float:
     if rate is None:
         return DEFAULT_COMMISSION
     return max(0.0, min(rate, 0.2))
+
+
+def _purebet_headers() -> Dict[str, str]:
+    headers = {}
+    if PUREBET_ORIGIN:
+        headers["Origin"] = PUREBET_ORIGIN
+    if PUREBET_REFERER:
+        headers["Referer"] = PUREBET_REFERER
+    if PUREBET_USER_AGENT:
+        headers["User-Agent"] = PUREBET_USER_AGENT
+    return headers
+
+
+def _purebet_min_stake() -> float:
+    try:
+        return max(0.0, float(PUREBET_MIN_STAKE_RAW))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _purebet_max_age_seconds() -> int:
+    try:
+        return max(0, int(float(PUREBET_MAX_AGE_SECONDS_RAW)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _purebet_fuzzy_threshold() -> float:
+    try:
+        return max(0.0, min(float(PUREBET_FUZZY_THRESHOLD_RAW), 1.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _normalize_regions(regions: Optional[Sequence[str]]) -> List[str]:
@@ -183,6 +245,15 @@ def _event_team_key(event: dict) -> Optional[Tuple[str, str, str]]:
     return (sport, home, away)
 
 
+def _event_team_key_normalized(event: dict) -> Optional[Tuple[str, str, str]]:
+    sport = (event.get("sport_key") or "").strip().lower()
+    home = _normalize_team_name(event.get("home_team"))
+    away = _normalize_team_name(event.get("away_team"))
+    if not (sport and home and away):
+        return None
+    return (sport, home, away)
+
+
 def _event_identity(event: dict) -> Optional[Tuple[str, str, str, str]]:
     key = _event_team_key(event)
     if not key:
@@ -226,11 +297,13 @@ def _merge_bookmakers(target: List[dict], incoming: List[dict]) -> None:
 def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dict]:
     index: Dict[Tuple[str, str, str, str], dict] = {}
     by_team: Dict[Tuple[str, str, str], List[Tuple[int, dict]]] = {}
+    normalized_by_sport: Dict[str, List[Tuple[int, dict, str, str]]] = {}
     try:
         tolerance_minutes = int(EVENT_TIME_TOLERANCE_MINUTES)
     except ValueError:
         tolerance_minutes = 15
     tolerance_seconds = max(0, tolerance_minutes) * 60
+    fuzzy_threshold = _purebet_fuzzy_threshold()
     for event in base_events:
         identity = _event_identity(event)
         if identity and identity not in index:
@@ -240,6 +313,14 @@ def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dic
             epoch = _event_time_seconds(event)
             if epoch is not None:
                 by_team.setdefault(team_key, []).append((epoch, event))
+        normalized_key = _event_team_key_normalized(event)
+        if normalized_key:
+            sport, home_norm, away_norm = normalized_key
+            epoch = _event_time_seconds(event)
+            if epoch is not None:
+                normalized_by_sport.setdefault(sport, []).append(
+                    (epoch, event, home_norm, away_norm)
+                )
     for extra in extra_events:
         identity = _event_identity(extra)
         if identity and identity in index:
@@ -261,6 +342,26 @@ def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dic
                         if diff <= tolerance_seconds and (best_diff is None or diff < best_diff):
                             best_diff = diff
                             matched_event = base_event
+        if matched_event is None and tolerance_seconds > 0 and fuzzy_threshold > 0:
+            normalized_key = _event_team_key_normalized(extra)
+            extra_epoch = _event_time_seconds(extra)
+            if normalized_key and extra_epoch is not None:
+                sport, home_norm, away_norm = normalized_key
+                best_score = None
+                for base_epoch, base_event, base_home, base_away in normalized_by_sport.get(
+                    sport, []
+                ):
+                    if abs(base_epoch - extra_epoch) > tolerance_seconds:
+                        continue
+                    score_home = _team_similarity(home_norm, base_home)
+                    score_away = _team_similarity(away_norm, base_away)
+                    score = min(score_home, score_away)
+                    if score < fuzzy_threshold:
+                        continue
+                    avg_score = (score_home + score_away) / 2.0
+                    if best_score is None or avg_score > best_score:
+                        best_score = avg_score
+                        matched_event = base_event
         if matched_event is not None:
             base_books = matched_event.setdefault("bookmakers", [])
             extra_books = extra.get("bookmakers") or []
@@ -304,6 +405,46 @@ def _normalize_text(value: Optional[str]) -> str:
     if not value:
         return ""
     return str(value).strip().lower()
+
+
+def _normalize_team_name(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    normalized = unicodedata.normalize("NFKD", text)
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = normalized.lower()
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    tokens = [token for token in normalized.split() if token]
+    drop_tokens = {
+        "fc",
+        "cf",
+        "sc",
+        "ac",
+        "afc",
+        "u23",
+        "u21",
+        "u20",
+        "u19",
+        "u18",
+        "u17",
+        "women",
+        "woman",
+        "ladies",
+        "reserves",
+        "ii",
+        "iii",
+    }
+    cleaned = [token for token in tokens if token not in drop_tokens]
+    return " ".join(cleaned)
+
+
+def _team_similarity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
 
 
 def _epoch_to_iso(value: float) -> Optional[str]:
@@ -370,6 +511,205 @@ def _is_moneyline_market(market_type: str) -> bool:
     return False
 
 
+def _normalize_purebet_market_type(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    text = str(value).strip().lower()
+    if text in {"ah", "asian handicap", "asian_handicap", "handicap"}:
+        return "AH"
+    if text in {"ou", "over/under", "over_under", "totals", "total"}:
+        return "OU"
+    if text in {"1x2", "match winner", "match_winner", "matchwinner", "winner", "h2h", "ml", "moneyline"}:
+        return "H2H"
+    if text in {"btts", "both teams to score", "both_teams_to_score"}:
+        return "BTTS"
+    return text.upper()
+
+
+def _parse_purebet_market_value(value) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip().replace(",", ".")
+        if not text:
+            return None
+        if "/" in text:
+            parts = [part for part in text.split("/") if part]
+            if parts:
+                text = parts[0]
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _purebet_is_recent(last_updated, max_age_seconds: int, now_epoch: int) -> bool:
+    if max_age_seconds <= 0:
+        return True
+    timestamp = _safe_float(last_updated)
+    if timestamp is None:
+        return True
+    if timestamp > 1e12:
+        timestamp /= 1000.0
+    age = now_epoch - int(timestamp)
+    if age < 0:
+        return True
+    return age <= max_age_seconds
+
+
+def _select_purebet_side(
+    entries: Optional[Sequence[dict]], min_stake: float, max_age_seconds: int, now_epoch: int
+) -> Optional[dict]:
+    if not isinstance(entries, list):
+        return None
+    best = None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        odds = _safe_float(entry.get("odds") or entry.get("price") or entry.get("decimalOdds"))
+        if odds is None or odds <= 1:
+            continue
+        stake = _safe_float(entry.get("stake") or entry.get("maxStake") or entry.get("liquidity"))
+        if min_stake > 0 and (stake is None or stake < min_stake):
+            continue
+        last_updated = entry.get("lastUpdated") or entry.get("last_update") or entry.get("timestamp")
+        if not _purebet_is_recent(last_updated, max_age_seconds, now_epoch):
+            continue
+        if best is None or odds > best["odds"]:
+            best = {"odds": odds, "stake": stake, "last_updated": last_updated}
+    return best
+
+
+def _normalize_purebet_markets_payload(
+    payload: Sequence[dict],
+    home: str,
+    away: str,
+    supported_markets: Sequence[str],
+) -> List[dict]:
+    if not isinstance(payload, list):
+        return []
+    supported = set(supported_markets or [])
+    if not supported:
+        return []
+    min_stake = _purebet_min_stake()
+    max_age_seconds = _purebet_max_age_seconds()
+    now_epoch = int(dt.datetime.utcnow().timestamp())
+    normalized: List[dict] = []
+    for market in payload:
+        if not isinstance(market, dict):
+            continue
+        period = market.get("period")
+        if period not in (None, 1, "1"):
+            continue
+        market_type = _normalize_purebet_market_type(
+            market.get("marketType") or market.get("type") or market.get("market_type")
+        )
+        if not market_type:
+            continue
+        if market_type == "AH" and "spreads" not in supported:
+            continue
+        if market_type == "OU" and "totals" not in supported:
+            continue
+        if market_type == "H2H" and "h2h" not in supported:
+            continue
+        if market_type == "BTTS":
+            continue
+        side0 = _select_purebet_side(
+            market.get("side0odds"), min_stake, max_age_seconds, now_epoch
+        )
+        side1 = _select_purebet_side(
+            market.get("side1odds"), min_stake, max_age_seconds, now_epoch
+        )
+        side2 = _select_purebet_side(
+            market.get("side2odds"), min_stake, max_age_seconds, now_epoch
+        )
+        if not side0 or not side1:
+            continue
+        market_value = _parse_purebet_market_value(
+            market.get("marketValue") or market.get("value") or market.get("market_value")
+        )
+        if market_type == "AH":
+            if market_value is None:
+                continue
+            home_point = float(market_value)
+            away_point = -home_point
+            normalized.append(
+                {
+                    "key": "spreads",
+                    "outcomes": [
+                        {
+                            "name": home,
+                            "price": side0["odds"],
+                            "point": home_point,
+                            "stake": side0.get("stake"),
+                            "last_updated": side0.get("last_updated"),
+                        },
+                        {
+                            "name": away,
+                            "price": side1["odds"],
+                            "point": away_point,
+                            "stake": side1.get("stake"),
+                            "last_updated": side1.get("last_updated"),
+                        },
+                    ],
+                }
+            )
+        elif market_type == "OU":
+            if market_value is None:
+                continue
+            total = float(market_value)
+            normalized.append(
+                {
+                    "key": "totals",
+                    "outcomes": [
+                        {
+                            "name": "Over",
+                            "price": side0["odds"],
+                            "point": total,
+                            "stake": side0.get("stake"),
+                            "last_updated": side0.get("last_updated"),
+                        },
+                        {
+                            "name": "Under",
+                            "price": side1["odds"],
+                            "point": total,
+                            "stake": side1.get("stake"),
+                            "last_updated": side1.get("last_updated"),
+                        },
+                    ],
+                }
+            )
+        elif market_type == "H2H":
+            outcomes = [
+                {
+                    "name": home,
+                    "price": side0["odds"],
+                    "stake": side0.get("stake"),
+                    "last_updated": side0.get("last_updated"),
+                },
+                {
+                    "name": away,
+                    "price": side1["odds"],
+                    "stake": side1.get("stake"),
+                    "last_updated": side1.get("last_updated"),
+                },
+            ]
+            if side2:
+                outcomes.append(
+                    {
+                        "name": "Draw",
+                        "price": side2["odds"],
+                        "stake": side2.get("stake"),
+                        "last_updated": side2.get("last_updated"),
+                    }
+                )
+            normalized.append({"key": "h2h", "outcomes": outcomes})
+    return normalized
+
+
 def _normalize_purebet_h2h_markets(odds: Sequence[dict], home: str, away: str) -> List[dict]:
     groups: Dict[str, dict] = {}
     for item in odds:
@@ -427,7 +767,10 @@ def _normalize_purebet_h2h_markets(odds: Sequence[dict], home: str, away: str) -
 
 
 def _normalize_purebet_v3_events(
-    payload: Sequence[dict], sport_key: str, markets: Sequence[str]
+    payload: Sequence[dict],
+    sport_key: str,
+    markets: Sequence[str],
+    allow_empty_markets: bool = False,
 ) -> List[dict]:
     supported_markets = PUREBET_SUPPORTED_MARKETS.intersection(markets or [])
     if not supported_markets:
@@ -449,21 +792,26 @@ def _normalize_purebet_v3_events(
         )
         if not (home and away and commence):
             continue
-        odds = event.get("odds")
-        if not isinstance(odds, list):
-            continue
+        event_id = (
+            event.get("_id")
+            or event.get("event")
+            or event.get("eventId")
+            or event.get("id")
+        )
         markets_out: List[dict] = []
-        if "h2h" in supported_markets:
+        odds = event.get("odds")
+        if isinstance(odds, list) and "h2h" in supported_markets:
             markets_out.extend(_normalize_purebet_h2h_markets(odds, home, away))
-        if not markets_out:
+        if not markets_out and not allow_empty_markets:
             continue
         normalized.append(
             {
-                "id": event.get("event") or event.get("eventId") or event.get("id"),
+                "id": event_id,
                 "sport_key": event_sport_key,
                 "home_team": home,
                 "away_team": away,
                 "commence_time": commence,
+                "league_id": event.get("leagueId") or event.get("league") or event.get("league_id"),
                 "bookmakers": [
                     {
                         "key": PUREBET_BOOK_KEY,
@@ -482,6 +830,10 @@ def fetch_purebet_events(
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]] = None,
 ) -> List[dict]:
+    if bookmakers:
+        lowered = {str(book).strip().lower() for book in bookmakers if isinstance(book, str)}
+        if PUREBET_BOOK_KEY not in lowered and PUREBET_TITLE.lower() not in lowered:
+            return []
     source = PUREBET_SOURCE or "api"
     if source == "file":
         events = _normalize_purebet_events(_load_event_list(PUREBET_SAMPLE_PATH))
@@ -494,7 +846,7 @@ def fetch_purebet_events(
         url = f"{base_url.rstrip('/')}/events"
         params = {"live": "true" if PUREBET_LIVE else "false"}
         try:
-            resp = requests.get(url, params=params, timeout=30)
+            resp = requests.get(url, params=params, headers=_purebet_headers(), timeout=30)
         except requests.RequestException as exc:
             raise ScannerError(f"Purebet network error: {exc}") from exc
         if resp.status_code >= 400:
@@ -507,7 +859,58 @@ def fetch_purebet_events(
             raise ScannerError("Failed to parse Purebet API response") from exc
         if not isinstance(payload, list):
             raise ScannerError("Purebet API response must be a JSON array of events")
-        events = _normalize_purebet_v3_events(payload, sport_key, markets)
+        supported_markets = PUREBET_SUPPORTED_MARKETS.intersection(markets or [])
+        needs_details = (
+            PUREBET_MARKETS_ENABLED
+            and bool({"spreads", "totals"}.intersection(supported_markets))
+        )
+        events = _normalize_purebet_v3_events(
+            payload, sport_key, markets, allow_empty_markets=needs_details
+        )
+        if needs_details and events:
+            for event in events:
+                event_id = event.get("id")
+                if not event_id:
+                    continue
+                market_url = f"{base_url.rstrip('/')}/markets"
+                market_params = {"event": event_id}
+                try:
+                    market_resp = requests.get(
+                        market_url,
+                        params=market_params,
+                        headers=_purebet_headers(),
+                        timeout=30,
+                    )
+                except requests.RequestException:
+                    continue
+                if market_resp.status_code >= 400:
+                    continue
+                try:
+                    market_payload = market_resp.json()
+                except ValueError:
+                    continue
+                extra_markets = _normalize_purebet_markets_payload(
+                    market_payload,
+                    event.get("home_team") or "",
+                    event.get("away_team") or "",
+                    supported_markets,
+                )
+                if not extra_markets:
+                    continue
+                bookmakers_list = event.get("bookmakers")
+                if not isinstance(bookmakers_list, list) or not bookmakers_list:
+                    event["bookmakers"] = [
+                        {"key": PUREBET_BOOK_KEY, "title": PUREBET_TITLE, "markets": []}
+                    ]
+                    bookmakers_list = event["bookmakers"]
+                book = bookmakers_list[0]
+                markets_list = book.get("markets")
+                if not isinstance(markets_list, list):
+                    markets_list = []
+                if any(m.get("key") == "h2h" for m in extra_markets):
+                    markets_list = [m for m in markets_list if m.get("key") != "h2h"]
+                markets_list.extend(extra_markets)
+                book["markets"] = markets_list
     if sport_key:
         events = [event for event in events if event.get("sport_key") == sport_key]
     if bookmakers:
@@ -922,6 +1325,11 @@ def _record_best_prices(
                 if key is None:
                     continue
                 normalized_point = outcome.get("point")
+                stake_value = _safe_float(
+                    outcome.get("stake")
+                    or outcome.get("max_stake")
+                    or outcome.get("liquidity")
+                )
                 entry = lines.setdefault(key, {})
                 name = outcome.get("name", "")
                 existing = entry.get(name)
@@ -936,6 +1344,7 @@ def _record_best_prices(
                         "bookmaker_key": bookmaker_key,
                         "name": name,
                         "point": normalized_point,
+                        "max_stake": stake_value,
                         "is_exchange": is_exchange,
                     }
     return lines
@@ -991,6 +1400,7 @@ def _collect_market_entries(
                 "price": o["display_price"],
                 "effective_price": o["effective_price"],
                 "point": o.get("point"),
+                "max_stake": o.get("max_stake"),
                 "is_exchange": o.get("is_exchange", False),
             }
             for o in outcomes
@@ -1559,7 +1969,7 @@ def run_scan(
     sports: Optional[List[str]] = None,
     all_sports: bool = False,
     all_markets: bool = False,
-    stake_amount: float = 100.0,
+    stake_amount: float = DEFAULT_STAKE_AMOUNT,
     regions: Optional[Sequence[str]] = None,
     bookmakers: Optional[Sequence[str]] = None,
     commission_rate: float = DEFAULT_COMMISSION,
@@ -1573,7 +1983,7 @@ def run_scan(
     if not api_keys:
         return {"success": False, "error": "API key is required", "error_code": 400}
     if stake_amount is None or stake_amount <= 0:
-        stake_amount = 100.0
+        stake_amount = DEFAULT_STAKE_AMOUNT
     all_markets = bool(all_markets)
     include_purebet = _resolve_purebet_enabled(include_purebet)
     normalized_regions = _normalize_regions(regions)

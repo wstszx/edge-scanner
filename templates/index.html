@@ -46,7 +46,7 @@
           {% endif %}
           <div class="field">
             <label class="field-label" data-i18n="total_stake_label">Total Stake ($)</label>
-            <input type="number" id="stake-input" min="1" step="1" value="100" />
+            <input type="number" id="stake-input" min="1" step="1" value="{{ default_stake_amount }}" />
             <p class="helper" data-i18n="stake_helper">Used for arbitrage + middles stake splits.</p>
           </div>
           
@@ -87,7 +87,7 @@
                 </div>
                 <div class="panel-foot">
                   <label class="checkbox all-toggle">
-                    <input type="checkbox" id="all-sports" />
+                    <input type="checkbox" id="all-sports" {% if default_all_sports %}checked{% endif %} />
                     <span data-i18n="all_sports_label">Scan all active sports (uses more API credits)</span>
                   </label>
                 </div>
@@ -140,11 +140,11 @@
                 </div>
                 <div class="panel-body">
                   <label class="checkbox">
-                    <input type="checkbox" id="notify-sound-toggle" />
+                    <input type="checkbox" id="notify-sound-toggle" {% if default_notify_sound_enabled %}checked{% endif %} />
                     <span data-i18n="notify_sound">Sound alert</span>
                   </label>
                   <label class="checkbox">
-                    <input type="checkbox" id="notify-popup-toggle" />
+                    <input type="checkbox" id="notify-popup-toggle" {% if default_notify_popup_enabled %}checked{% endif %} />
                     <span data-i18n="notify_popup">Popup notification</span>
                   </label>
                 </div>
@@ -159,12 +159,12 @@
                 <div class="panel-body">
                   <div class="auto-scan-controls">
                     <label class="checkbox">
-                      <input type="checkbox" id="auto-scan-toggle" />
+                      <input type="checkbox" id="auto-scan-toggle" {% if default_auto_scan_enabled %}checked{% endif %} />
                       <span data-i18n="auto_scan_enable">Enable auto scan</span>
                     </label>
                     <div class="auto-scan-interval">
                       <span class="auto-scan-label" data-i18n="auto_scan_interval_label">Interval (min)</span>
-                      <input type="number" id="auto-scan-interval" min="1" step="1" value="10" />
+                      <input type="number" id="auto-scan-interval" min="1" step="1" value="{{ default_auto_scan_minutes }}" />
                     </div>
                   </div>
                 </div>
@@ -225,22 +225,22 @@
       <div class="arbitrage-config-grid">
         <div class="field">
           <label class="field-label" data-i18n="arb_min_roi">Minimum Net ROI (%)</label>
-          <input type="number" id="min-roi-input" min="-5" max="10" step="0.1" value="0" />
+          <input type="number" id="min-roi-input" min="-5" max="10" step="0.1" value="{{ default_min_roi }}" />
           <p class="helper" data-i18n="arb_min_roi_helper">Hide opportunities below this net ROI.</p>
         </div>
         <div class="field toggle-field">
           <label class="field-label" data-i18n="filters_label">Filters</label>
           <label class="checkbox">
-            <input type="checkbox" id="exchange-only-toggle" />
+            <input type="checkbox" id="exchange-only-toggle" {% if default_exchange_only %}checked{% endif %} />
             <span data-i18n="arb_exchange_only">Show exchange books only</span>
           </label>
         </div>
         <div class="field">
           <label class="field-label" data-i18n="sort_by">Sort By</label>
           <select id="arbitrage-sort">
-            <option value="roi" data-i18n="sort_roi">Net ROI</option>
-            <option value="profit" data-i18n="sort_profit">Profit</option>
-            <option value="time" data-i18n="sort_time">Event time</option>
+            <option value="roi" data-i18n="sort_roi" {% if default_arbitrage_sort == 'roi' %}selected{% endif %}>Net ROI</option>
+            <option value="profit" data-i18n="sort_profit" {% if default_arbitrage_sort == 'profit' %}selected{% endif %}>Profit</option>
+            <option value="time" data-i18n="sort_time" {% if default_arbitrage_sort == 'time' %}selected{% endif %}>Event time</option>
           </select>
         </div>
       </div>
@@ -250,23 +250,23 @@
       <div class="middle-config-grid">
         <div class="field">
           <label class="field-label" data-i18n="middle_min_gap">Minimum Gap (points)</label>
-          <input type="number" id="min-gap-input" min="0" max="10" step="0.5" value="1.5" />
+          <input type="number" id="min-gap-input" min="0" max="10" step="0.5" value="{{ default_min_gap }}" />
           <p class="helper" data-i18n="middle_min_gap_helper">Only show middles with at least this many points between the lines.</p>
         </div>
         <div class="field toggle-field">
           <label class="field-label" data-i18n="filters_label">Filters</label>
           <label class="checkbox">
-            <input type="checkbox" id="positive-ev-toggle" checked />
+            <input type="checkbox" id="positive-ev-toggle" {% if default_positive_ev_only %}checked{% endif %} />
             <span data-i18n="positive_ev_only">Show only positive EV middles</span>
           </label>
         </div>
         <div class="field">
           <label class="field-label" data-i18n="sort_by">Sort By</label>
           <select id="middle-sort">
-            <option value="ev" data-i18n="sort_ev">Estimated EV</option>
-            <option value="probability" data-i18n="sort_probability">Probability</option>
-            <option value="gap" data-i18n="sort_gap">Gap size</option>
-            <option value="time" data-i18n="sort_time">Event time</option>
+            <option value="ev" data-i18n="sort_ev" {% if default_middle_sort == 'ev' %}selected{% endif %}>Estimated EV</option>
+            <option value="probability" data-i18n="sort_probability" {% if default_middle_sort == 'probability' %}selected{% endif %}>Probability</option>
+            <option value="gap" data-i18n="sort_gap" {% if default_middle_sort == 'gap' %}selected{% endif %}>Gap size</option>
+            <option value="time" data-i18n="sort_time" {% if default_middle_sort == 'time' %}selected{% endif %}>Event time</option>
           </select>
         </div>
       </div>
@@ -303,10 +303,10 @@
         <div class="field">
           <label class="field-label" data-i18n="sort_by">Sort By</label>
           <select id="plus-ev-sort">
-            <option value="edge" data-i18n="sort_edge">Edge %</option>
-            <option value="ev" data-i18n="sort_ev_value">EV ($)</option>
-            <option value="kelly" data-i18n="sort_kelly">Kelly stake</option>
-            <option value="time" data-i18n="sort_time">Event time</option>
+            <option value="edge" data-i18n="sort_edge" {% if default_plus_ev_sort == 'edge' %}selected{% endif %}>Edge %</option>
+            <option value="ev" data-i18n="sort_ev_value" {% if default_plus_ev_sort == 'ev' %}selected{% endif %}>EV ($)</option>
+            <option value="kelly" data-i18n="sort_kelly" {% if default_plus_ev_sort == 'kelly' %}selected{% endif %}>Kelly stake</option>
+            <option value="time" data-i18n="sort_time" {% if default_plus_ev_sort == 'time' %}selected{% endif %}>Event time</option>
           </select>
         </div>
       </div>
@@ -541,6 +541,9 @@
     data-default-min-edge-percent="{{ default_min_edge_percent }}"
     data-default-bankroll="{{ default_bankroll }}"
     data-default-kelly-fraction="{{ default_kelly_fraction }}"
+    data-default-odds-format="{{ default_odds_format }}"
+    data-default-density="{{ default_density }}"
+    data-default-language="{{ default_language }}"
     data-kelly-options='{{ kelly_options | tojson }}'
     data-bookmaker-links='{{ bookmaker_links | tojson }}'
     hidden
@@ -564,6 +567,9 @@
           defaultMinEdgePercent: parseFloat(configEl.dataset.defaultMinEdgePercent || '0'),
           defaultBankroll: parseFloat(configEl.dataset.defaultBankroll || '0'),
           defaultKellyFraction: parseFloat(configEl.dataset.defaultKellyFraction || '0'),
+          defaultOddsFormat: configEl.dataset.defaultOddsFormat || '',
+          defaultDensity: configEl.dataset.defaultDensity || '',
+          defaultLanguage: configEl.dataset.defaultLanguage || '',
           kellyOptions: parseConfigJson(configEl.dataset.kellyOptions, []),
           bookmakerLinks: parseConfigJson(configEl.dataset.bookmakerLinks, {})
         }
@@ -660,8 +666,8 @@
     let lastCommissionRate = defaultCommissionPercent / 100;
     let lastScanData = null;
     let activeTab = 'arbitrage';
-    let oddsFormat = localStorage.getItem('edge-odds-format') || 'decimal';
-    let densityMode = localStorage.getItem('edge-density') || 'comfort';
+    let oddsFormat = localStorage.getItem('edge-odds-format') || appConfig.defaultOddsFormat || 'decimal';
+    let densityMode = localStorage.getItem('edge-density') || appConfig.defaultDensity || 'comfort';
     let isScanning = false;
       let lastStatus = null;
       let lastFocusedElement = null;
@@ -1118,7 +1124,7 @@
       },
     };
 
-    let activeLanguage = localStorage.getItem('edge-language');
+    let activeLanguage = localStorage.getItem('edge-language') || appConfig.defaultLanguage;
     if (!activeLanguage) {
       activeLanguage = (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
     }

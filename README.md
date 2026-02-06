@@ -29,6 +29,14 @@ The scanner pulls odds from The Odds API across multiple regions (US, EU, UK, AU
 
 Your browser opens automatically. Enter your API key and scan.
 
+Optional: configure via `settings.json` (loaded automatically if present). Keys mirror the
+environment variables used in this README. You can override with real env vars.
+Common defaults: `DEFAULT_REGION_KEYS`, `DEFAULT_SPORT_KEYS`, `DEFAULT_STAKE_AMOUNT`,
+`DEFAULT_COMMISSION`, `DEFAULT_SHARP_BOOK`, `DEFAULT_BANKROLL`, `DEFAULT_KELLY_FRACTION`.
+Use `APP_CONFIG_PATH` to point at a different config file.
+UI defaults can be set too (e.g., `DEFAULT_MIN_ROI`, `DEFAULT_MIDDLE_SORT`, `DEFAULT_PLUS_EV_SORT`,
+`DEFAULT_AUTO_SCAN_MINUTES`, `DEFAULT_NOTIFY_SOUND_ENABLED`, `DEFAULT_ODDS_FORMAT`).
+
 **Optional:** Create a `.env` file with your API key to skip manual entry:
 ```
 ODDS_API_KEY=your_api_key_here
@@ -53,9 +61,18 @@ PUREBET_SOURCE=api
 PUREBET_API_BASE=https://v3api.purebet.io
 PUREBET_LIVE=0
 PUREBET_LEAGUE_MAP={"487":"basketball_nba","1980":"soccer_epl"}
+PUREBET_MARKETS_ENABLED=1
+PUREBET_MIN_STAKE=50
+PUREBET_MAX_AGE_SECONDS=60
+PUREBET_USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...
+PUREBET_ORIGIN=https://purebet.io
+PUREBET_REFERER=https://purebet.io/
+PUREBET_FUZZY_MATCH_THRESHOLD=0.85
+EVENT_TIME_TOLERANCE_MINUTES=15
 ```
 `PUREBET_LEAGUE_MAP` lets you map Purebet league IDs to the Odds API sport keys so events
 merge correctly with other bookmakers.
+Purebet is treated as an exchange, so the commission rate applies to its prices.
 
 Optional: scan all available markets for arbitrage (per event data returned by providers):
 ```
@@ -63,6 +80,13 @@ ARBITRAGE_ALL_MARKETS=1
 ```
 Note: The Odds API still only returns the markets you request, so this mainly affects
 providers that already supply multiple markets in their payloads.
+
+Optional: save each scan payload + result to disk:
+```
+SCAN_SAVE_ENABLED=1
+SCAN_SAVE_DIR=data/scans
+```
+You can also pass `saveScan=true` in the `/scan` request JSON to save per-request.
 
 ## Markets Scanned
 

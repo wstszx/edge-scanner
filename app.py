@@ -1,35 +1,56 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import socket
 import threading
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from settings import apply_config_env
 
-from config import (
+load_dotenv()
+apply_config_env()
+
+from flask import Flask, jsonify, render_template, request  # noqa: E402
+
+from config import (  # noqa: E402
     BOOKMAKER_OPTIONS,
     BOOKMAKER_URLS,
+    DEFAULT_ALL_SPORTS,
+    DEFAULT_ARBITRAGE_SORT,
     DEFAULT_BANKROLL,
     DEFAULT_BOOKMAKER_KEYS,
     DEFAULT_COMMISSION,
+    DEFAULT_DENSITY,
+    DEFAULT_EXCHANGE_ONLY,
+    DEFAULT_LANGUAGE,
     DEFAULT_KELLY_FRACTION,
+    DEFAULT_MIDDLE_SORT,
+    DEFAULT_MIN_ROI,
+    DEFAULT_NOTIFY_POPUP_ENABLED,
+    DEFAULT_NOTIFY_SOUND_ENABLED,
+    DEFAULT_ODDS_FORMAT,
+    DEFAULT_PLUS_EV_SORT,
     DEFAULT_REGION_KEYS,
     DEFAULT_SHARP_BOOK,
     DEFAULT_SPORT_OPTIONS,
+    DEFAULT_STAKE_AMOUNT,
+    DEFAULT_AUTO_SCAN_ENABLED,
+    DEFAULT_AUTO_SCAN_MINUTES,
     KELLY_OPTIONS,
+    MIN_MIDDLE_GAP,
     MIN_EDGE_PERCENT,
     REGION_OPTIONS,
     SHARP_BOOKS,
+    SHOW_POSITIVE_EV_ONLY,
 )
-from scanner import run_scan
-
-load_dotenv()
+from scanner import run_scan  # noqa: E402
 
 app = Flask(__name__)
 
@@ -86,6 +107,35 @@ if not ENV_API_KEYS:
 
 ENV_ALL_MARKETS = _env_flag(os.getenv("ARBITRAGE_ALL_MARKETS"))
 ENV_PUREBET_ENABLED = _env_flag(os.getenv("PUREBET_ENABLED"))
+ENV_SAVE_SCAN = _env_flag(os.getenv("SCAN_SAVE_ENABLED"))
+ENV_SAVE_DIR = os.getenv("SCAN_SAVE_DIR", str(Path("data") / "scans")).strip()
+
+
+def _should_save_scan(payload: dict) -> bool:
+    if "saveScan" in payload:
+        return bool(payload.get("saveScan"))
+    return ENV_SAVE_SCAN
+
+
+def _save_scan_payload(payload: dict, result: dict) -> Optional[str]:
+    if not ENV_SAVE_DIR:
+        return None
+    try:
+        target_dir = Path(ENV_SAVE_DIR)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        filename = f"scan_{timestamp}_{os.urandom(3).hex()}.json"
+        path = target_dir / filename
+        data = {
+            "saved_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "request": payload,
+            "result": result,
+        }
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+        return str(path)
+    except OSError:
+        return None
 
 
 @app.route("/")
@@ -103,6 +153,22 @@ def index() -> str:
         default_min_edge_percent=MIN_EDGE_PERCENT,
         default_bankroll=DEFAULT_BANKROLL,
         default_kelly_fraction=DEFAULT_KELLY_FRACTION,
+        default_stake_amount=DEFAULT_STAKE_AMOUNT,
+        default_min_roi=DEFAULT_MIN_ROI,
+        default_exchange_only=DEFAULT_EXCHANGE_ONLY,
+        default_arbitrage_sort=DEFAULT_ARBITRAGE_SORT,
+        default_min_gap=MIN_MIDDLE_GAP,
+        default_positive_ev_only=SHOW_POSITIVE_EV_ONLY,
+        default_middle_sort=DEFAULT_MIDDLE_SORT,
+        default_plus_ev_sort=DEFAULT_PLUS_EV_SORT,
+        default_auto_scan_enabled=DEFAULT_AUTO_SCAN_ENABLED,
+        default_auto_scan_minutes=DEFAULT_AUTO_SCAN_MINUTES,
+        default_notify_sound_enabled=DEFAULT_NOTIFY_SOUND_ENABLED,
+        default_notify_popup_enabled=DEFAULT_NOTIFY_POPUP_ENABLED,
+        default_odds_format=DEFAULT_ODDS_FORMAT,
+        default_density=DEFAULT_DENSITY,
+        default_language=DEFAULT_LANGUAGE,
+        default_all_sports=DEFAULT_ALL_SPORTS,
         kelly_options=KELLY_OPTIONS,
         bookmaker_links=BOOKMAKER_URLS,
     )
@@ -113,7 +179,7 @@ def scan() -> tuple:
     payload = request.get_json(force=True, silent=True) or {}
     api_keys = ENV_API_KEYS or _payload_api_keys(payload)
     sports = payload.get("sports") or []
-    all_sports = bool(payload.get("allSports"))
+    all_sports = bool(payload.get("allSports")) if "allSports" in payload else DEFAULT_ALL_SPORTS
     all_markets = bool(payload.get("allMarkets")) if "allMarkets" in payload else ENV_ALL_MARKETS
     stake = payload.get("stake")
     regions = payload.get("regions")
@@ -145,9 +211,9 @@ def scan() -> tuple:
         kelly_fraction = DEFAULT_KELLY_FRACTION
     kelly_fraction = max(0.0, min(kelly_fraction, 1.0))
     try:
-        stake_value = float(stake) if stake is not None else 100.0
+        stake_value = float(stake) if stake is not None else DEFAULT_STAKE_AMOUNT
     except (TypeError, ValueError):
-        stake_value = 100.0
+        stake_value = DEFAULT_STAKE_AMOUNT
     if isinstance(regions, list):
         regions_value = [str(region) for region in regions if isinstance(region, str)]
     else:
@@ -178,6 +244,12 @@ def scan() -> tuple:
         kelly_fraction=kelly_fraction,
         include_purebet=include_purebet,
     )
+    if _should_save_scan(payload):
+        saved_path = _save_scan_payload(payload, result)
+        if saved_path:
+            result["scan_saved_path"] = saved_path
+        else:
+            result["scan_save_error"] = "Failed to save scan payload"
     status = 200 if result.get("success") else result.get("error_code", 500)
     return jsonify(result), status
 

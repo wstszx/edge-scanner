@@ -2,6 +2,63 @@
 
 from __future__ import annotations
 
+import json
+import os
+import re
+
+
+def _env_text(key: str) -> str:
+    value = os.getenv(key)
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    raw = _env_text(key)
+    if not raw:
+        return default
+    return raw.lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(key: str, default: float) -> float:
+    raw = _env_text(key)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_int(key: str, default: int) -> int:
+    raw = _env_text(key)
+    if not raw:
+        return default
+    try:
+        return int(float(raw))
+    except ValueError:
+        return default
+
+
+def _env_list(key: str) -> list[str]:
+    raw = _env_text(key)
+    if not raw:
+        return []
+    if raw.startswith("["):
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            payload = None
+        if isinstance(payload, list):
+            return [str(item).strip() for item in payload if str(item).strip()]
+    return [item.strip() for item in re.split(r"[,\s]+", raw) if item.strip()]
+
+
+def _normalize_choice(value: str, allowed: set[str], default: str) -> str:
+    if value in allowed:
+        return value
+    return default
+
+
 REGION_CONFIG = {
     "us": {"name": "United States", "default": True},
     "us2": {"name": "United States (Additional)", "default": False},
@@ -10,10 +67,15 @@ REGION_CONFIG = {
     "au": {"name": "Australia", "default": False},
 }
 
-DEFAULT_REGION_KEYS = [key for key, meta in REGION_CONFIG.items() if meta.get("default")]
+_DEFAULT_REGION_KEYS = [key for key, meta in REGION_CONFIG.items() if meta.get("default")]
+_ENV_DEFAULT_REGIONS = _env_list("DEFAULT_REGION_KEYS")
+if _ENV_DEFAULT_REGIONS:
+    DEFAULT_REGION_KEYS = [key for key in _ENV_DEFAULT_REGIONS if key in REGION_CONFIG] or _DEFAULT_REGION_KEYS
+else:
+    DEFAULT_REGION_KEYS = _DEFAULT_REGION_KEYS
 
 REGION_OPTIONS = [
-    {"key": key, "label": meta["name"], "default": meta.get("default", False)}
+    {"key": key, "label": meta["name"], "default": key in DEFAULT_REGION_KEYS}
     for key, meta in REGION_CONFIG.items()
 ]
 
@@ -23,19 +85,51 @@ EXCHANGE_BOOKMAKERS = {
     "betfair_ex_au": {"name": "Betfair"},
     "sportsbet_ex": {"name": "Sportsbet Exchange"},
     "matchbook": {"name": "Matchbook"},
+    "purebet": {"name": "Purebet"},
 }
 
 EXCHANGE_KEYS = set(EXCHANGE_BOOKMAKERS.keys())
 
-DEFAULT_COMMISSION = 0.05  # 5%
+DEFAULT_COMMISSION = _env_float("DEFAULT_COMMISSION", 0.05)  # 5%
+DEFAULT_MIN_ROI = _env_float("DEFAULT_MIN_ROI", 0.0)
+DEFAULT_EXCHANGE_ONLY = _env_bool("DEFAULT_EXCHANGE_ONLY", False)
+DEFAULT_ARBITRAGE_SORT = _normalize_choice(
+    _env_text("DEFAULT_ARBITRAGE_SORT"),
+    {"roi", "profit", "time"},
+    "roi",
+)
+DEFAULT_ALL_SPORTS = _env_bool("DEFAULT_ALL_SPORTS", False)
+DEFAULT_ODDS_FORMAT = _normalize_choice(
+    _env_text("DEFAULT_ODDS_FORMAT"),
+    {"decimal", "american"},
+    "decimal",
+)
+DEFAULT_DENSITY = _normalize_choice(
+    _env_text("DEFAULT_DENSITY"),
+    {"comfort", "compact"},
+    "comfort",
+)
+DEFAULT_LANGUAGE = _normalize_choice(
+    _env_text("DEFAULT_LANGUAGE"),
+    {"en", "zh"},
+    "",
+)
+DEFAULT_AUTO_SCAN_ENABLED = _env_bool("DEFAULT_AUTO_SCAN_ENABLED", False)
+DEFAULT_AUTO_SCAN_MINUTES = max(1, _env_int("DEFAULT_AUTO_SCAN_MINUTES", 10))
+DEFAULT_NOTIFY_SOUND_ENABLED = _env_bool("DEFAULT_NOTIFY_SOUND_ENABLED", False)
+DEFAULT_NOTIFY_POPUP_ENABLED = _env_bool("DEFAULT_NOTIFY_POPUP_ENABLED", False)
 
 # -----------------------------------------------------------------------------
 # Middles configuration
 # -----------------------------------------------------------------------------
 
-MIN_MIDDLE_GAP = 1.5
-DEFAULT_MIDDLE_SORT = "ev"
-SHOW_POSITIVE_EV_ONLY = True
+MIN_MIDDLE_GAP = _env_float("MIN_MIDDLE_GAP", 1.5)
+DEFAULT_MIDDLE_SORT = _normalize_choice(
+    _env_text("DEFAULT_MIDDLE_SORT"),
+    {"ev", "probability", "gap", "time"},
+    "ev",
+)
+SHOW_POSITIVE_EV_ONLY = _env_bool("SHOW_POSITIVE_EV_ONLY", True)
 
 PROBABILITY_PER_INTEGER = {
     # Spreads
@@ -104,7 +198,7 @@ SOCCER_SPORTS = {
     "soccer_usa_mls",
 }
 
-DEFAULT_SPORT_KEYS = [
+_DEFAULT_SPORT_KEYS = [
     "americanfootball_nfl",
     "basketball_nba",
     "baseball_mlb",
@@ -116,6 +210,11 @@ DEFAULT_SPORT_KEYS = [
     "soccer_france_ligue_one",
     "soccer_usa_mls",
 ]
+_ENV_DEFAULT_SPORTS = _env_list("DEFAULT_SPORT_KEYS")
+if _ENV_DEFAULT_SPORTS:
+    DEFAULT_SPORT_KEYS = _ENV_DEFAULT_SPORTS
+else:
+    DEFAULT_SPORT_KEYS = _DEFAULT_SPORT_KEYS
 
 DEFAULT_SPORT_OPTIONS = [
     {"key": key, "label": SPORT_DISPLAY_NAMES.get(key, key)}
@@ -141,10 +240,16 @@ SHARP_BOOKS = [
     {"key": "matchbook", "name": "Matchbook", "region": "eu", "type": "exchange"},
 ]
 
-DEFAULT_SHARP_BOOK = "pinnacle"
-DEFAULT_BANKROLL = 1000.0
-MIN_EDGE_PERCENT = 1.0
-DEFAULT_KELLY_FRACTION = 0.25
+DEFAULT_SHARP_BOOK = _env_text("DEFAULT_SHARP_BOOK") or "pinnacle"
+DEFAULT_BANKROLL = _env_float("DEFAULT_BANKROLL", 1000.0)
+MIN_EDGE_PERCENT = _env_float("MIN_EDGE_PERCENT", 1.0)
+DEFAULT_KELLY_FRACTION = _env_float("DEFAULT_KELLY_FRACTION", 0.25)
+DEFAULT_STAKE_AMOUNT = _env_float("DEFAULT_STAKE_AMOUNT", 100.0)
+DEFAULT_PLUS_EV_SORT = _normalize_choice(
+    _env_text("DEFAULT_PLUS_EV_SORT"),
+    {"edge", "ev", "kelly", "time"},
+    "edge",
+)
 KELLY_OPTIONS = [
     {"label": "Full Kelly", "value": 1.0},
     {"label": "Half Kelly", "value": 0.5},
@@ -240,11 +345,15 @@ for key in SOFT_BOOK_KEYS:
     if key not in BOOKMAKER_KEYS:
         BOOKMAKER_KEYS.append(key)
 
+DEFAULT_BOOKMAKER_KEYS: list[str] = []
+_ENV_DEFAULT_BOOKMAKERS = _env_list("DEFAULT_BOOKMAKER_KEYS")
+if _ENV_DEFAULT_BOOKMAKERS:
+    DEFAULT_BOOKMAKER_KEYS = [key for key in _ENV_DEFAULT_BOOKMAKERS if key in BOOKMAKER_KEYS]
+
 BOOKMAKER_OPTIONS = [
     {"key": key, "label": BOOKMAKER_LABELS.get(key, key)}
     for key in BOOKMAKER_KEYS
 ]
-DEFAULT_BOOKMAKER_KEYS: list[str] = []
 
 EDGE_BANDS = [
     (1.0, 3.0, "1-3%"),
