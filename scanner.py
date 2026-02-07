@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import datetime as dt
+import concurrent.futures
 import difflib
 import itertools
 import json
 import math
 import os
 import re
+import time
 import unicodedata
 import uuid
 from pathlib import Path
@@ -79,12 +81,19 @@ PUREBET_REFERER = os.getenv("PUREBET_REFERER", "https://purebet.io/").strip()
 PUREBET_MIN_STAKE_RAW = os.getenv("PUREBET_MIN_STAKE", "50").strip()
 PUREBET_MAX_AGE_SECONDS_RAW = os.getenv("PUREBET_MAX_AGE_SECONDS", "60").strip()
 PUREBET_FUZZY_THRESHOLD_RAW = os.getenv("PUREBET_FUZZY_MATCH_THRESHOLD", "0.85").strip()
+PUREBET_MARKET_WORKERS_RAW = os.getenv("PUREBET_MARKET_WORKERS", "8").strip()
+PUREBET_MARKET_RETRIES_RAW = os.getenv("PUREBET_MARKET_RETRIES", "2").strip()
+PUREBET_RETRY_BACKOFF_RAW = os.getenv("PUREBET_RETRY_BACKOFF", "0.4").strip()
 PUREBET_MARKETS_ENABLED = os.getenv("PUREBET_MARKETS_ENABLED", "1").strip().lower() not in {
     "0",
     "false",
     "no",
     "off",
 }
+PUREBET_LEAGUE_SYNC_ENABLED = os.getenv(
+    "PUREBET_LEAGUE_SYNC_ENABLED", "1"
+).strip().lower() not in {"0", "false", "no", "off"}
+PUREBET_LEAGUE_SYNC_TTL_RAW = os.getenv("PUREBET_LEAGUE_SYNC_TTL", "600").strip()
 EVENT_TIME_TOLERANCE_MINUTES = os.getenv("EVENT_TIME_TOLERANCE_MINUTES", "15").strip()
 PUREBET_DEFAULT_LEAGUE_MAP = {
     487: "basketball_nba",
@@ -99,6 +108,11 @@ PUREBET_DEFAULT_LEAGUE_MAP = {
 }
 PUREBET_LEAGUE_MAP_RAW = os.getenv("PUREBET_LEAGUE_MAP", "").strip()
 PUREBET_SUPPORTED_MARKETS = {"h2h", "spreads", "totals"}
+PUREBET_ACTIVE_LEAGUES_CACHE: Dict[str, object] = {
+    "expires_at": 0.0,
+    "mapping": {},
+    "meta": {},
+}
 
 
 class ScannerError(Exception):
@@ -155,6 +169,76 @@ def _purebet_fuzzy_threshold() -> float:
         return max(0.0, min(float(PUREBET_FUZZY_THRESHOLD_RAW), 1.0))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _purebet_market_workers() -> int:
+    try:
+        return max(1, int(float(PUREBET_MARKET_WORKERS_RAW)))
+    except (TypeError, ValueError):
+        return 8
+
+
+def _purebet_market_retries() -> int:
+    try:
+        return max(0, int(float(PUREBET_MARKET_RETRIES_RAW)))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _purebet_retry_backoff() -> float:
+    try:
+        return max(0.0, float(PUREBET_RETRY_BACKOFF_RAW))
+    except (TypeError, ValueError):
+        return 0.4
+
+
+def _purebet_league_sync_ttl() -> int:
+    try:
+        return max(0, int(float(PUREBET_LEAGUE_SYNC_TTL_RAW)))
+    except (TypeError, ValueError):
+        return 600
+
+
+def _purebet_get_json(
+    url: str,
+    params: Dict[str, object],
+    headers: Dict[str, str],
+    retries: int,
+    backoff_seconds: float,
+    timeout: int = 30,
+) -> Tuple[object, int]:
+    """Return (json_payload, retries_used). Raises ScannerError on final failure."""
+    last_error: Optional[ScannerError] = None
+    retriable_status = {429, 500, 502, 503, 504}
+    attempts = max(0, retries) + 1
+    for attempt in range(attempts):
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=timeout)
+        except requests.RequestException as exc:
+            last_error = ScannerError(f"Purebet network error: {exc}")
+            if attempt < attempts - 1:
+                time.sleep(backoff_seconds * (2**attempt))
+                continue
+            raise last_error from exc
+        if response.status_code >= 400:
+            if response.status_code in retriable_status and attempt < attempts - 1:
+                time.sleep(backoff_seconds * (2**attempt))
+                continue
+            raise ScannerError(
+                f"Purebet API request failed ({response.status_code})",
+                status_code=response.status_code,
+            )
+        try:
+            return response.json(), attempt
+        except ValueError as exc:
+            last_error = ScannerError("Failed to parse Purebet API response")
+            if attempt < attempts - 1:
+                time.sleep(backoff_seconds * (2**attempt))
+                continue
+            raise last_error from exc
+    if last_error:
+        raise last_error
+    raise ScannerError("Purebet request failed")
 
 
 def _normalize_regions(regions: Optional[Sequence[str]]) -> List[str]:
@@ -379,7 +463,7 @@ def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dic
     return base_events
 
 
-def _load_purebet_league_map() -> Dict[str, str]:
+def _base_purebet_league_map() -> Dict[str, str]:
     mapping = {str(key): value for key, value in PUREBET_DEFAULT_LEAGUE_MAP.items()}
     if not PUREBET_LEAGUE_MAP_RAW:
         return mapping
@@ -391,6 +475,161 @@ def _load_purebet_league_map() -> Dict[str, str]:
         for key, value in payload.items():
             if isinstance(value, str) and value.strip():
                 mapping[str(key)] = value.strip()
+    return mapping
+
+
+def _infer_sport_key_from_active_league(league: dict) -> Optional[str]:
+    if not isinstance(league, dict):
+        return None
+    sport_name = _normalize_text(league.get("sportName"))
+    sport_id = str(league.get("sport") or "")
+    league_name = _normalize_text(league.get("name"))
+    abbr = _normalize_text(league.get("abbr"))
+    country = _normalize_text(league.get("country"))
+    haystack = " ".join(value for value in (league_name, abbr, country) if value)
+    if not haystack:
+        return None
+
+    if "nfl" in haystack:
+        return "americanfootball_nfl"
+    if "nba" in haystack:
+        return "basketball_nba"
+    if "ncaa" in haystack and "basket" in haystack:
+        return "basketball_ncaab"
+
+    is_soccer = sport_name == "soccer" or sport_id == "29"
+    if is_soccer:
+        if "premier league" in haystack and ("eng" in abbr or "england" in haystack):
+            return "soccer_epl"
+        if "la liga" in haystack or ("spain" in haystack and "liga" in haystack):
+            return "soccer_spain_la_liga"
+        if "bundesliga" in haystack or ("germany" in haystack and "bundesliga" in haystack):
+            return "soccer_germany_bundesliga"
+        if "serie a" in haystack or ("italy" in haystack and "serie" in haystack):
+            return "soccer_italy_serie_a"
+        if "ligue 1" in haystack or ("france" in haystack and "ligue" in haystack):
+            return "soccer_france_ligue_one"
+        if "mls" in haystack or "major league soccer" in haystack:
+            return "soccer_usa_mls"
+
+    is_basketball = sport_name == "basketball" or sport_id == "4"
+    if is_basketball:
+        if "nba" in haystack:
+            return "basketball_nba"
+        if "ncaa" in haystack:
+            return "basketball_ncaab"
+    return None
+
+
+def _build_dynamic_purebet_league_map(
+    leagues: Sequence[dict], base_mapping: Dict[str, str]
+) -> Tuple[Dict[str, str], dict]:
+    dynamic: Dict[str, str] = {}
+    unresolved_samples: List[str] = []
+    total = 0
+    inferred = 0
+    unresolved = 0
+    for league in leagues:
+        if not isinstance(league, dict):
+            continue
+        league_id = league.get("_id") or league.get("id")
+        if league_id is None:
+            continue
+        total += 1
+        key = str(league_id)
+        if key in base_mapping:
+            continue
+        inferred_sport = _infer_sport_key_from_active_league(league)
+        if inferred_sport:
+            dynamic[key] = inferred_sport
+            inferred += 1
+            continue
+        unresolved += 1
+        if len(unresolved_samples) < 5:
+            name = league.get("name") or league.get("abbr") or key
+            unresolved_samples.append(f"{key}:{name}")
+    return dynamic, {
+        "total": total,
+        "inferred": inferred,
+        "unresolved": unresolved,
+        "unresolved_samples": unresolved_samples,
+    }
+
+
+def _load_purebet_league_map(
+    base_url: Optional[str] = None,
+    headers: Optional[Dict[str, str]] = None,
+    stats: Optional[dict] = None,
+) -> Dict[str, str]:
+    mapping = _base_purebet_league_map()
+    if stats is not None:
+        stats["league_sync_enabled"] = bool(PUREBET_LEAGUE_SYNC_ENABLED)
+    if not PUREBET_LEAGUE_SYNC_ENABLED:
+        if stats is not None:
+            stats["league_sync_source"] = "disabled"
+        return mapping
+    if not base_url:
+        if stats is not None:
+            stats["league_sync_source"] = "no_base_url"
+        return mapping
+    now = time.time()
+    ttl = _purebet_league_sync_ttl()
+    cache_valid = ttl > 0 and now < float(PUREBET_ACTIVE_LEAGUES_CACHE.get("expires_at", 0.0))
+    cached_mapping = PUREBET_ACTIVE_LEAGUES_CACHE.get("mapping") or {}
+    cached_meta = PUREBET_ACTIVE_LEAGUES_CACHE.get("meta") or {}
+    if cache_valid and isinstance(cached_mapping, dict):
+        mapping.update(cached_mapping)
+        if stats is not None:
+            stats["league_sync_source"] = "cache"
+            stats["league_sync_total_leagues"] = int(cached_meta.get("total", 0) or 0)
+            stats["league_sync_dynamic_added"] = len(cached_mapping)
+            stats["league_sync_unresolved"] = int(cached_meta.get("unresolved", 0) or 0)
+            stats["league_sync_unresolved_samples"] = list(cached_meta.get("unresolved_samples", []))
+        return mapping
+
+    leagues_url = f"{base_url.rstrip('/')}/activeLeagues"
+    retries = _purebet_market_retries()
+    backoff = _purebet_retry_backoff()
+    try:
+        payload, retries_used = _purebet_get_json(
+            leagues_url,
+            {},
+            headers or _purebet_headers(),
+            retries=retries,
+            backoff_seconds=backoff,
+            timeout=30,
+        )
+    except ScannerError as exc:
+        if isinstance(cached_mapping, dict):
+            mapping.update(cached_mapping)
+        if stats is not None:
+            stats["league_sync_source"] = "stale_cache" if cached_mapping else "error"
+            stats["league_sync_error"] = str(exc)
+            stats["league_sync_dynamic_added"] = len(cached_mapping) if isinstance(cached_mapping, dict) else 0
+        return mapping
+
+    if not isinstance(payload, list):
+        if isinstance(cached_mapping, dict):
+            mapping.update(cached_mapping)
+        if stats is not None:
+            stats["league_sync_source"] = "stale_cache" if cached_mapping else "invalid_payload"
+            stats["league_sync_error"] = "Purebet activeLeagues response must be a JSON array"
+            stats["league_sync_dynamic_added"] = len(cached_mapping) if isinstance(cached_mapping, dict) else 0
+        return mapping
+
+    dynamic_mapping, meta = _build_dynamic_purebet_league_map(payload, mapping)
+    expires_at = now + ttl if ttl > 0 else now
+    PUREBET_ACTIVE_LEAGUES_CACHE["expires_at"] = expires_at
+    PUREBET_ACTIVE_LEAGUES_CACHE["mapping"] = dynamic_mapping
+    PUREBET_ACTIVE_LEAGUES_CACHE["meta"] = meta
+    mapping.update(dynamic_mapping)
+    if stats is not None:
+        stats["league_sync_source"] = "live"
+        stats["league_sync_retries"] = retries_used
+        stats["league_sync_total_leagues"] = int(meta.get("total", 0) or 0)
+        stats["league_sync_dynamic_added"] = len(dynamic_mapping)
+        stats["league_sync_unresolved"] = int(meta.get("unresolved", 0) or 0)
+        stats["league_sync_unresolved_samples"] = list(meta.get("unresolved_samples", []))
     return mapping
 
 
@@ -710,6 +949,55 @@ def _normalize_purebet_markets_payload(
     return normalized
 
 
+def _fetch_purebet_event_markets(
+    base_url: str,
+    event: dict,
+    supported_markets: Sequence[str],
+    headers: Dict[str, str],
+    retries: int,
+    backoff_seconds: float,
+) -> dict:
+    event_id = event.get("id")
+    if not event_id:
+        return {"event_id": None, "markets": [], "retries_used": 0, "error": "missing_event_id"}
+    market_url = f"{base_url.rstrip('/')}/markets"
+    try:
+        payload, retries_used = _purebet_get_json(
+            market_url,
+            {"event": event_id},
+            headers,
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+            timeout=30,
+        )
+    except ScannerError as exc:
+        return {
+            "event_id": event_id,
+            "markets": [],
+            "retries_used": retries,
+            "error": str(exc),
+        }
+    if not isinstance(payload, list):
+        return {
+            "event_id": event_id,
+            "markets": [],
+            "retries_used": retries_used,
+            "error": "invalid_markets_payload",
+        }
+    markets = _normalize_purebet_markets_payload(
+        payload,
+        event.get("home_team") or "",
+        event.get("away_team") or "",
+        supported_markets,
+    )
+    return {
+        "event_id": event_id,
+        "markets": markets,
+        "retries_used": retries_used,
+        "error": None,
+    }
+
+
 def _normalize_purebet_h2h_markets(odds: Sequence[dict], home: str, away: str) -> List[dict]:
     groups: Dict[str, dict] = {}
     for item in odds:
@@ -770,12 +1058,14 @@ def _normalize_purebet_v3_events(
     payload: Sequence[dict],
     sport_key: str,
     markets: Sequence[str],
+    league_map: Optional[Dict[str, str]] = None,
     allow_empty_markets: bool = False,
 ) -> List[dict]:
     supported_markets = PUREBET_SUPPORTED_MARKETS.intersection(markets or [])
     if not supported_markets:
         return []
-    league_map = _load_purebet_league_map()
+    if league_map is None:
+        league_map = _load_purebet_league_map()
     normalized: List[dict] = []
     for event in payload:
         if not isinstance(event, dict):
@@ -830,13 +1120,37 @@ def fetch_purebet_events(
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]] = None,
 ) -> List[dict]:
+    source = PUREBET_SOURCE or "api"
+    stats = {
+        "source": source,
+        "events_payload_count": 0,
+        "events_normalized_count": 0,
+        "events_returned_count": 0,
+        "details_enabled": False,
+        "details_requested": 0,
+        "details_success": 0,
+        "details_failed": 0,
+        "details_empty": 0,
+        "details_retries": 0,
+        "details_workers": 0,
+        "details_error_samples": [],
+        "league_sync_enabled": False,
+        "league_sync_source": "not_used",
+        "league_sync_total_leagues": 0,
+        "league_sync_dynamic_added": 0,
+        "league_sync_unresolved": 0,
+        "league_sync_unresolved_samples": [],
+    }
+    fetch_purebet_events.last_stats = stats
     if bookmakers:
         lowered = {str(book).strip().lower() for book in bookmakers if isinstance(book, str)}
         if PUREBET_BOOK_KEY not in lowered and PUREBET_TITLE.lower() not in lowered:
+            stats["events_returned_count"] = 0
             return []
-    source = PUREBET_SOURCE or "api"
     if source == "file":
         events = _normalize_purebet_events(_load_event_list(PUREBET_SAMPLE_PATH))
+        stats["events_payload_count"] = len(events)
+        stats["events_normalized_count"] = len(events)
     else:
         base_url = PUREBET_API_BASE or PUREBET_DEFAULT_BASE
         if not base_url:
@@ -845,74 +1159,107 @@ def fetch_purebet_events(
             )
         url = f"{base_url.rstrip('/')}/events"
         params = {"live": "true" if PUREBET_LIVE else "false"}
-        try:
-            resp = requests.get(url, params=params, headers=_purebet_headers(), timeout=30)
-        except requests.RequestException as exc:
-            raise ScannerError(f"Purebet network error: {exc}") from exc
-        if resp.status_code >= 400:
-            raise ScannerError(
-                f"Purebet API request failed ({resp.status_code})", status_code=resp.status_code
-            )
-        try:
-            payload = resp.json()
-        except ValueError as exc:
-            raise ScannerError("Failed to parse Purebet API response") from exc
+        payload, retries_used = _purebet_get_json(
+            url,
+            params,
+            _purebet_headers(),
+            retries=_purebet_market_retries(),
+            backoff_seconds=_purebet_retry_backoff(),
+            timeout=30,
+        )
+        stats["details_retries"] += retries_used
         if not isinstance(payload, list):
             raise ScannerError("Purebet API response must be a JSON array of events")
+        stats["events_payload_count"] = len(payload)
         supported_markets = PUREBET_SUPPORTED_MARKETS.intersection(markets or [])
         needs_details = (
             PUREBET_MARKETS_ENABLED
             and bool({"spreads", "totals"}.intersection(supported_markets))
         )
-        events = _normalize_purebet_v3_events(
-            payload, sport_key, markets, allow_empty_markets=needs_details
+        stats["details_enabled"] = bool(needs_details)
+        league_map = _load_purebet_league_map(
+            base_url=base_url,
+            headers=_purebet_headers(),
+            stats=stats,
         )
+        events = _normalize_purebet_v3_events(
+            payload,
+            sport_key,
+            markets,
+            league_map=league_map,
+            allow_empty_markets=needs_details,
+        )
+        stats["events_normalized_count"] = len(events)
         if needs_details and events:
-            for event in events:
-                event_id = event.get("id")
-                if not event_id:
-                    continue
-                market_url = f"{base_url.rstrip('/')}/markets"
-                market_params = {"event": event_id}
-                try:
-                    market_resp = requests.get(
-                        market_url,
-                        params=market_params,
-                        headers=_purebet_headers(),
-                        timeout=30,
+            workers = min(_purebet_market_workers(), len(events))
+            retries = _purebet_market_retries()
+            backoff = _purebet_retry_backoff()
+            stats["details_workers"] = workers
+            stats["details_requested"] = len(events)
+            event_map = {str(event.get("id")): event for event in events if event.get("id")}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = [
+                    executor.submit(
+                        _fetch_purebet_event_markets,
+                        base_url,
+                        event,
+                        supported_markets,
+                        _purebet_headers(),
+                        retries,
+                        backoff,
                     )
-                except requests.RequestException:
-                    continue
-                if market_resp.status_code >= 400:
-                    continue
-                try:
-                    market_payload = market_resp.json()
-                except ValueError:
-                    continue
-                extra_markets = _normalize_purebet_markets_payload(
-                    market_payload,
-                    event.get("home_team") or "",
-                    event.get("away_team") or "",
-                    supported_markets,
-                )
-                if not extra_markets:
-                    continue
-                bookmakers_list = event.get("bookmakers")
-                if not isinstance(bookmakers_list, list) or not bookmakers_list:
-                    event["bookmakers"] = [
-                        {"key": PUREBET_BOOK_KEY, "title": PUREBET_TITLE, "markets": []}
-                    ]
-                    bookmakers_list = event["bookmakers"]
-                book = bookmakers_list[0]
-                markets_list = book.get("markets")
-                if not isinstance(markets_list, list):
-                    markets_list = []
-                if any(m.get("key") == "h2h" for m in extra_markets):
-                    markets_list = [m for m in markets_list if m.get("key") != "h2h"]
-                markets_list.extend(extra_markets)
-                book["markets"] = markets_list
+                    for event in events
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        stats["details_failed"] += 1
+                        if len(stats["details_error_samples"]) < 5:
+                            stats["details_error_samples"].append(str(exc))
+                        continue
+                    stats["details_retries"] += int(result.get("retries_used") or 0)
+                    event_id = result.get("event_id")
+                    event_obj = event_map.get(str(event_id))
+                    if event_obj is None:
+                        continue
+                    error = result.get("error")
+                    extra_markets = result.get("markets") or []
+                    if error:
+                        stats["details_failed"] += 1
+                        if len(stats["details_error_samples"]) < 5:
+                            stats["details_error_samples"].append(str(error))
+                        continue
+                    if not extra_markets:
+                        stats["details_empty"] += 1
+                        continue
+                    stats["details_success"] += 1
+                    bookmakers_list = event_obj.get("bookmakers")
+                    if not isinstance(bookmakers_list, list) or not bookmakers_list:
+                        event_obj["bookmakers"] = [
+                            {"key": PUREBET_BOOK_KEY, "title": PUREBET_TITLE, "markets": []}
+                        ]
+                        bookmakers_list = event_obj["bookmakers"]
+                    book = bookmakers_list[0]
+                    markets_list = book.get("markets")
+                    if not isinstance(markets_list, list):
+                        markets_list = []
+                    if any(m.get("key") == "h2h" for m in extra_markets):
+                        markets_list = [m for m in markets_list if m.get("key") != "h2h"]
+                    markets_list.extend(extra_markets)
+                    book["markets"] = markets_list
     if sport_key:
         events = [event for event in events if event.get("sport_key") == sport_key]
+    events = [
+        event
+        for event in events
+        if any(
+            isinstance(book, dict)
+            and isinstance(book.get("markets"), list)
+            and book.get("markets")
+            for book in (event.get("bookmakers") or [])
+        )
+    ]
     if bookmakers:
         filtered = []
         for event in events:
@@ -929,7 +1276,12 @@ def fetch_purebet_events(
                 event["bookmakers"] = kept
                 filtered.append(event)
         events = filtered
+    stats["events_returned_count"] = len(events)
+    fetch_purebet_events.last_stats = stats
     return events
+
+
+fetch_purebet_events.last_stats = {}
 
 
 def _ensure_sharp_region(regions: List[str], sharp_key: str) -> List[str]:
@@ -2030,11 +2382,43 @@ def run_scan(
             "partial": False,
             "regions": normalized_regions,
             "commission_rate": commission_rate,
+            "purebet": {
+                "enabled": include_purebet,
+                "events_merged": 0,
+                "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
+                "league_sync": {
+                    "live_updates": 0,
+                    "cache_hits": 0,
+                    "stale_cache_uses": 0,
+                    "dynamic_added": 0,
+                    "unresolved": 0,
+                },
+                "sports": [],
+            },
         }
 
     arb_opportunities: List[dict] = []
     middle_opportunities: List[dict] = []
     plus_ev_opportunities: List[dict] = []
+    purebet_summary = {
+        "enabled": include_purebet,
+        "events_merged": 0,
+        "details": {
+            "requested": 0,
+            "success": 0,
+            "failed": 0,
+            "empty": 0,
+            "retries": 0,
+        },
+        "league_sync": {
+            "live_updates": 0,
+            "cache_hits": 0,
+            "stale_cache_uses": 0,
+            "dynamic_added": 0,
+            "unresolved": 0,
+        },
+        "sports": [],
+    }
     events_scanned = 0
     total_profit = 0.0
     sport_errors: List[dict] = []
@@ -2072,9 +2456,56 @@ def run_scan(
                     normalized_regions,
                     bookmakers=normalized_bookmakers,
                 )
+                stats = getattr(fetch_purebet_events, "last_stats", {}) or {}
+                purebet_summary["sports"].append(
+                    {
+                        "sport_key": sport_key,
+                        "events_payload": stats.get("events_payload_count", 0),
+                        "events_normalized": stats.get("events_normalized_count", 0),
+                        "events_returned": stats.get("events_returned_count", 0),
+                        "details_enabled": stats.get("details_enabled", False),
+                        "details_requested": stats.get("details_requested", 0),
+                        "details_success": stats.get("details_success", 0),
+                        "details_failed": stats.get("details_failed", 0),
+                        "details_empty": stats.get("details_empty", 0),
+                        "details_retries": stats.get("details_retries", 0),
+                        "details_workers": stats.get("details_workers", 0),
+                        "league_sync_source": stats.get("league_sync_source"),
+                        "league_sync_total_leagues": stats.get("league_sync_total_leagues", 0),
+                        "league_sync_dynamic_added": stats.get("league_sync_dynamic_added", 0),
+                        "league_sync_unresolved": stats.get("league_sync_unresolved", 0),
+                        "league_sync_unresolved_samples": stats.get("league_sync_unresolved_samples", []),
+                        "errors": stats.get("details_error_samples", []),
+                    }
+                )
+                purebet_summary["details"]["requested"] += int(stats.get("details_requested", 0) or 0)
+                purebet_summary["details"]["success"] += int(stats.get("details_success", 0) or 0)
+                purebet_summary["details"]["failed"] += int(stats.get("details_failed", 0) or 0)
+                purebet_summary["details"]["empty"] += int(stats.get("details_empty", 0) or 0)
+                purebet_summary["details"]["retries"] += int(stats.get("details_retries", 0) or 0)
+                league_source = stats.get("league_sync_source")
+                if league_source == "live":
+                    purebet_summary["league_sync"]["live_updates"] += 1
+                elif league_source == "cache":
+                    purebet_summary["league_sync"]["cache_hits"] += 1
+                elif league_source == "stale_cache":
+                    purebet_summary["league_sync"]["stale_cache_uses"] += 1
+                purebet_summary["league_sync"]["dynamic_added"] += int(
+                    stats.get("league_sync_dynamic_added", 0) or 0
+                )
+                purebet_summary["league_sync"]["unresolved"] += int(
+                    stats.get("league_sync_unresolved", 0) or 0
+                )
                 if purebet_events:
+                    purebet_summary["events_merged"] += len(purebet_events)
                     events = _merge_events(events, purebet_events)
             except ScannerError as exc:
+                purebet_summary["sports"].append(
+                    {
+                        "sport_key": sport_key,
+                        "error": str(exc),
+                    }
+                )
                 sport_errors.append(
                     {
                         "sport_key": sport_key,
@@ -2159,6 +2590,7 @@ def run_scan(
         "partial": bool(sport_errors),
         "regions": normalized_regions,
         "commission_rate": commission_rate,
+        "purebet": purebet_summary,
     }
 def _remove_vig(odds_a: float, odds_b: float) -> Tuple[float, float, float]:
     """Return fair odds for both sides plus vig percent."""

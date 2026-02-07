@@ -35,7 +35,7 @@ Common defaults: `DEFAULT_REGION_KEYS`, `DEFAULT_SPORT_KEYS`, `DEFAULT_STAKE_AMO
 `DEFAULT_COMMISSION`, `DEFAULT_SHARP_BOOK`, `DEFAULT_BANKROLL`, `DEFAULT_KELLY_FRACTION`.
 Use `APP_CONFIG_PATH` to point at a different config file.
 UI defaults can be set too (e.g., `DEFAULT_MIN_ROI`, `DEFAULT_MIDDLE_SORT`, `DEFAULT_PLUS_EV_SORT`,
-`DEFAULT_AUTO_SCAN_MINUTES`, `DEFAULT_NOTIFY_SOUND_ENABLED`, `DEFAULT_ODDS_FORMAT`).
+`DEFAULT_AUTO_SCAN_MINUTES`, `DEFAULT_NOTIFY_SOUND_ENABLED`, `DEFAULT_ODDS_FORMAT`, `DEFAULT_THEME`).
 
 **Optional:** Create a `.env` file with your API key to skip manual entry:
 ```
@@ -64,14 +64,20 @@ PUREBET_LEAGUE_MAP={"487":"basketball_nba","1980":"soccer_epl"}
 PUREBET_MARKETS_ENABLED=1
 PUREBET_MIN_STAKE=50
 PUREBET_MAX_AGE_SECONDS=60
+PUREBET_MARKET_WORKERS=8
+PUREBET_MARKET_RETRIES=2
+PUREBET_RETRY_BACKOFF=0.4
+PUREBET_LEAGUE_SYNC_ENABLED=1
+PUREBET_LEAGUE_SYNC_TTL=600
 PUREBET_USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...
 PUREBET_ORIGIN=https://purebet.io
 PUREBET_REFERER=https://purebet.io/
 PUREBET_FUZZY_MATCH_THRESHOLD=0.85
 EVENT_TIME_TOLERANCE_MINUTES=15
 ```
-`PUREBET_LEAGUE_MAP` lets you map Purebet league IDs to the Odds API sport keys so events
-merge correctly with other bookmakers.
+`PUREBET_LEAGUE_MAP` lets you pin league IDs manually.
+When `PUREBET_LEAGUE_SYNC_ENABLED=1`, scanner also pulls `/activeLeagues` and auto-infers league mapping
+for supported sports, cached for `PUREBET_LEAGUE_SYNC_TTL` seconds.
 Purebet is treated as an exchange, so the commission rate applies to its prices.
 
 Optional: scan all available markets for arbitrage (per event data returned by providers):
@@ -87,6 +93,7 @@ SCAN_SAVE_ENABLED=1
 SCAN_SAVE_DIR=data/scans
 ```
 You can also pass `saveScan=true` in the `/scan` request JSON to save per-request.
+Saved request payloads automatically redact `apiKey`/`apiKeys`.
 
 ## Markets Scanned
 

@@ -109,6 +109,11 @@ DEFAULT_DENSITY = _normalize_choice(
     {"comfort", "compact"},
     "comfort",
 )
+DEFAULT_THEME = _normalize_choice(
+    _env_text("DEFAULT_THEME"),
+    {"light", "dark"},
+    "light",
+)
 DEFAULT_LANGUAGE = _normalize_choice(
     _env_text("DEFAULT_LANGUAGE"),
     {"en", "zh"},

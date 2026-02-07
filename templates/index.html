@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="{{ default_theme }}">
 <head>
   <meta charset="utf-8" />
   <title>Edge Scanner</title>
@@ -49,7 +49,23 @@
             <input type="number" id="stake-input" min="1" step="1" value="{{ default_stake_amount }}" />
             <p class="helper" data-i18n="stake_helper">Used for arbitrage + middles stake splits.</p>
           </div>
-          
+          <div class="field">
+            <label class="field-label" data-i18n="regions_label">Regions</label>
+            <div class="regions-grid">
+              {% for region in region_options %}
+              <label class="checkbox">
+                <input type="checkbox" name="regions" value="{{ region.key }}" {% if region.default %}checked{% endif %} />
+                <span data-region-key="{{ region.key }}">{{ region.label }}</span>
+              </label>
+              {% endfor %}
+            </div>
+            <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included for sharp reference.</p>
+          </div>
+          <div class="field">
+            <label class="field-label" data-i18n="commission_label">Exchange Commission (%)</label>
+            <input type="number" id="commission-input" min="0" max="20" step="0.1" value="{{ default_commission_percent }}" />
+            <p class="helper" data-i18n="commission_helper">Applied to Betfair, Matchbook, Sportsbet Exchange, etc.</p>
+          </div>
         </div>
         <div class="advanced-trigger">
           <button type="button" id="open-advanced" class="secondary-btn" data-i18n="advanced_settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="advanced-modal">Advanced settings</button>
@@ -543,6 +559,7 @@
     data-default-kelly-fraction="{{ default_kelly_fraction }}"
     data-default-odds-format="{{ default_odds_format }}"
     data-default-density="{{ default_density }}"
+    data-default-theme="{{ default_theme }}"
     data-default-language="{{ default_language }}"
     data-kelly-options='{{ kelly_options | tojson }}'
     data-bookmaker-links='{{ bookmaker_links | tojson }}'
@@ -569,6 +586,7 @@
           defaultKellyFraction: parseFloat(configEl.dataset.defaultKellyFraction || '0'),
           defaultOddsFormat: configEl.dataset.defaultOddsFormat || '',
           defaultDensity: configEl.dataset.defaultDensity || '',
+          defaultTheme: configEl.dataset.defaultTheme || '',
           defaultLanguage: configEl.dataset.defaultLanguage || '',
           kellyOptions: parseConfigJson(configEl.dataset.kellyOptions, []),
           bookmakerLinks: parseConfigJson(configEl.dataset.bookmakerLinks, {})
@@ -1515,6 +1533,8 @@
       const savedTheme = localStorage.getItem('arb-theme');
       if (savedTheme) {
         document.documentElement.dataset.theme = savedTheme;
+      } else if (appConfig.defaultTheme) {
+        document.documentElement.dataset.theme = appConfig.defaultTheme;
       }
       applyTranslations();
       loadSettings();
@@ -1800,12 +1820,18 @@
       return value;
     }
 
+    function selectedRegions() {
+      return Array.from(form?.querySelectorAll('input[name="regions"]:checked') || []).map((el) => el.value);
+    }
+
     function triggerAutoScan() {
       if (isScanning) return;
       if (!hasEnvKey && !apiKeyInput?.value.trim()) return;
       const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
       const useAllSports = allSportsToggle ? allSportsToggle.checked : false;
       if (!useAllSports && !sports.length) return;
+      const regions = selectedRegions();
+      if (!regions.length) return;
       const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
       const bookmakers = useAllBookmakers
         ? []
@@ -1819,6 +1845,7 @@
         apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
         sports,
         bookmakers,
+        regions,
         commission: commissionValue,
         allSports: useAllSports,
         stake: stakeValue,
@@ -1861,11 +1888,14 @@
 
     function collectSettings() {
       const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
+      const regions = selectedRegions();
       const bookmakers = Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
       return {
         stake: stakeInput ? stakeInput.value : '',
+        commission: commissionInput ? commissionInput.value : '',
         allSports: allSportsToggle ? allSportsToggle.checked : false,
         sports,
+        regions,
         allBookmakers: allBookmakersToggle ? allBookmakersToggle.checked : true,
         bookmakers,
         minRoi: minRoiInput ? minRoiInput.value : '',
@@ -1891,8 +1921,10 @@
     function applySettings(settings) {
       if (!settings) return;
       if (stakeInput && settings.stake !== undefined) stakeInput.value = settings.stake;
+      if (commissionInput && settings.commission !== undefined) commissionInput.value = settings.commission;
       if (allSportsToggle && settings.allSports !== undefined) allSportsToggle.checked = Boolean(settings.allSports);
       setCheckboxGroup('sports', settings.sports);
+      setCheckboxGroup('regions', settings.regions);
       if (allBookmakersToggle && settings.allBookmakers !== undefined) {
         allBookmakersToggle.checked = Boolean(settings.allBookmakers);
       }
@@ -1971,6 +2003,11 @@
         return;
       }
       const sports = Array.from(form.querySelectorAll('input[name="sports"]:checked')).map((el) => el.value);
+      const regions = selectedRegions();
+      if (!regions.length) {
+        showStatusKey('select_region', 'error');
+        return;
+      }
       const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
       const bookmakers = useAllBookmakers
         ? []
@@ -1986,6 +2023,7 @@
       await runScan({
         apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
         sports,
+        regions,
         bookmakers,
         commission: commissionValue,
         allSports: allSportsToggle.checked,

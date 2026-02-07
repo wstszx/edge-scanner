@@ -41,6 +41,7 @@ from config import (  # noqa: E402
     DEFAULT_SHARP_BOOK,
     DEFAULT_SPORT_OPTIONS,
     DEFAULT_STAKE_AMOUNT,
+    DEFAULT_THEME,
     DEFAULT_AUTO_SCAN_ENABLED,
     DEFAULT_AUTO_SCAN_MINUTES,
     KELLY_OPTIONS,
@@ -128,7 +129,7 @@ def _save_scan_payload(payload: dict, result: dict) -> Optional[str]:
         path = target_dir / filename
         data = {
             "saved_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-            "request": payload,
+            "request": _sanitize_scan_request(payload),
             "result": result,
         }
         with path.open("w", encoding="utf-8") as handle:
@@ -136,6 +137,23 @@ def _save_scan_payload(payload: dict, result: dict) -> Optional[str]:
         return str(path)
     except OSError:
         return None
+
+
+def _sanitize_scan_request(payload: dict) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    sanitized = dict(payload)
+    if "apiKey" in sanitized:
+        value = sanitized.get("apiKey")
+        if isinstance(value, str) and value.strip():
+            sanitized["apiKey"] = "***redacted***"
+    if "apiKeys" in sanitized:
+        value = sanitized.get("apiKeys")
+        if isinstance(value, list):
+            sanitized["apiKeys"] = ["***redacted***" for _ in value]
+        elif isinstance(value, str) and value.strip():
+            sanitized["apiKeys"] = "***redacted***"
+    return sanitized
 
 
 @app.route("/")
@@ -167,6 +185,7 @@ def index() -> str:
         default_notify_popup_enabled=DEFAULT_NOTIFY_POPUP_ENABLED,
         default_odds_format=DEFAULT_ODDS_FORMAT,
         default_density=DEFAULT_DENSITY,
+        default_theme=DEFAULT_THEME,
         default_language=DEFAULT_LANGUAGE,
         default_all_sports=DEFAULT_ALL_SPORTS,
         kelly_options=KELLY_OPTIONS,
