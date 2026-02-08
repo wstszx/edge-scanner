@@ -17,7 +17,7 @@ from settings import apply_config_env
 load_dotenv()
 apply_config_env()
 
-from flask import Flask, jsonify, render_template, request  # noqa: E402
+from flask import Flask, jsonify, render_template, request, send_from_directory  # noqa: E402
 
 from config import (  # noqa: E402
     BOOKMAKER_OPTIONS,
@@ -54,6 +54,15 @@ from config import (  # noqa: E402
 from scanner import run_scan  # noqa: E402
 
 app = Flask(__name__)
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return send_from_directory(
+        app.static_folder,
+        "favicon.ico",
+        mimetype="image/vnd.microsoft.icon",
+    )
 
 
 def _env_flag(value: Optional[str]) -> bool:
