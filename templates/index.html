@@ -719,7 +719,7 @@
         all_bookmakers_label: 'Use all available bookmakers',
         bookmakers_helper: 'Optional: limit results to the selected bookmakers.',
         bookmaker_links_label: 'Bookmaker Links',
-        bookmaker_links_helper: 'Customize base URLs used when opening books. Leave blank to skip opening that book.',
+        bookmaker_links_helper: 'Customize open URLs. Supports placeholders like {event_id}, {home_team}, {away_team}. Leave blank to skip.',
         auto_scan_label: 'Auto Scan',
         auto_scan_enable: 'Enable auto scan',
         auto_scan_interval_label: 'Interval (min)',
@@ -918,7 +918,7 @@
         all_bookmakers_label: '使用所有可用平台',
         bookmakers_helper: '可选：仅扫描选定的平台。',
         bookmaker_links_label: '平台链接',
-        bookmaker_links_helper: '自定义自动打开时使用的基础网址，留空则不打开该平台。',
+        bookmaker_links_helper: '自定义自动打开网址。支持 {event_id}、{home_team}、{away_team} 占位符，留空则不打开该平台。',
         auto_scan_label: '自动扫描',
         auto_scan_enable: '启用自动扫描',
         auto_scan_interval_label: '扫描间隔（分钟）',
@@ -2572,19 +2572,11 @@
         const id = key || name;
         if (!id || seen.has(id)) return;
         seen.add(id);
-        entries.push({ key, name });
+        const eventId = `${item.book_event_id ?? opp?.event_id ?? ''}`.trim();
+        const eventUrl = `${item.book_event_url ?? ''}`.trim();
+        entries.push({ key, name, eventId, eventUrl });
       });
       return entries;
-    }
-
-    function buildEventQuery(opp) {
-      if (!opp) return '';
-      const home = opp.home_team || '';
-      const away = opp.away_team || '';
-      const eventName = opp.event || (home && away ? `${away} vs ${home}` : '');
-      const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
-      const timeLabel = opp.commence_time ? formatDateTime(opp.commence_time) : '';
-      return [eventName, sportLabel, timeLabel].filter(Boolean).join(' ');
     }
 
     function normalizeUrl(value) {
@@ -2601,24 +2593,70 @@
       return opened ? 1 : 0;
     }
 
-    function buildBookSearchUrl(book, eventQuery, baseUrl) {
-      const queryText = (eventQuery || '').trim();
-      const nameText = (book?.name || book?.key || '').trim();
-      if (!queryText && !nameText) return '';
-      const normalizedBase = normalizeUrl(baseUrl);
-      if (normalizedBase) {
-        try {
-          const domain = new URL(normalizedBase).hostname;
-          if (domain) {
-            const siteQuery = `site:${domain} ${queryText || nameText}`;
-            return `https://www.google.com/search?q=${encodeURIComponent(siteQuery)}`;
-          }
-        } catch (err) {
-          // Ignore URL parse issues; fall back to a generic search.
-        }
+    function resolveBookmakerLink(book) {
+      const key = (book?.key || '').trim();
+      const name = (book?.name || '').trim();
+      const candidates = [key, key.toLowerCase(), name, name.toLowerCase()].filter(Boolean);
+      for (const candidate of candidates) {
+        const baseUrl = bookmakerLinks[candidate];
+        if (normalizeUrl(baseUrl)) return baseUrl;
       }
-      const fallbackQuery = [nameText, queryText].filter(Boolean).join(' ');
-      return `https://www.google.com/search?q=${encodeURIComponent(fallbackQuery)}`;
+      return '';
+    }
+
+    function withTemplatePlaceholders(url, book, opp) {
+      const normalized = normalizeUrl(url);
+      if (!normalized) return '';
+      const eventId = `${book?.eventId ?? opp?.event_id ?? ''}`.trim();
+      const values = {
+        event_id: eventId,
+        book_event_id: `${book?.eventId ?? ''}`.trim(),
+        home_team: `${opp?.home_team ?? ''}`.trim(),
+        away_team: `${opp?.away_team ?? ''}`.trim(),
+        event: `${opp?.event ?? ''}`.trim(),
+      };
+      return normalized.replace(/\{(event_id|book_event_id|home_team|away_team|event)\}/gi, (_, token) => {
+        const value = values[(token || '').toLowerCase()] ?? '';
+        return encodeURIComponent(value);
+      });
+    }
+
+    function isPurebetBook(book) {
+      const key = (book?.key || '').trim().toLowerCase();
+      const name = (book?.name || '').trim().toLowerCase();
+      return key === 'purebet' || name === 'purebet';
+    }
+
+    function isPurebetHost(url) {
+      try {
+        const host = new URL(url).hostname.toLowerCase();
+        return host === 'purebet.io' || host.endsWith('.purebet.io');
+      } catch (err) {
+        return false;
+      }
+    }
+
+    function resolveBookmakerOpenUrl(book, opp) {
+      const directEventUrl = normalizeUrl(book?.eventUrl);
+      if (directEventUrl) return directEventUrl;
+      const baseUrl = resolveBookmakerLink(book);
+      const templated = withTemplatePlaceholders(baseUrl, book, opp);
+      if (!templated) return '';
+      const eventId = `${book?.eventId ?? opp?.event_id ?? ''}`.trim();
+      if (!eventId || !/^\d+$/.test(eventId) || !isPurebetBook(book) || !isPurebetHost(templated)) {
+        return templated;
+      }
+      try {
+        const parsed = new URL(templated);
+        const path = (parsed.pathname || '/').replace(/\/+$/, '');
+        if (!path || path === '/' || path === '/event') {
+          parsed.pathname = `/event/${eventId}`;
+          return parsed.toString();
+        }
+      } catch (err) {
+        return templated;
+      }
+      return templated;
     }
 
     function openBookmakerTabs(opp) {
@@ -2627,13 +2665,18 @@
         showStatusKey('open_books_missing', 'error');
         return;
       }
-      const eventQuery = buildEventQuery(opp);
       let openedCount = 0;
+      let availableLinks = 0;
       books.forEach((book) => {
-        const baseUrl = bookmakerLinks[book.key];
-        openedCount += openExternalTab(baseUrl);
-        openedCount += openExternalTab(buildBookSearchUrl(book, eventQuery, baseUrl));
+        const targetUrl = resolveBookmakerOpenUrl(book, opp);
+        if (!normalizeUrl(targetUrl)) return;
+        availableLinks += 1;
+        openedCount += openExternalTab(targetUrl);
       });
+      if (!availableLinks) {
+        showStatusKey('open_books_missing', 'error');
+        return;
+      }
       if (!openedCount) {
         showStatusKey('open_books_blocked', 'error');
       }

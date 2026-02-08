@@ -332,7 +332,7 @@ BOOKMAKER_URLS = {
     "betfair_ex_au": "https://www.betfair.com.au/exchange/",
     "sportsbet_ex": "https://www.sportsbet.com.au/",
     "polymarket": "https://polymarket.com/",
-    "purebet": "",
+    "purebet": "https://purebet.io/",
 }
 
 BOOKMAKER_KEYS: list[str] = []

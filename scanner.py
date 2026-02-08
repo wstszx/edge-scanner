@@ -1106,6 +1106,7 @@ def _normalize_purebet_v3_events(
                     {
                         "key": PUREBET_BOOK_KEY,
                         "title": PUREBET_TITLE,
+                        "event_id": event_id,
                         "markets": markets_out,
                     }
                 ],
@@ -1237,7 +1238,12 @@ def fetch_purebet_events(
                     bookmakers_list = event_obj.get("bookmakers")
                     if not isinstance(bookmakers_list, list) or not bookmakers_list:
                         event_obj["bookmakers"] = [
-                            {"key": PUREBET_BOOK_KEY, "title": PUREBET_TITLE, "markets": []}
+                            {
+                                "key": PUREBET_BOOK_KEY,
+                                "title": PUREBET_TITLE,
+                                "event_id": event_obj.get("id"),
+                                "markets": [],
+                            }
                         ]
                         bookmakers_list = event_obj["bookmakers"]
                     book = bookmakers_list[0]
@@ -1666,6 +1672,16 @@ def _record_best_prices(
     for book in markets:
         bookmaker = book.get("title") or book.get("key")
         bookmaker_key = book.get("key") or bookmaker
+        book_event_id = (
+            book.get("event_id")
+            or book.get("eventId")
+            or book.get("id")
+        )
+        book_event_url = (
+            book.get("event_url")
+            or book.get("eventUrl")
+            or book.get("url")
+        )
         for market in book.get("markets", []):
             if market.get("key") != market_key:
                 continue
@@ -1698,6 +1714,8 @@ def _record_best_prices(
                         "point": normalized_point,
                         "max_stake": stake_value,
                         "is_exchange": is_exchange,
+                        "book_event_id": book_event_id,
+                        "book_event_url": book_event_url,
                     }
     return lines
 
@@ -1718,7 +1736,10 @@ def _collect_market_entries(
     bookmakers = game.get("bookmakers", [])
     markets = [
         {
+            "key": book.get("key"),
             "title": book.get("title") or book.get("key"),
+            "event_id": book.get("event_id") or book.get("eventId") or book.get("id"),
+            "event_url": book.get("event_url") or book.get("eventUrl") or book.get("url"),
             "markets": book.get("markets", []),
         }
         for book in bookmakers
@@ -1754,6 +1775,8 @@ def _collect_market_entries(
                 "point": o.get("point"),
                 "max_stake": o.get("max_stake"),
                 "is_exchange": o.get("is_exchange", False),
+                "book_event_id": o.get("book_event_id"),
+                "book_event_url": o.get("book_event_url"),
             }
             for o in outcomes
         ]
