@@ -7,7 +7,7 @@ import re
 import socket
 import threading
 import webbrowser
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -124,11 +124,12 @@ def _save_scan_payload(payload: dict, result: dict) -> Optional[str]:
     try:
         target_dir = Path(ENV_SAVE_DIR)
         target_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        now_utc = datetime.now(timezone.utc)
+        timestamp = now_utc.strftime("%Y%m%d_%H%M%S")
         filename = f"scan_{timestamp}_{os.urandom(3).hex()}.json"
         path = target_dir / filename
         data = {
-            "saved_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "saved_at": now_utc.isoformat(timespec="seconds").replace("+00:00", "Z"),
             "request": _sanitize_scan_request(payload),
             "result": result,
         }
