@@ -305,7 +305,15 @@ def _load_event_list(path: str) -> List[dict]:
 
 def _normalize_purebet_events(events: List[dict]) -> List[dict]:
     normalized: List[dict] = []
+    details_base = (PUREBET_API_BASE or PUREBET_DEFAULT_BASE).strip().rstrip("/")
     for event in events:
+        event_id = (
+            event.get("event")
+            or event.get("_id")
+            or event.get("eventId")
+            or event.get("id")
+        )
+        event_url = f"{details_base}/markets?event={event_id}" if details_base and event_id else ""
         bookmakers = event.get("bookmakers")
         if not isinstance(bookmakers, list):
             continue
@@ -316,6 +324,10 @@ def _normalize_purebet_events(events: List[dict]) -> List[dict]:
                 book["key"] = PUREBET_BOOK_KEY
             if not book.get("title"):
                 book["title"] = PUREBET_TITLE
+            if event_id and not (book.get("event_id") or book.get("eventId") or book.get("id")):
+                book["event_id"] = event_id
+            if event_url and not (book.get("event_url") or book.get("eventUrl") or book.get("url")):
+                book["event_url"] = event_url
         normalized.append(event)
     return normalized
 
@@ -1058,6 +1070,7 @@ def _normalize_purebet_v3_events(
     payload: Sequence[dict],
     sport_key: str,
     markets: Sequence[str],
+    base_url: Optional[str] = None,
     league_map: Optional[Dict[str, str]] = None,
     allow_empty_markets: bool = False,
 ) -> List[dict]:
@@ -1067,6 +1080,7 @@ def _normalize_purebet_v3_events(
     if league_map is None:
         league_map = _load_purebet_league_map()
     normalized: List[dict] = []
+    details_base = (base_url or PUREBET_API_BASE or PUREBET_DEFAULT_BASE).strip().rstrip("/")
     for event in payload:
         if not isinstance(event, dict):
             continue
@@ -1083,11 +1097,12 @@ def _normalize_purebet_v3_events(
         if not (home and away and commence):
             continue
         event_id = (
-            event.get("_id")
-            or event.get("event")
+            event.get("event")
+            or event.get("_id")
             or event.get("eventId")
             or event.get("id")
         )
+        event_url = f"{details_base}/markets?event={event_id}" if details_base and event_id else ""
         markets_out: List[dict] = []
         odds = event.get("odds")
         if isinstance(odds, list) and "h2h" in supported_markets:
@@ -1107,6 +1122,7 @@ def _normalize_purebet_v3_events(
                         "key": PUREBET_BOOK_KEY,
                         "title": PUREBET_TITLE,
                         "event_id": event_id,
+                        "event_url": event_url,
                         "markets": markets_out,
                     }
                 ],
@@ -1187,6 +1203,7 @@ def fetch_purebet_events(
             payload,
             sport_key,
             markets,
+            base_url=base_url,
             league_map=league_map,
             allow_empty_markets=needs_details,
         )
@@ -1237,11 +1254,18 @@ def fetch_purebet_events(
                     stats["details_success"] += 1
                     bookmakers_list = event_obj.get("bookmakers")
                     if not isinstance(bookmakers_list, list) or not bookmakers_list:
+                        fallback_event_id = event_obj.get("id")
+                        fallback_event_url = (
+                            f"{base_url.rstrip('/')}/markets?event={fallback_event_id}"
+                            if fallback_event_id
+                            else ""
+                        )
                         event_obj["bookmakers"] = [
                             {
                                 "key": PUREBET_BOOK_KEY,
                                 "title": PUREBET_TITLE,
-                                "event_id": event_obj.get("id"),
+                                "event_id": fallback_event_id,
+                                "event_url": fallback_event_url,
                                 "markets": [],
                             }
                         ]
@@ -1671,7 +1695,8 @@ def _record_best_prices(
     lines: LineMap = {}
     for book in markets:
         bookmaker = book.get("title") or book.get("key")
-        bookmaker_key = book.get("key") or bookmaker
+        bookmaker_key = str(book.get("key") or bookmaker or "").strip()
+        bookmaker_key_normalized = bookmaker_key.lower()
         book_event_id = (
             book.get("event_id")
             or book.get("eventId")
@@ -1702,7 +1727,7 @@ def _record_best_prices(
                 name = outcome.get("name", "")
                 existing = entry.get(name)
                 display_price = float(price)
-                is_exchange = bookmaker_key in EXCHANGE_KEYS
+                is_exchange = bookmaker_key_normalized in EXCHANGE_KEYS
                 effective_price = _apply_commission(display_price, commission_rate, is_exchange)
                 if not existing or effective_price > existing["effective_price"]:
                     entry[name] = {
