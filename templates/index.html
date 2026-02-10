@@ -31,12 +31,7 @@
     <section class="card config-card">
       <form id="scan-form">
         <div class="config-grid">
-          {% if has_env_key %}
-          <div class="field">
-            <label class="field-label" data-i18n="api_key_label">API Key</label>
-            <div class="env-key-notice" data-i18n="env_key_notice">Using API key from .env</div>
-          </div>
-          {% else %}
+          {% if not has_env_key %}
           <div class="field">
             <label class="field-label" data-i18n="api_key_label">API Key</label>
             <div class="input-wrap">
@@ -61,11 +56,6 @@
               {% endfor %}
             </div>
             <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included for sharp reference.</p>
-          </div>
-          <div class="field">
-            <label class="field-label" data-i18n="commission_label">Exchange Commission (%)</label>
-            <input type="number" id="commission-input" min="0" max="20" step="0.1" value="{{ default_commission_percent }}" />
-            <p class="helper" data-i18n="commission_helper">Applied to Betfair, Matchbook, Sportsbet Exchange, etc.</p>
           </div>
         </div>
         <div class="advanced-trigger">
@@ -146,6 +136,18 @@
                     <input type="checkbox" id="all-bookmakers" {% if not default_bookmaker_keys %}checked{% endif %} />
                     <span data-i18n="all_bookmakers_label">Use all available bookmakers</span>
                   </label>
+                </div>
+              </section>
+              <section class="advanced-panel advanced-panel-wide">
+                <div class="panel-head">
+                  <div class="panel-title">
+                    <span class="field-label" data-i18n="commission_label">Exchange Commission (%)</span>
+                    <p class="helper" data-i18n="commission_helper">Applied to Betfair, Matchbook, Sportsbet Exchange, etc.</p>
+                  </div>
+                </div>
+                <div class="panel-body">
+                  <input type="number" id="commission-input" min="0" max="20" step="0.1" value="{{ default_commission_percent }}" />
+                  <p class="helper" data-i18n="commission_note">Net ROI/EV already reflects this commission.</p>
                 </div>
               </section>
               <section class="advanced-panel advanced-panel-wide">
@@ -244,13 +246,6 @@
           <label class="field-label" data-i18n="arb_min_roi">Minimum Net ROI (%)</label>
           <input type="number" id="min-roi-input" min="-5" max="10" step="0.1" value="{{ default_min_roi }}" />
           <p class="helper" data-i18n="arb_min_roi_helper">Hide opportunities below this net ROI.</p>
-        </div>
-        <div class="field toggle-field">
-          <label class="field-label" data-i18n="filters_label">Filters</label>
-          <label class="checkbox">
-            <input type="checkbox" id="exchange-only-toggle" {% if default_exchange_only %}checked{% endif %} />
-            <span data-i18n="arb_exchange_only">Show exchange books only</span>
-          </label>
         </div>
         <div class="field">
           <label class="field-label" data-i18n="sort_by">Sort By</label>
@@ -351,21 +346,6 @@
 
       <section id="summary-info" class="card summary-info hidden"></section>
       <div id="partial-warning" class="alert warning hidden"></div>
-
-      <section class="summary-grid">
-        <div class="card summary-card" id="roi-card">
-          <div class="card-head">
-            <h3 data-i18n="by_roi_band">By ROI Band</h3>
-          </div>
-          <div id="roi-bars" class="bar-list"></div>
-        </div>
-        <div class="card summary-card" id="sport-card">
-          <div class="card-head">
-            <h3 data-i18n="by_sport">By Sport</h3>
-          </div>
-          <div id="sport-bars" class="bar-list"></div>
-        </div>
-      </section>
 
       <section class="card results-card">
         <div class="card-head">
@@ -613,8 +593,6 @@
       const openAdvancedBtn = document.getElementById('open-advanced');
       const closeAdvancedBtn = document.getElementById('close-advanced');
       const quickActionButtons = document.querySelectorAll('[data-quick-action][data-quick-target]');
-    const summaryROI = document.getElementById('roi-bars');
-    const summarySport = document.getElementById('sport-bars');
     const tableCount = document.getElementById('table-count');
     const arbSortLabel = document.getElementById('arb-sort-label');
     const statOpps = document.querySelector('#stat-opps .stat-value');
@@ -668,7 +646,6 @@
     const densityToggle = document.getElementById('density-toggle');
     const arbitrageConfig = document.getElementById('arbitrage-config');
     const minRoiInput = document.getElementById('min-roi-input');
-    const exchangeOnlyToggle = document.getElementById('exchange-only-toggle');
     const arbitrageSortSelect = document.getElementById('arbitrage-sort');
     const scanStatusChip = document.getElementById('scan-status-chip');
     const scanStatusText = document.getElementById('scan-status-text');
@@ -753,7 +730,6 @@
         tab_plus_ev: '+EV',
         arb_min_roi: 'Minimum Net ROI (%)',
         arb_min_roi_helper: 'Hide opportunities below this net ROI.',
-        arb_exchange_only: 'Show exchange books only',
         middle_min_gap: 'Minimum Gap (points)',
         middle_min_gap_helper: 'Only show middles with at least this many points between the lines.',
         filters_label: 'Filters',
@@ -952,7 +928,6 @@
         tab_plus_ev: '+EV',
         arb_min_roi: '最小净 ROI (%)',
         arb_min_roi_helper: '隐藏低于该净 ROI 的机会。',
-        arb_exchange_only: '仅显示交易所书商',
         middle_min_gap: '最小间隔（分）',
         middle_min_gap_helper: '仅显示盘口差至少达到该分数的中间盘。',
         filters_label: '筛选',
@@ -1900,7 +1875,6 @@
         allBookmakers: allBookmakersToggle ? allBookmakersToggle.checked : true,
         bookmakers,
         minRoi: minRoiInput ? minRoiInput.value : '',
-        exchangeOnly: exchangeOnlyToggle ? exchangeOnlyToggle.checked : false,
         arbitrageSort: arbitrageSortSelect ? arbitrageSortSelect.value : '',
         minGap: minGapInput ? minGapInput.value : '',
         positiveEvOnly: positiveEvToggle ? positiveEvToggle.checked : false,
@@ -1931,7 +1905,6 @@
       }
       setCheckboxGroup('bookmakers', settings.bookmakers);
       if (minRoiInput && settings.minRoi !== undefined) minRoiInput.value = settings.minRoi;
-      if (exchangeOnlyToggle && settings.exchangeOnly !== undefined) exchangeOnlyToggle.checked = settings.exchangeOnly;
       if (arbitrageSortSelect && settings.arbitrageSort) arbitrageSortSelect.value = settings.arbitrageSort;
       if (minGapInput && settings.minGap !== undefined) minGapInput.value = settings.minGap;
       if (positiveEvToggle && settings.positiveEvOnly !== undefined) positiveEvToggle.checked = settings.positiveEvOnly;
@@ -2044,7 +2017,6 @@
     });
 
     if (minRoiInput) minRoiInput.addEventListener('input', () => renderArbitrage());
-    if (exchangeOnlyToggle) exchangeOnlyToggle.addEventListener('change', () => renderArbitrage());
     if (arbitrageSortSelect) arbitrageSortSelect.addEventListener('change', () => renderArbitrage());
     minGapInput.addEventListener('input', () => renderMiddles());
     positiveEvToggle.addEventListener('change', () => renderMiddles());
@@ -2147,7 +2119,6 @@
       const stakeValue = parseFloat(stakeInput.value) || 0;
       const minRoiValue = minRoiInput ? minRoiInput.value : 0;
       const minRoi = Number.isFinite(parseFloat(minRoiValue)) ? parseFloat(minRoiValue) : 0;
-      const exchangeOnly = exchangeOnlyToggle ? exchangeOnlyToggle.checked : false;
       const sortKey = arbitrageSortSelect ? arbitrageSortSelect.value || 'roi' : 'roi';
       updateArbSortLabel();
       const prepared = opportunities.map((opp) => {
@@ -2165,7 +2136,6 @@
       });
       const filtered = prepared.filter((item) => {
         if (item.netRoi < minRoi) return false;
-        if (exchangeOnly && !item.opp.has_exchange) return false;
         return true;
       });
       filtered.sort((a, b) => {
@@ -2239,18 +2209,11 @@
         statSports.textContent = summary.sports_scanned;
         statCalls.textContent = summary.api_calls_used;
         const totalProfit = filtered.reduce((sum, item) => sum + (item.profitValue || 0), 0);
-        renderBars(summaryROI, summary.by_roi_band, 'roi');
-        const filteredBySport = filtered.reduce((acc, item) => {
-          const sport = item.opp.sport_display || item.opp.sport || 'Other';
-          acc[sport] = (acc[sport] || 0) + 1;
-          return acc;
-        }, {});
-        renderBars(summarySport, filteredBySport, 'sport');
         const totalStaked = stakeValue > 0 ? stakeValue * filtered.length : 0;
         const commissionPercent = formatCommissionPercent(lastCommissionRate);
         const regionsLabel = formatRegionList(lastScanData?.regions);
         const totalCount = arbData.opportunities_count || opportunities.length;
-        const filtersActive = exchangeOnly || minRoi > 0;
+        const filtersActive = minRoi > 0;
         const shownCount = filtersActive ? filtered.length : totalCount;
         const countText = `<strong>${shownCount}</strong>`;
         const eventsText = `<strong>${summary.events_scanned}</strong>`;
@@ -2277,8 +2240,6 @@
         `;
       } else {
         statOpps.textContent = statEvents.textContent = statSports.textContent = statCalls.textContent = '0';
-        summaryROI.innerHTML = '';
-        summarySport.innerHTML = '';
         summaryEl.classList.add('hidden');
         summaryEl.innerHTML = '';
       }
@@ -2848,6 +2809,7 @@
     }
 
     function renderBars(container, data, type) {
+      if (!container) return;
       if (!data || Object.keys(data).length === 0) {
         container.innerHTML = `<p class="muted">${t('no_data')}</p>`;
         return;
