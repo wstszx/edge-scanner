@@ -554,13 +554,23 @@ body.modal-open {
 
 .open-cell {
   white-space: nowrap;
+  text-align: right;
 }
 
 .open-books-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 68px;
   padding: 0.35rem 0.75rem;
   font-size: 0.85rem;
   border-radius: 8px;
   white-space: nowrap;
+}
+
+.open-books-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .status {
@@ -934,6 +944,21 @@ body.modal-open {
 
 #results-table {
   min-width: 900px;
+}
+
+#results-table th:last-child,
+#results-table td:last-child {
+  position: sticky;
+  right: 0;
+  background: var(--card);
+}
+
+#results-table th:last-child {
+  z-index: 3;
+}
+
+#results-table td:last-child {
+  z-index: 2;
 }
 
 #middles-table {

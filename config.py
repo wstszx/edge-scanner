@@ -230,6 +230,7 @@ AMERICAN_MARKETS = ["h2h", "spreads", "totals"]
 SOCCER_MARKETS = ["spreads", "totals"]
 
 ROI_BANDS = [
+    (float("-inf"), 0.0, "<0%"),
     (0.0, 1.0, "0-1%"),
     (1.0, 2.0, "1-2%"),
     (2.0, float("inf"), "2%+"),

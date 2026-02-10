@@ -244,7 +244,7 @@
       <div class="arbitrage-config-grid">
         <div class="field">
           <label class="field-label" data-i18n="arb_min_roi">Minimum Net ROI (%)</label>
-          <input type="number" id="min-roi-input" min="-5" max="10" step="0.1" value="{{ default_min_roi }}" />
+          <input type="number" id="min-roi-input" min="-100" max="10" step="0.1" value="{{ default_min_roi }}" />
           <p class="helper" data-i18n="arb_min_roi_helper">Hide opportunities below this net ROI.</p>
         </div>
         <div class="field">
@@ -1950,9 +1950,13 @@
       }
     }
 
-    function saveSettings() {
+    function persistSettings() {
       const payload = collectSettings();
       localStorage.setItem('edge-scan-settings', JSON.stringify(payload));
+    }
+
+    function saveSettings() {
+      persistSettings();
       configureAutoScan();
       showStatusKey('settings_saved', 'success');
       closeAdvancedModal();
@@ -2016,7 +2020,10 @@
       }
     });
 
-    if (minRoiInput) minRoiInput.addEventListener('input', () => renderArbitrage());
+    if (minRoiInput) {
+      minRoiInput.addEventListener('input', () => renderArbitrage());
+      minRoiInput.addEventListener('change', () => persistSettings());
+    }
     if (arbitrageSortSelect) arbitrageSortSelect.addEventListener('change', () => renderArbitrage());
     minGapInput.addEventListener('input', () => renderMiddles());
     positiveEvToggle.addEventListener('change', () => renderMiddles());
@@ -2175,6 +2182,7 @@
           const grossCell = opp.has_exchange ? formatRoiBadge(grossRoi) : '';
           const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
           const openLabel = t('open_books');
+          const hasOpenTargets = collectBookTargets(opp).length > 0;
           row.innerHTML = `
             <td><span class="roi-badge">${formatPercent(netRoi)}</span>${netNegative ? `<span class="roi-warning" title="${t('net_roi_negative')}">⚠</span>` : ''}</td>
             <td>${grossCell}</td>
@@ -2186,12 +2194,16 @@
             <td>${formatMarket(opp)}</td>
             <td>${formatOutcome(breakdown[0])}</td>
             <td>${formatOutcome(breakdown[1])}</td>
-            <td class="open-cell"><button type="button" class="secondary-btn open-books-btn">${openLabel}</button></td>`;
+            <td class="open-cell"><button type="button" class="secondary-btn open-books-btn" ${hasOpenTargets ? '' : 'disabled'}>${openLabel}</button></td>`;
           const openBtn = row.querySelector('.open-books-btn');
           if (openBtn) {
             openBtn.addEventListener('click', (event) => {
               event.preventDefault();
               event.stopPropagation();
+              if (!hasOpenTargets) {
+                showStatusKey('open_books_missing', 'error');
+                return;
+              }
               openBookmakerTabs(opp);
             });
           }
@@ -2213,7 +2225,7 @@
         const commissionPercent = formatCommissionPercent(lastCommissionRate);
         const regionsLabel = formatRegionList(lastScanData?.regions);
         const totalCount = arbData.opportunities_count || opportunities.length;
-        const filtersActive = minRoi > 0;
+        const filtersActive = minRoi !== 0;
         const shownCount = filtersActive ? filtered.length : totalCount;
         const countText = `<strong>${shownCount}</strong>`;
         const eventsText = `<strong>${summary.events_scanned}</strong>`;
@@ -2599,30 +2611,30 @@
     }
 
     function resolveBookmakerOpenUrl(book, opp) {
+      const eventId = `${book?.eventId ?? opp?.event_id ?? ''}`.trim();
+      const isPurebet = isPurebetBook(book);
+      const purebetEventPage = isPurebet && eventId
+        ? `https://purebet.io/event/${encodeURIComponent(eventId)}`
+        : '';
+      if (purebetEventPage) return purebetEventPage;
       const directEventUrl = normalizeUrl(book?.eventUrl);
       if (directEventUrl) return directEventUrl;
       const baseUrl = resolveBookmakerLink(book);
       const templated = withTemplatePlaceholders(baseUrl, book, opp);
-      const eventId = `${book?.eventId ?? opp?.event_id ?? ''}`.trim();
-      const isNumericEventId = /^\d+$/.test(eventId);
-      const purebetDetailsApi = isNumericEventId
-        ? `https://v3api.purebet.io/markets?event=${encodeURIComponent(eventId)}`
-        : '';
       if (!templated) {
-        if (isPurebetBook(book) && purebetDetailsApi) return purebetDetailsApi;
         return '';
       }
-      if (!isNumericEventId || !isPurebetBook(book) || !isPurebetHost(templated)) {
+      if (!isPurebet || !isPurebetHost(templated)) {
         return templated;
       }
       try {
         const parsed = new URL(templated);
         const path = (parsed.pathname || '/').replace(/\/+$/, '');
         if (!path || path === '/' || path === '/event') {
-          return purebetDetailsApi || templated;
+          return templated;
         }
       } catch (err) {
-        return purebetDetailsApi || templated;
+        return templated;
       }
       return templated;
     }

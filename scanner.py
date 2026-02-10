@@ -15,6 +15,7 @@ import unicodedata
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
+from urllib.parse import quote
 
 import requests
 
@@ -131,6 +132,20 @@ def _resolve_purebet_enabled(value: Optional[bool]) -> bool:
     if value is None:
         return PUREBET_ENV_ENABLED
     return bool(value)
+
+
+def _purebet_public_base() -> str:
+    base = (PUREBET_ORIGIN or "").strip() or "https://purebet.io"
+    if not re.match(r"^https?://", base, flags=re.IGNORECASE):
+        base = f"https://{base}"
+    return base.rstrip("/")
+
+
+def _purebet_event_url(event_id: object) -> str:
+    raw = f"{event_id or ''}".strip()
+    if not raw:
+        return ""
+    return f"{_purebet_public_base()}/event/{quote(raw, safe='')}"
 
 
 def _clamp_commission(rate: float) -> float:
@@ -305,7 +320,6 @@ def _load_event_list(path: str) -> List[dict]:
 
 def _normalize_purebet_events(events: List[dict]) -> List[dict]:
     normalized: List[dict] = []
-    details_base = (PUREBET_API_BASE or PUREBET_DEFAULT_BASE).strip().rstrip("/")
     for event in events:
         event_id = (
             event.get("event")
@@ -313,7 +327,7 @@ def _normalize_purebet_events(events: List[dict]) -> List[dict]:
             or event.get("eventId")
             or event.get("id")
         )
-        event_url = f"{details_base}/markets?event={event_id}" if details_base and event_id else ""
+        event_url = _purebet_event_url(event_id)
         bookmakers = event.get("bookmakers")
         if not isinstance(bookmakers, list):
             continue
@@ -1080,7 +1094,6 @@ def _normalize_purebet_v3_events(
     if league_map is None:
         league_map = _load_purebet_league_map()
     normalized: List[dict] = []
-    details_base = (base_url or PUREBET_API_BASE or PUREBET_DEFAULT_BASE).strip().rstrip("/")
     for event in payload:
         if not isinstance(event, dict):
             continue
@@ -1102,7 +1115,7 @@ def _normalize_purebet_v3_events(
             or event.get("eventId")
             or event.get("id")
         )
-        event_url = f"{details_base}/markets?event={event_id}" if details_base and event_id else ""
+        event_url = _purebet_event_url(event_id)
         markets_out: List[dict] = []
         odds = event.get("odds")
         if isinstance(odds, list) and "h2h" in supported_markets:
@@ -1255,11 +1268,7 @@ def fetch_purebet_events(
                     bookmakers_list = event_obj.get("bookmakers")
                     if not isinstance(bookmakers_list, list) or not bookmakers_list:
                         fallback_event_id = event_obj.get("id")
-                        fallback_event_url = (
-                            f"{base_url.rstrip('/')}/markets?event={fallback_event_id}"
-                            if fallback_event_id
-                            else ""
-                        )
+                        fallback_event_url = _purebet_event_url(fallback_event_id)
                         event_obj["bookmakers"] = [
                             {
                                 "key": PUREBET_BOOK_KEY,
@@ -1811,10 +1820,6 @@ def _collect_market_entries(
         )
         net_roi = net_stake_info["roi_percent"]
         gross_roi = gross_stake_info["roi_percent"] if gross_stake_info else net_roi
-        if not has_exchange and net_roi <= 0:
-            continue
-        if has_exchange and net_roi <= 0 and gross_roi <= 0:
-            continue
         exchange_names = {
             o.get("bookmaker")
             or EXCHANGE_BOOKMAKERS.get(o.get("bookmaker_key"), {}).get("name")
