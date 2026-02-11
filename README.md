@@ -88,6 +88,52 @@ OVERTIMEMARKETS_XYZ_ENABLED=0
 POLYMARKET_ENABLED=0
 ```
 `PUREBET_ENABLED` still controls Purebet default.
+
+SX Bet provider settings (API mode):
+```
+SX_BET_SOURCE=api
+SX_BET_API_BASE=https://api.sx.bet
+SX_BET_BASE_TOKEN=0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174
+SX_BET_TIMEOUT_SECONDS=20
+SX_BET_RETRIES=2
+SX_BET_RETRY_BACKOFF=0.5
+SX_BET_PAGE_CACHE_TTL=45
+SX_BET_ODDS_CACHE_TTL=30
+```
+Optional auth/session fields (if your environment requires them):
+```
+SX_BET_BEARER_TOKEN=
+SX_BET_API_KEY=
+SX_BET_COOKIE=
+```
+Optional league pinning (JSON):
+```
+SX_BET_LEAGUE_MAP={"basketball_nba":[1],"basketball_ncaab":[2]}
+```
+
+Overtime Markets provider settings (API mode):
+```
+OVERTIMEMARKETS_SOURCE=api
+OVERTIMEMARKETS_API_BASE=https://api.overtime.io/overtime-v2
+OVERTIMEMARKETS_API_KEY=your_overtime_api_key
+OVERTIMEMARKETS_NETWORK=10
+OVERTIMEMARKETS_TIMEOUT_SECONDS=20
+OVERTIMEMARKETS_RETRIES=2
+OVERTIMEMARKETS_RETRY_BACKOFF=0.5
+OVERTIMEMARKETS_CACHE_TTL=45
+OVERTIMEMARKETS_INCLUDE_LIVE=0
+OVERTIMEMARKETS_ONLY_BASIC_PROPERTIES=1
+OVERTIMEMARKETS_ONLY_MAIN_MARKETS=1
+OVERTIMEMARKETS_UNGROUP=1
+OVERTIMEMARKETS_STATUS=open
+```
+Optional league name pinning (JSON, value supports substrings):
+```
+OVERTIMEMARKETS_LEAGUE_MAP={
+  "basketball_nba":["nba"],
+  "soccer_epl":["premier league"]
+}
+```
 You can also override per request with `includeProviders`:
 ```json
 {
