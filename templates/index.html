@@ -54,18 +54,6 @@
             <input type="number" id="stake-input" min="1" step="1" value="{{ default_stake_amount }}" />
             <p class="helper" data-i18n="stake_helper">Used for arbitrage + middles stake splits.</p>
           </div>
-          <div class="field">
-            <label class="field-label" data-i18n="regions_label">Regions</label>
-            <div class="regions-grid">
-              {% for region in region_options %}
-              <label class="checkbox">
-                <input type="checkbox" name="regions" value="{{ region.key }}" {% if region.default %}checked{% endif %} />
-                <span data-region-key="{{ region.key }}">{{ region.label }}</span>
-              </label>
-              {% endfor %}
-            </div>
-            <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included for sharp reference.</p>
-          </div>
         </div>
         <div class="advanced-trigger">
           <button type="button" id="open-advanced" class="secondary-btn" data-i18n="advanced_settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="advanced-modal">Advanced settings</button>
@@ -80,6 +68,28 @@
             </div>
             <p class="helper" data-i18n="advanced_hint">Less frequently adjusted options live here.</p>
             <div class="advanced-layout">
+              <section class="advanced-panel">
+                <div class="panel-head">
+                  <div class="panel-title">
+                    <span class="field-label" data-i18n="regions_label">Regions</span>
+                    <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included for sharp reference.</p>
+                  </div>
+                  <div class="panel-actions">
+                    <button type="button" class="chip-btn" data-quick-action="select" data-quick-target="regions" data-i18n="select_all">Select all</button>
+                    <button type="button" class="chip-btn" data-quick-action="clear" data-quick-target="regions" data-i18n="clear_all">Clear</button>
+                  </div>
+                </div>
+                <div class="panel-body">
+                  <div class="regions-grid">
+                    {% for region in region_options %}
+                    <label class="checkbox">
+                      <input type="checkbox" name="regions" value="{{ region.key }}" {% if region.default %}checked{% endif %} />
+                      <span data-region-key="{{ region.key }}">{{ region.label }}</span>
+                    </label>
+                    {% endfor %}
+                  </div>
+                </div>
+              </section>
               <section class="advanced-panel">
                 <div class="panel-head">
                   <div class="panel-title">
@@ -713,7 +723,7 @@
         auto_scan_helper: 'Runs a scan on a timer using your current filters.',
           advanced_settings: 'Advanced settings',
           advanced_hint: 'Less frequently adjusted options live here.',
-          advanced_summary: 'Sports {sports} | Books {books}',
+          advanced_summary: 'Sports {sports} | Books {books} | Regions {regions}',
           summary_all: 'All',
           notify_label: 'Notifications',
           notify_sound: 'Sound alert',
@@ -911,7 +921,7 @@
         auto_scan_helper: '按当前筛选条件定时自动扫描。',
         advanced_settings: '高级设置',
         advanced_hint: '不常调整的选项放在这里。',
-                advanced_summary: '项目 {sports} | 平台 {books}',
+                advanced_summary: '项目 {sports} | 平台 {books} | 地区 {regions}',
           summary_all: '全部',
           notify_label: '通知',
           notify_sound: '铃声提示',
@@ -1252,13 +1262,17 @@
       if (!advancedSummary || !form) return;
       const sportsLabels = collectCheckedLabels('sports');
       const booksLabels = collectCheckedLabels('bookmakers');
+      const regionLabels = collectCheckedLabels('regions');
       const sportsSelected = sportsLabels.length;
       const booksSelected = booksLabels.length;
+      const regionsSelected = regionLabels.length;
       const sportsText = allSportsToggle && allSportsToggle.checked ? t('summary_all') : sportsSelected;
       const booksText = allBookmakersToggle && allBookmakersToggle.checked ? t('summary_all') : booksSelected;
+      const regionsText = regionsSelected;
       advancedSummary.textContent = t('advanced_summary', {
         sports: sportsText,
         books: booksText,
+        regions: regionsText,
       });
       const sportsDetail =
         allSportsToggle && allSportsToggle.checked
@@ -1272,7 +1286,8 @@
           : booksLabels.length
             ? booksLabels.join(', ')
             : '0';
-      advancedSummary.title = `${t('sports_label')}: ${sportsDetail}\n${t('bookmakers_label')}: ${booksDetail}`;
+      const regionsDetail = regionLabels.length ? regionLabels.join(', ') : '0';
+      advancedSummary.title = `${t('sports_label')}: ${sportsDetail}\n${t('bookmakers_label')}: ${booksDetail}\n${t('regions_label')}: ${regionsDetail}`;
     }
 
     function getOpportunityCount(section) {
@@ -1743,6 +1758,7 @@
         if (
           target.matches('input[name="sports"]') ||
           target.matches('input[name="bookmakers"]') ||
+          target.matches('input[name="regions"]') ||
           target.id === 'all-sports' ||
           target.id === 'all-bookmakers'
         ) {
