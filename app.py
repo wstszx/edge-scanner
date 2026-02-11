@@ -144,9 +144,20 @@ def _save_scan_payload(payload: dict, result: dict) -> Optional[str]:
         }
         with path.open("w", encoding="utf-8") as handle:
             json.dump(data, handle, ensure_ascii=False, indent=2)
+        _cleanup_old_scan_payloads(target_dir, keep_path=path)
         return str(path)
     except OSError:
         return None
+
+
+def _cleanup_old_scan_payloads(target_dir: Path, keep_path: Path) -> None:
+    for scan_file in target_dir.glob("scan_*.json"):
+        if scan_file == keep_path:
+            continue
+        try:
+            scan_file.unlink()
+        except OSError:
+            continue
 
 
 def _sanitize_scan_request(payload: dict) -> dict:

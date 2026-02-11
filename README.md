@@ -87,12 +87,13 @@ ARBITRAGE_ALL_MARKETS=1
 Note: The Odds API still only returns the markets you request, so this mainly affects
 providers that already supply multiple markets in their payloads.
 
-Optional: save each scan payload + result to disk:
+Optional: save only the latest scan payload + result to disk:
 ```
 SCAN_SAVE_ENABLED=1
 SCAN_SAVE_DIR=data/scans
 ```
 You can also pass `saveScan=true` in the `/scan` request JSON to save per-request.
+When enabled, the scanner keeps only the newest `scan_*.json` file in `SCAN_SAVE_DIR`.
 Saved request payloads automatically redact `apiKey`/`apiKeys`.
 
 ## Markets Scanned
