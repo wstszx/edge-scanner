@@ -305,6 +305,9 @@ BOOKMAKER_LABELS = {
     **{key: meta["name"] for key, meta in EXCHANGE_BOOKMAKERS.items()},
     **{book["key"]: book["name"] for book in SHARP_BOOKS if book.get("key")},
     **SOFT_BOOK_LABELS,
+    "bookmaker_xyz": "bookmaker.xyz",
+    "sx_bet": "SX Bet",
+    "overtimemarkets_xyz": "Overtime Markets",
     "polymarket": "Polymarket",
     "purebet": "Purebet",
 }
@@ -332,12 +335,22 @@ BOOKMAKER_URLS = {
     "betfair_ex_uk": "https://www.betfair.com/exchange/",
     "betfair_ex_au": "https://www.betfair.com.au/exchange/",
     "sportsbet_ex": "https://www.sportsbet.com.au/",
+    "bookmaker_xyz": "https://bookmaker.xyz/",
+    "sx_bet": "https://sx.bet/",
+    "overtimemarkets_xyz": "https://overtimemarkets.xyz/",
     "polymarket": "https://polymarket.com/",
     "purebet": "https://purebet.io/",
 }
 
 BOOKMAKER_KEYS: list[str] = []
-for key in ["pinnacle", "polymarket", "purebet"]:
+for key in [
+    "pinnacle",
+    "polymarket",
+    "purebet",
+    "bookmaker_xyz",
+    "sx_bet",
+    "overtimemarkets_xyz",
+]:
     if key not in BOOKMAKER_KEYS:
         BOOKMAKER_KEYS.append(key)
 for key in EXCHANGE_BOOKMAKERS:

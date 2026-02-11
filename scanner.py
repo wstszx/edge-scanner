@@ -56,6 +56,7 @@ from config import (
     SPORT_DISPLAY_NAMES,
     markets_for_sport,
 )
+from providers import PROVIDER_FETCHERS, PROVIDER_TITLES, resolve_provider_key
 
 BASE_URL = "https://api.the-odds-api.com/v4"
 MIDDLE_MARKETS = {"spreads", "totals"}
@@ -132,6 +133,75 @@ def _resolve_purebet_enabled(value: Optional[bool]) -> bool:
     if value is None:
         return PUREBET_ENV_ENABLED
     return bool(value)
+
+
+def _provider_env_enabled(provider_key: str, default: bool = False) -> bool:
+    env_key = f"{re.sub(r'[^A-Za-z0-9]', '_', provider_key).upper()}_ENABLED"
+    raw = os.getenv(env_key)
+    if raw is None or not str(raw).strip():
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalize_provider_keys(provider_keys: Optional[Sequence[str]]) -> Optional[List[str]]:
+    if provider_keys is None:
+        return None
+    normalized: List[str] = []
+    seen = set()
+    for value in provider_keys:
+        key = resolve_provider_key(value)
+        if not key or key in seen:
+            continue
+        normalized.append(key)
+        seen.add(key)
+    return normalized
+
+
+def _resolve_enabled_provider_keys(
+    include_purebet: Optional[bool],
+    include_providers: Optional[Sequence[str]],
+) -> List[str]:
+    enabled_by_key = {
+        key: _provider_env_enabled(
+            key,
+            default=PUREBET_ENV_ENABLED if key == PUREBET_BOOK_KEY else False,
+        )
+        for key in PROVIDER_FETCHERS
+    }
+    explicit_providers = _normalize_provider_keys(include_providers)
+    if explicit_providers is not None:
+        enabled_by_key = {key: False for key in PROVIDER_FETCHERS}
+        for key in explicit_providers:
+            enabled_by_key[key] = True
+    if include_purebet is not None and PUREBET_BOOK_KEY in enabled_by_key:
+        enabled_by_key[PUREBET_BOOK_KEY] = bool(include_purebet)
+    return [key for key in PROVIDER_FETCHERS if enabled_by_key.get(key)]
+
+
+def _empty_purebet_summary(enabled: bool) -> dict:
+    return {
+        "enabled": enabled,
+        "events_merged": 0,
+        "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
+        "league_sync": {
+            "live_updates": 0,
+            "cache_hits": 0,
+            "stale_cache_uses": 0,
+            "dynamic_added": 0,
+            "unresolved": 0,
+        },
+        "sports": [],
+    }
+
+
+def _empty_provider_summary(provider_key: str, enabled: bool) -> dict:
+    return {
+        "key": provider_key,
+        "name": PROVIDER_TITLES.get(provider_key, provider_key),
+        "enabled": enabled,
+        "events_merged": 0,
+        "sports": [],
+    }
 
 
 def _purebet_public_base() -> str:
@@ -1320,6 +1390,28 @@ def fetch_purebet_events(
     return events
 
 
+_legacy_fetch_purebet_events = fetch_purebet_events
+
+
+def fetch_purebet_events(
+    sport_key: str,
+    markets: Sequence[str],
+    regions: Sequence[str],
+    bookmakers: Optional[Sequence[str]] = None,
+) -> List[dict]:
+    fetcher = PROVIDER_FETCHERS.get(PUREBET_BOOK_KEY)
+    if not callable(fetcher):
+        raise ScannerError("Purebet provider is not registered")
+    events = fetcher(
+        sport_key,
+        markets,
+        regions,
+        bookmakers=bookmakers,
+    )
+    fetch_purebet_events.last_stats = getattr(fetcher, "last_stats", {}) or {}
+    return events
+
+
 fetch_purebet_events.last_stats = {}
 
 
@@ -2383,6 +2475,7 @@ def run_scan(
     bankroll: float = DEFAULT_BANKROLL,
     kelly_fraction: float = DEFAULT_KELLY_FRACTION,
     include_purebet: Optional[bool] = None,
+    include_providers: Optional[Sequence[str]] = None,
 ) -> dict:
     api_keys = _normalize_api_keys(api_key)
     if not api_keys:
@@ -2390,10 +2483,16 @@ def run_scan(
     if stake_amount is None or stake_amount <= 0:
         stake_amount = DEFAULT_STAKE_AMOUNT
     all_markets = bool(all_markets)
-    include_purebet = _resolve_purebet_enabled(include_purebet)
+    enabled_provider_keys = _resolve_enabled_provider_keys(include_purebet, include_providers)
+    enabled_provider_set = set(enabled_provider_keys)
     normalized_regions = _normalize_regions(regions)
     normalized_regions = _ensure_sharp_region(normalized_regions, sharp_book or DEFAULT_SHARP_BOOK)
     normalized_bookmakers = _normalize_bookmakers(bookmakers)
+    provider_bookmaker_keys = _normalize_provider_keys(normalized_bookmakers) or []
+    if provider_bookmaker_keys:
+        enabled_provider_set.update(provider_bookmaker_keys)
+        enabled_provider_keys = [key for key in PROVIDER_FETCHERS if key in enabled_provider_set]
+    include_purebet = PUREBET_BOOK_KEY in enabled_provider_set
     if not normalized_regions:
         return {
             "success": False,
@@ -2408,6 +2507,11 @@ def run_scan(
         return {"success": False, "error": str(exc), "error_code": 500}
 
     filtered = filter_sports(sports_list, sports or DEFAULT_SPORT_KEYS, all_sports)
+    provider_summaries = {
+        key: _empty_provider_summary(key, key in enabled_provider_set)
+        for key in PROVIDER_FETCHERS
+    }
+    purebet_summary = _empty_purebet_summary(include_purebet)
     if not filtered:
         arb_summary = _summaries([], 0, 0, 0.0, api_pool.calls_made)
         middle_summary = _middle_summary([])
@@ -2435,43 +2539,13 @@ def run_scan(
             "partial": False,
             "regions": normalized_regions,
             "commission_rate": commission_rate,
-            "purebet": {
-                "enabled": include_purebet,
-                "events_merged": 0,
-                "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
-                "league_sync": {
-                    "live_updates": 0,
-                    "cache_hits": 0,
-                    "stale_cache_uses": 0,
-                    "dynamic_added": 0,
-                    "unresolved": 0,
-                },
-                "sports": [],
-            },
+            "purebet": purebet_summary,
+            "custom_providers": provider_summaries,
         }
 
     arb_opportunities: List[dict] = []
     middle_opportunities: List[dict] = []
     plus_ev_opportunities: List[dict] = []
-    purebet_summary = {
-        "enabled": include_purebet,
-        "events_merged": 0,
-        "details": {
-            "requested": 0,
-            "success": 0,
-            "failed": 0,
-            "empty": 0,
-            "retries": 0,
-        },
-        "league_sync": {
-            "live_updates": 0,
-            "cache_hits": 0,
-            "stale_cache_uses": 0,
-            "dynamic_added": 0,
-            "unresolved": 0,
-        },
-        "sports": [],
-    }
     events_scanned = 0
     total_profit = 0.0
     sport_errors: List[dict] = []
@@ -2501,70 +2575,107 @@ def run_scan(
                 }
             )
             continue
-        if include_purebet:
+        for provider_key in enabled_provider_keys:
+            fetch_provider_events = PROVIDER_FETCHERS.get(provider_key)
+            if not callable(fetch_provider_events):
+                continue
+            provider_summary = provider_summaries.setdefault(
+                provider_key,
+                _empty_provider_summary(provider_key, True),
+            )
+            provider_title = provider_summary.get("name") or PROVIDER_TITLES.get(
+                provider_key, provider_key
+            )
             try:
-                purebet_events = fetch_purebet_events(
+                provider_events = fetch_provider_events(
                     sport_key,
                     base_markets,
                     normalized_regions,
                     bookmakers=normalized_bookmakers,
                 )
-                stats = getattr(fetch_purebet_events, "last_stats", {}) or {}
-                purebet_summary["sports"].append(
+                stats = getattr(fetch_provider_events, "last_stats", {}) or {}
+                provider_summary["sports"].append(
                     {
                         "sport_key": sport_key,
-                        "events_payload": stats.get("events_payload_count", 0),
-                        "events_normalized": stats.get("events_normalized_count", 0),
-                        "events_returned": stats.get("events_returned_count", 0),
-                        "details_enabled": stats.get("details_enabled", False),
-                        "details_requested": stats.get("details_requested", 0),
-                        "details_success": stats.get("details_success", 0),
-                        "details_failed": stats.get("details_failed", 0),
-                        "details_empty": stats.get("details_empty", 0),
-                        "details_retries": stats.get("details_retries", 0),
-                        "details_workers": stats.get("details_workers", 0),
-                        "league_sync_source": stats.get("league_sync_source"),
-                        "league_sync_total_leagues": stats.get("league_sync_total_leagues", 0),
-                        "league_sync_dynamic_added": stats.get("league_sync_dynamic_added", 0),
-                        "league_sync_unresolved": stats.get("league_sync_unresolved", 0),
-                        "league_sync_unresolved_samples": stats.get("league_sync_unresolved_samples", []),
-                        "errors": stats.get("details_error_samples", []),
+                        "events_returned": len(provider_events),
+                        "stats": stats,
                     }
                 )
-                purebet_summary["details"]["requested"] += int(stats.get("details_requested", 0) or 0)
-                purebet_summary["details"]["success"] += int(stats.get("details_success", 0) or 0)
-                purebet_summary["details"]["failed"] += int(stats.get("details_failed", 0) or 0)
-                purebet_summary["details"]["empty"] += int(stats.get("details_empty", 0) or 0)
-                purebet_summary["details"]["retries"] += int(stats.get("details_retries", 0) or 0)
-                league_source = stats.get("league_sync_source")
-                if league_source == "live":
-                    purebet_summary["league_sync"]["live_updates"] += 1
-                elif league_source == "cache":
-                    purebet_summary["league_sync"]["cache_hits"] += 1
-                elif league_source == "stale_cache":
-                    purebet_summary["league_sync"]["stale_cache_uses"] += 1
-                purebet_summary["league_sync"]["dynamic_added"] += int(
-                    stats.get("league_sync_dynamic_added", 0) or 0
-                )
-                purebet_summary["league_sync"]["unresolved"] += int(
-                    stats.get("league_sync_unresolved", 0) or 0
-                )
-                if purebet_events:
-                    purebet_summary["events_merged"] += len(purebet_events)
-                    events = _merge_events(events, purebet_events)
-            except ScannerError as exc:
-                purebet_summary["sports"].append(
+                if provider_key == PUREBET_BOOK_KEY:
+                    purebet_summary["sports"].append(
+                        {
+                            "sport_key": sport_key,
+                            "events_payload": stats.get("events_payload_count", 0),
+                            "events_normalized": stats.get("events_normalized_count", 0),
+                            "events_returned": stats.get("events_returned_count", 0),
+                            "details_enabled": stats.get("details_enabled", False),
+                            "details_requested": stats.get("details_requested", 0),
+                            "details_success": stats.get("details_success", 0),
+                            "details_failed": stats.get("details_failed", 0),
+                            "details_empty": stats.get("details_empty", 0),
+                            "details_retries": stats.get("details_retries", 0),
+                            "details_workers": stats.get("details_workers", 0),
+                            "league_sync_source": stats.get("league_sync_source"),
+                            "league_sync_total_leagues": stats.get("league_sync_total_leagues", 0),
+                            "league_sync_dynamic_added": stats.get("league_sync_dynamic_added", 0),
+                            "league_sync_unresolved": stats.get("league_sync_unresolved", 0),
+                            "league_sync_unresolved_samples": stats.get("league_sync_unresolved_samples", []),
+                            "errors": stats.get("details_error_samples", []),
+                        }
+                    )
+                    purebet_summary["details"]["requested"] += int(
+                        stats.get("details_requested", 0) or 0
+                    )
+                    purebet_summary["details"]["success"] += int(
+                        stats.get("details_success", 0) or 0
+                    )
+                    purebet_summary["details"]["failed"] += int(
+                        stats.get("details_failed", 0) or 0
+                    )
+                    purebet_summary["details"]["empty"] += int(
+                        stats.get("details_empty", 0) or 0
+                    )
+                    purebet_summary["details"]["retries"] += int(
+                        stats.get("details_retries", 0) or 0
+                    )
+                    league_source = stats.get("league_sync_source")
+                    if league_source == "live":
+                        purebet_summary["league_sync"]["live_updates"] += 1
+                    elif league_source == "cache":
+                        purebet_summary["league_sync"]["cache_hits"] += 1
+                    elif league_source == "stale_cache":
+                        purebet_summary["league_sync"]["stale_cache_uses"] += 1
+                    purebet_summary["league_sync"]["dynamic_added"] += int(
+                        stats.get("league_sync_dynamic_added", 0) or 0
+                    )
+                    purebet_summary["league_sync"]["unresolved"] += int(
+                        stats.get("league_sync_unresolved", 0) or 0
+                    )
+                if provider_events:
+                    provider_summary["events_merged"] += len(provider_events)
+                    if provider_key == PUREBET_BOOK_KEY:
+                        purebet_summary["events_merged"] += len(provider_events)
+                    events = _merge_events(events, provider_events)
+            except Exception as exc:
+                provider_summary["sports"].append(
                     {
                         "sport_key": sport_key,
                         "error": str(exc),
                     }
                 )
+                if provider_key == PUREBET_BOOK_KEY:
+                    purebet_summary["sports"].append(
+                        {
+                            "sport_key": sport_key,
+                            "error": str(exc),
+                        }
+                    )
                 sport_errors.append(
                     {
                         "sport_key": sport_key,
                         "sport": sport.get("title")
                         or SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
-                        "error": f"Purebet: {exc}",
+                        "error": f"{provider_title}: {exc}",
                     }
                 )
         successful_sports += 1
@@ -2644,6 +2755,7 @@ def run_scan(
         "regions": normalized_regions,
         "commission_rate": commission_rate,
         "purebet": purebet_summary,
+        "custom_providers": provider_summaries,
     }
 def _remove_vig(odds_a: float, odds_b: float) -> Tuple[float, float, float]:
     """Return fair odds for both sides plus vig percent."""

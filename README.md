@@ -80,6 +80,22 @@ When `PUREBET_LEAGUE_SYNC_ENABLED=1`, scanner also pulls `/activeLeagues` and au
 for supported sports, cached for `PUREBET_LEAGUE_SYNC_TTL` seconds.
 Purebet is treated as an exchange, so the commission rate applies to its prices.
 
+Custom provider routing (scanner-level, provider modules in `providers/`):
+```
+BOOKMAKER_XYZ_ENABLED=0
+SX_BET_ENABLED=0
+OVERTIMEMARKETS_XYZ_ENABLED=0
+POLYMARKET_ENABLED=0
+```
+`PUREBET_ENABLED` still controls Purebet default.
+You can also override per request with `includeProviders`:
+```json
+{
+  "includeProviders": ["bookmaker.xyz", "SX Bet", "overtimemarkets.xyz", "polymarket"]
+}
+```
+`includePurebet` remains supported and overrides Purebet on/off for that request.
+
 Optional: scan all available markets for arbitrage (per event data returned by providers):
 ```
 ARBITRAGE_ALL_MARKETS=1

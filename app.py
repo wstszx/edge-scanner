@@ -116,7 +116,6 @@ if not ENV_API_KEYS:
     )
 
 ENV_ALL_MARKETS = _env_flag(os.getenv("ARBITRAGE_ALL_MARKETS"))
-ENV_PUREBET_ENABLED = _env_flag(os.getenv("PUREBET_ENABLED"))
 ENV_SAVE_SCAN = _env_flag(os.getenv("SCAN_SAVE_ENABLED"))
 ENV_SAVE_DIR = os.getenv("SCAN_SAVE_DIR", str(Path("data") / "scans")).strip()
 
@@ -225,9 +224,8 @@ def scan() -> tuple:
     regions = payload.get("regions")
     bookmakers = payload.get("bookmakers")
     commission = payload.get("commission")
-    include_purebet = (
-        bool(payload.get("includePurebet")) if "includePurebet" in payload else ENV_PUREBET_ENABLED
-    )
+    include_purebet = bool(payload.get("includePurebet")) if "includePurebet" in payload else None
+    include_providers_raw = payload.get("includeProviders")
     sharp_book = (payload.get("sharpBook") or DEFAULT_SHARP_BOOK).strip().lower()
     try:
         min_edge_percent = (
@@ -262,6 +260,20 @@ def scan() -> tuple:
         bookmakers_value = [str(book) for book in bookmakers if isinstance(book, str) and book.strip()]
     else:
         bookmakers_value = None
+    if isinstance(include_providers_raw, list):
+        include_providers_value = [
+            str(provider)
+            for provider in include_providers_raw
+            if isinstance(provider, str) and provider.strip()
+        ]
+    elif isinstance(include_providers_raw, str):
+        include_providers_value = [
+            item.strip()
+            for item in re.split(r"[,\s]+", include_providers_raw)
+            if item.strip()
+        ]
+    else:
+        include_providers_value = None
     try:
         commission_percent = float(commission) if commission is not None else None
     except (TypeError, ValueError):
@@ -283,6 +295,7 @@ def scan() -> tuple:
         bankroll=bankroll_value,
         kelly_fraction=kelly_fraction,
         include_purebet=include_purebet,
+        include_providers=include_providers_value,
     )
     if _should_save_scan(payload):
         saved_path = _save_scan_payload(payload, result)
