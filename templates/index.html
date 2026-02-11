@@ -3,11 +3,20 @@
 <head>
   <meta charset="utf-8" />
   <title>Edge Scanner</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
   <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
 <body>
   <header class="app-header">
+    <div class="brand-block">
+      <span class="brand-kicker">EDGE SCANNER</span>
+      <h1>Live Market Intelligence</h1>
+      <p data-i18n="tagline">Arbitrage / Middles / +EV</p>
+    </div>
     <div class="header-controls">
       <div class="odds-format" id="odds-toggle" role="button" tabindex="0">
         <span data-format="decimal" class="active" data-i18n="odds_decimal">Decimal</span>
