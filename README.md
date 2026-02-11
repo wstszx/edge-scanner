@@ -82,6 +82,7 @@ Purebet is treated as an exchange, so the commission rate applies to its prices.
 
 Custom provider routing (scanner-level, provider modules in `providers/`):
 ```
+BETDEX_ENABLED=0
 BOOKMAKER_XYZ_ENABLED=0
 SX_BET_ENABLED=0
 OVERTIMEMARKETS_XYZ_ENABLED=0
@@ -134,10 +135,33 @@ OVERTIMEMARKETS_LEAGUE_MAP={
   "soccer_epl":["premier league"]
 }
 ```
+BetDEX provider settings (API mode):
+```
+BETDEX_SOURCE=api
+BETDEX_SESSION_URL=https://www.betdex.com/api/session
+BETDEX_MONACO_API_BASE=https://production.api.monacoprotocol.xyz
+BETDEX_PUBLIC_BASE=https://www.betdex.com
+BETDEX_TIMEOUT_SECONDS=20
+BETDEX_RETRIES=2
+BETDEX_RETRY_BACKOFF=0.5
+BETDEX_EVENTS_PAGE_SIZE=250
+BETDEX_EVENTS_MAX_PAGES=8
+BETDEX_MARKETS_PAGE_SIZE=500
+BETDEX_MARKETS_MAX_PAGES=8
+BETDEX_EVENT_BATCH_SIZE=60
+BETDEX_PRICE_BATCH_SIZE=120
+BETDEX_MARKET_STATUSES=Open
+```
+Optional file fallback for local fixtures:
+```
+BETDEX_SOURCE=file
+BETDEX_SAMPLE_PATH=data/betdex_sample.json
+```
+BetDEX is treated as an exchange in scanner settings, so exchange commission applies.
 You can also override per request with `includeProviders`:
 ```json
 {
-  "includeProviders": ["bookmaker.xyz", "SX Bet", "overtimemarkets.xyz", "polymarket"]
+  "includeProviders": ["BetDEX", "bookmaker.xyz", "SX Bet", "overtimemarkets.xyz", "polymarket"]
 }
 ```
 `includePurebet` remains supported and overrides Purebet on/off for that request.

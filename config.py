@@ -85,6 +85,7 @@ EXCHANGE_BOOKMAKERS = {
     "betfair_ex_au": {"name": "Betfair"},
     "sportsbet_ex": {"name": "Sportsbet Exchange"},
     "matchbook": {"name": "Matchbook"},
+    "betdex": {"name": "BetDEX"},
     "purebet": {"name": "Purebet"},
 }
 
@@ -335,6 +336,7 @@ BOOKMAKER_URLS = {
     "betfair_ex_uk": "https://www.betfair.com/exchange/",
     "betfair_ex_au": "https://www.betfair.com.au/exchange/",
     "sportsbet_ex": "https://www.sportsbet.com.au/",
+    "betdex": "https://www.betdex.com/",
     "bookmaker_xyz": "https://bookmaker.xyz/",
     "sx_bet": "https://sx.bet/",
     "overtimemarkets_xyz": "https://overtimemarkets.xyz/",
@@ -347,6 +349,7 @@ for key in [
     "pinnacle",
     "polymarket",
     "purebet",
+    "betdex",
     "bookmaker_xyz",
     "sx_bet",
     "overtimemarkets_xyz",

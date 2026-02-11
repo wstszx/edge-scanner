@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional, Sequence
 
+from .betdex import PROVIDER_TITLE as BETDEX_TITLE
+from .betdex import fetch_events as fetch_betdex_events
 from .bookmaker_xyz import PROVIDER_TITLE as BOOKMAKER_XYZ_TITLE
 from .bookmaker_xyz import fetch_events as fetch_bookmaker_xyz_events
 from .overtimemarkets_xyz import PROVIDER_TITLE as OVERTIMEMARKETS_XYZ_TITLE
@@ -20,6 +22,7 @@ ProviderFetcher = Callable[
 
 PROVIDER_FETCHERS: Dict[str, ProviderFetcher] = {
     "purebet": fetch_purebet_events,
+    "betdex": fetch_betdex_events,
     "bookmaker_xyz": fetch_bookmaker_xyz_events,
     "sx_bet": fetch_sx_bet_events,
     "overtimemarkets_xyz": fetch_overtimemarkets_xyz_events,
@@ -28,6 +31,7 @@ PROVIDER_FETCHERS: Dict[str, ProviderFetcher] = {
 
 PROVIDER_TITLES: Dict[str, str] = {
     "purebet": PUREBET_TITLE,
+    "betdex": BETDEX_TITLE,
     "bookmaker_xyz": BOOKMAKER_XYZ_TITLE,
     "sx_bet": SX_BET_TITLE,
     "overtimemarkets_xyz": OVERTIMEMARKETS_XYZ_TITLE,
@@ -36,6 +40,9 @@ PROVIDER_TITLES: Dict[str, str] = {
 
 PROVIDER_ALIASES: Dict[str, str] = {
     "purebet": "purebet",
+    "betdex": "betdex",
+    "bet dex": "betdex",
+    "bet-dex": "betdex",
     "bookmaker.xyz": "bookmaker_xyz",
     "bookmaker_xyz": "bookmaker_xyz",
     "bookmakerxyz": "bookmaker_xyz",

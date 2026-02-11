@@ -2489,6 +2489,9 @@ def run_scan(
     normalized_regions = _ensure_sharp_region(normalized_regions, sharp_book or DEFAULT_SHARP_BOOK)
     normalized_bookmakers = _normalize_bookmakers(bookmakers)
     provider_bookmaker_keys = _normalize_provider_keys(normalized_bookmakers) or []
+    api_bookmakers = [
+        book for book in normalized_bookmakers if resolve_provider_key(book) is None
+    ]
     if provider_bookmaker_keys:
         enabled_provider_set.update(provider_bookmaker_keys)
         enabled_provider_keys = [key for key in PROVIDER_FETCHERS if key in enabled_provider_set]
@@ -2557,24 +2560,26 @@ def run_scan(
         if not sport_key:
             continue
         base_markets = markets_for_sport(sport_key)
-        try:
-            events = fetch_odds_for_sport(
-                api_pool,
-                sport_key,
-                base_markets,
-                normalized_regions,
-                bookmakers=normalized_bookmakers,
-            )
-        except ScannerError as exc:
-            sport_errors.append(
-                {
-                    "sport_key": sport_key,
-                    "sport": sport.get("title")
-                    or SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
-                    "error": str(exc),
-                }
-            )
-            continue
+        events: List[dict] = []
+        should_fetch_api = not (normalized_bookmakers and not api_bookmakers)
+        if should_fetch_api:
+            try:
+                events = fetch_odds_for_sport(
+                    api_pool,
+                    sport_key,
+                    base_markets,
+                    normalized_regions,
+                    bookmakers=api_bookmakers or None,
+                )
+            except ScannerError as exc:
+                sport_errors.append(
+                    {
+                        "sport_key": sport_key,
+                        "sport": sport.get("title")
+                        or SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
+                        "error": str(exc),
+                    }
+                )
         for provider_key in enabled_provider_keys:
             fetch_provider_events = PROVIDER_FETCHERS.get(provider_key)
             if not callable(fetch_provider_events):
