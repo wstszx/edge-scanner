@@ -880,6 +880,7 @@
         gross: 'Gross',
         net_at: 'Net @ {odds}',
         odds_label: 'Odds: {odds}',
+        available_label: 'Available: {amount}',
         stake_label: 'Stake: {stake}',
         exchange: 'Exchange',
         no: 'No',
@@ -1082,6 +1083,7 @@
         gross: '总',
         net_at: '净 @ {odds}',
         odds_label: '赔率：{odds}',
+        available_label: '可下额度：{amount}',
         stake_label: '下注：{stake}',
         exchange: '交易所',
         no: '否',
@@ -2267,7 +2269,7 @@
         statSports.textContent = summary.sports_scanned;
         statCalls.textContent = summary.api_calls_used;
         const totalProfit = filtered.reduce((sum, item) => sum + (item.profitValue || 0), 0);
-        const totalStaked = stakeValue > 0 ? stakeValue * filtered.length : 0;
+        const totalStaked = filtered.reduce((sum, item) => sum + (item.calcNet?.total || 0), 0);
         const commissionPercent = formatCommissionPercent(lastCommissionRate);
         const regionsLabel = formatRegionList(lastScanData?.regions);
         const totalCount = arbData.opportunities_count || opportunities.length;
@@ -2312,7 +2314,6 @@
       updateMiddlesSortLabel();
       const scannedStake = data?.stake_amount || 0;
       const desiredStake = parseFloat(stakeInput.value) || scannedStake || 100;
-      const stakeRatio = scannedStake > 0 ? desiredStake / scannedStake : 1;
       const filtered = opportunities.filter((opp) => {
         const gapPoints = opp.gap?.points ?? 0;
         if (gapPoints < minGap) return false;
@@ -2375,26 +2376,26 @@
         middlesEmpty.classList.add('hidden');
         filtered.forEach((opp) => {
           const row = document.createElement('tr');
-          const evClass = evBandClass(opp.ev_percent);
+          const middleCalc = calculateMiddleProjection(opp, desiredStake);
+          const displayEvPercent = middleCalc?.ev_percent ?? opp.ev_percent ?? 0;
+          const evClass = evBandClass(displayEvPercent);
           if (evClass) row.classList.add(evClass);
           if (opp.has_exchange) row.classList.add('has-exchange');
           const commence = formatDateTime(opp.commence_time);
-          const stakeA = (opp.stakes?.side_a?.stake || 0) * stakeRatio;
-          const stakeB = (opp.stakes?.side_b?.stake || 0) * stakeRatio;
-          const winBoth = (opp.outcomes?.win_both_profit || 0) * stakeRatio;
-          const miss = (opp.outcomes?.typical_miss_profit || 0) * stakeRatio;
+          const winBoth = middleCalc?.outcomes?.win_both_profit ?? (opp.outcomes?.win_both_profit || 0);
+          const miss = middleCalc?.outcomes?.typical_miss_profit ?? (opp.outcomes?.typical_miss_profit || 0);
           const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
           const marketLabel = translateMarketLabel(opp.market || '');
           row.innerHTML = `
-            <td>${formatPercent(opp.ev_percent)}${opp.has_exchange && typeof opp.gross_ev_percent === 'number' ? `<span class="ev-gross">${t('gross')} ${formatPercent(opp.gross_ev_percent)}</span>` : ''}</td>
+            <td>${formatPercent(displayEvPercent)}${opp.has_exchange && typeof opp.gross_ev_percent === 'number' ? `<span class="ev-gross">${t('gross')} ${formatPercent(opp.gross_ev_percent)}</span>` : ''}</td>
             <td>${formatPercent(opp.probability_percent)}</td>
             <td>${formatGapCell(opp)}</td>
             <td>${sportLabel}</td>
             <td>${opp.event || ''}</td>
             <td>${commence}</td>
             <td>${marketLabel}</td>
-            <td>${formatMiddleSide(opp.side_a, stakeA)}</td>
-            <td>${formatMiddleSide(opp.side_b, stakeB)}</td>
+            <td>${formatMiddleSide(opp.side_a)}</td>
+            <td>${formatMiddleSide(opp.side_b)}</td>
             <td>${opp.middle_zone || ''}</td>
             <td class="profit-cell">${formatProfit(winBoth)}</td>
             <td class="profit-cell">${formatProfit(miss)}</td>
@@ -2572,14 +2573,20 @@
     function formatOutcome(item) {
       if (!item) return '';
       const point = item.point !== undefined && item.point !== null ? ` (${item.point})` : '';
-      const stake = item.stake !== undefined ? formatCurrency(item.stake) : '';
+      const availableValue =
+        item.max_stake !== undefined &&
+        item.max_stake !== null &&
+        !Number.isNaN(Number(item.max_stake))
+          ? formatCurrency(Number(item.max_stake))
+          : '-';
+      const available = t('available_label', { amount: availableValue });
       const book = item.bookmaker ? ` @ ${item.bookmaker}` : '';
       const exchangeBadge = item.is_exchange ? `<span class="exchange-badge">${t('exchange')}</span>` : '';
       const effectiveNote =
         item.is_exchange && item.effective_price && item.effective_price !== item.price
           ? `<span class="mono net-note">${t('net_at', { odds: formatOddsDisplay(item.effective_price) })}</span>`
           : '';
-      return `<span class="outcome">${exchangeBadge}<strong>${item.outcome || ''}${point}</strong><span>${stake}${book}</span><span class="mono">@ ${formatOddsDisplay(item.price)}</span>${effectiveNote}</span>`;
+      return `<span class="outcome">${exchangeBadge}<strong>${item.outcome || ''}${point}</strong><span>${available}${book}</span><span class="mono">@ ${formatOddsDisplay(item.price)}</span>${effectiveNote}</span>`;
     }
 
     function collectBookTargets(opp) {
@@ -2725,6 +2732,7 @@
     function calculateStakes(opp, totalStake, useEffectivePrices = true) {
       const odds = (opp.best_odds || []).slice(0, 2);
       if (!totalStake || totalStake <= 0 || odds.length < 2) return null;
+      const requestedTotal = Number(Number(totalStake).toFixed(2));
       const inverses = odds.map((o) => {
         if (!o) return 0;
         const price = useEffectivePrices
@@ -2734,10 +2742,63 @@
       });
       const sumInv = inverses.reduce((a, b) => a + b, 0);
       if (sumInv <= 0) return null;
+      const fractions = inverses.map((inv) => inv / sumInv);
+      let capTotal = null;
+      odds.forEach((o, idx) => {
+        if (!o) return;
+        const fraction = fractions[idx];
+        if (!fraction || fraction <= 0) return;
+        const capRaw =
+          o.max_stake !== undefined && o.max_stake !== null
+            ? Number(o.max_stake)
+            : null;
+        if (capRaw === null || Number.isNaN(capRaw)) return;
+        const cap = Math.max(0, capRaw);
+        const limit = cap / fraction;
+        capTotal = capTotal === null ? limit : Math.min(capTotal, limit);
+      });
+      let executableTotal = requestedTotal;
+      if (capTotal !== null) executableTotal = Math.min(executableTotal, capTotal);
+      executableTotal = Math.max(0, Math.floor(executableTotal * 100) / 100);
+      if (executableTotal <= 0) {
+        return {
+          requested_total: requestedTotal,
+          total: 0,
+          max_executable_total: capTotal !== null ? Number(capTotal.toFixed(2)) : requestedTotal,
+          limited_by_max_stake: capTotal !== null,
+          breakdown: [],
+          guaranteed_profit: 0,
+          roi_percent: 0,
+        };
+      }
+
+      const totalCents = Math.round(executableTotal * 100);
+      const rawCents = fractions.map((fraction) => fraction * totalCents);
+      const stakeCents = rawCents.map((value) => Math.floor(value));
+      let remaining = totalCents - stakeCents.reduce((a, b) => a + b, 0);
+      const order = rawCents
+        .map((value, idx) => ({ idx, frac: value - stakeCents[idx] }))
+        .sort((a, b) => b.frac - a.frac);
+      for (const item of order) {
+        if (remaining <= 0) break;
+        const o = odds[item.idx];
+        const capRaw =
+          o && o.max_stake !== undefined && o.max_stake !== null
+            ? Number(o.max_stake)
+            : null;
+        if (capRaw !== null && !Number.isNaN(capRaw)) {
+          const capCents = Math.floor(Math.max(0, capRaw) * 100);
+          if (stakeCents[item.idx] + 1 > capCents) continue;
+        }
+        stakeCents[item.idx] += 1;
+        remaining -= 1;
+      }
+
+      const actualTotal = Number((stakeCents.reduce((a, b) => a + b, 0) / 100).toFixed(2));
       const breakdown = odds.map((o, idx) => {
         if (!o || !o.price) return null;
-        const fraction = inverses[idx] / sumInv;
-        const stake = Number((totalStake * fraction).toFixed(2));
+        const fraction = fractions[idx];
+        const stake = Number((stakeCents[idx] / 100).toFixed(2));
         const displayPrice = Number(o.price);
         const effectivePrice = Number(o.effective_price ?? o.price);
         const priceUsed = useEffectivePrices ? effectivePrice : displayPrice;
@@ -2750,6 +2811,7 @@
           effective_price: effectivePrice,
           point: o.point,
           stake,
+          max_stake: o.max_stake,
           payout,
           fraction,
           is_exchange: Boolean(o.is_exchange),
@@ -2757,9 +2819,77 @@
       });
       if (breakdown.includes(null)) return null;
       const minPayout = Math.min(...breakdown.map((b) => b.payout));
-      const guaranteed_profit = Number((minPayout - totalStake).toFixed(2));
-      const roi_percent = totalStake ? (guaranteed_profit / totalStake) * 100 : 0;
-      return { breakdown, guaranteed_profit, roi_percent };
+      const guaranteed_profit = Number((minPayout - actualTotal).toFixed(2));
+      const roi_percent = actualTotal ? (guaranteed_profit / actualTotal) * 100 : 0;
+      return {
+        requested_total: requestedTotal,
+        total: actualTotal,
+        max_executable_total: capTotal !== null ? Number(capTotal.toFixed(2)) : requestedTotal,
+        limited_by_max_stake: capTotal !== null && actualTotal + 1e-9 < requestedTotal,
+        breakdown,
+        guaranteed_profit,
+        roi_percent,
+      };
+    }
+
+    function calculateMiddleProjection(opp, totalStake) {
+      if (!opp || !opp.side_a || !opp.side_b) return null;
+      const sideA = opp.side_a;
+      const sideB = opp.side_b;
+      const pseudoOpp = {
+        best_odds: [
+          {
+            outcome: sideA.team,
+            bookmaker: sideA.bookmaker,
+            bookmaker_key: sideA.bookmaker_key,
+            price: sideA.price,
+            effective_price: sideA.effective_price,
+            max_stake: sideA.max_stake,
+            point: sideA.line,
+            is_exchange: sideA.is_exchange,
+          },
+          {
+            outcome: sideB.team,
+            bookmaker: sideB.bookmaker,
+            bookmaker_key: sideB.bookmaker_key,
+            price: sideB.price,
+            effective_price: sideB.effective_price,
+            max_stake: sideB.max_stake,
+            point: sideB.line,
+            is_exchange: sideB.is_exchange,
+          },
+        ],
+      };
+      const split = calculateStakes(pseudoOpp, totalStake, true);
+      if (!split || !Array.isArray(split.breakdown) || split.breakdown.length < 2 || split.total <= 0) return null;
+      const stakeA = Number(split.breakdown[0]?.stake || 0);
+      const stakeB = Number(split.breakdown[1]?.stake || 0);
+      const oddsA = Number(sideA.effective_price ?? sideA.price ?? 0);
+      const oddsB = Number(sideB.effective_price ?? sideB.price ?? 0);
+      if (!stakeA || !stakeB || oddsA <= 1 || oddsB <= 1) return null;
+      const total = Number((stakeA + stakeB).toFixed(2));
+      const payoutA = Number((stakeA * oddsA).toFixed(2));
+      const payoutB = Number((stakeB * oddsB).toFixed(2));
+      const winBoth = Number(((payoutA + payoutB) - total).toFixed(2));
+      const sideAOnly = Number((payoutA - total).toFixed(2));
+      const sideBOnly = Number((payoutB - total).toFixed(2));
+      const typicalMiss = Number(((sideAOnly + sideBOnly) / 2).toFixed(2));
+      const probability = Math.max(0, Math.min(Number(opp.middle_probability || 0), 1));
+      const missProbability = 1 - probability;
+      const missEv = 0.5 * sideAOnly + 0.5 * sideBOnly;
+      const evDollars = Number(((probability * winBoth) + (missProbability * missEv)).toFixed(2));
+      const evPercent = total ? Number(((evDollars / total) * 100).toFixed(2)) : 0;
+      return {
+        stakes: split,
+        outcomes: {
+          win_both_profit: winBoth,
+          side_a_wins_profit: sideAOnly,
+          side_b_wins_profit: sideBOnly,
+          typical_miss_profit: typicalMiss,
+        },
+        ev_dollars: evDollars,
+        ev_percent: evPercent,
+      };
     }
 
     function formatCurrency(value) {
@@ -2863,15 +2993,21 @@
       return `${pieces.join(t('gap_separator'))}${keyFlag}`;
     }
 
-    function formatMiddleSide(side, stakeValue) {
+    function formatMiddleSide(side) {
       if (!side) return '';
       const line = side.line !== undefined && side.line !== null ? formatLine(side.line) : '';
       const book = side.bookmaker ? ` @ ${side.bookmaker}` : '';
       const odds = side.effective_price ? formatOddsDisplay(side.effective_price) : formatOddsDisplay(side.price);
-      const stake = stakeValue ? t('stake_label', { stake: formatCurrency(stakeValue) }) : '';
+      const availableValue =
+        side.max_stake !== undefined &&
+        side.max_stake !== null &&
+        !Number.isNaN(Number(side.max_stake))
+          ? formatCurrency(Number(side.max_stake))
+          : '-';
+      const available = t('available_label', { amount: availableValue });
       const exchangeBadge = side.is_exchange ? `<span class="exchange-badge">${t('exchange')}</span>` : '';
       const oddsText = t('odds_label', { odds });
-      return `<span class="outcome">${exchangeBadge}<strong>${side.team || ''} ${line}</strong><span>${oddsText}${book}</span><span>${stake}</span></span>`;
+      return `<span class="outcome">${exchangeBadge}<strong>${side.team || ''} ${line}</strong><span>${oddsText}${book}</span><span>${available}</span></span>`;
     }
 
     function formatLine(value) {

@@ -636,7 +636,7 @@ def _select_purebet_side(
 ) -> Optional[dict]:
     if not isinstance(entries, list):
         return None
-    best = None
+    levels: List[dict] = []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
@@ -644,14 +644,26 @@ def _select_purebet_side(
         if odds is None or odds <= 1:
             continue
         stake = _safe_float(entry.get("stake") or entry.get("maxStake") or entry.get("liquidity"))
-        if min_stake > 0 and (stake is None or stake < min_stake):
+        if stake is None or stake <= 0:
             continue
         last_updated = entry.get("lastUpdated") or entry.get("last_update") or entry.get("timestamp")
         if not _purebet_is_recent(last_updated, max_age_seconds, now_epoch):
             continue
-        if best is None or odds > best["odds"]:
-            best = {"odds": odds, "stake": stake, "last_updated": last_updated}
-    return best
+        levels.append({"odds": float(odds), "stake": float(stake), "last_updated": last_updated})
+    if not levels:
+        return None
+
+    # For Purebet arbitrage we only keep the single deepest level.
+    best = max(levels, key=lambda item: (item["stake"], item["odds"]))
+    best_stake = float(best["stake"])
+    if min_stake > 0 and best_stake + 1e-9 < min_stake:
+        return None
+
+    return {
+        "odds": round(float(best["odds"]), 6),
+        "stake": round(best_stake, 6),
+        "last_updated": best.get("last_updated"),
+    }
 
 def _normalize_purebet_markets_payload(
     payload: Sequence[dict],
@@ -672,7 +684,7 @@ def _normalize_purebet_markets_payload(
         if not isinstance(market, dict):
             continue
         period = market.get("period")
-        if period not in (None, 1, "1"):
+        if period not in (None, 0, "0", 1, "1"):
             continue
         raw_market_type = market.get("marketType") or market.get("type") or market.get("market_type")
         market_type = _normalize_purebet_market_type(raw_market_type)
@@ -1032,10 +1044,7 @@ def fetch_events(
             raise ProviderError("Purebet API response must be a JSON array of events")
         stats["events_payload_count"] = len(payload)
         supported_markets = _normalize_purebet_requested_markets(markets)
-        needs_details = (
-            PUREBET_MARKETS_ENABLED
-            and bool(supported_markets.difference({"h2h"}))
-        )
+        needs_details = PUREBET_MARKETS_ENABLED and bool(supported_markets)
         stats["details_enabled"] = bool(needs_details)
         league_map = _load_purebet_league_map(
             base_url=base_url,

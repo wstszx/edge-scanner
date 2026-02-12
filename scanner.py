@@ -2511,7 +2511,13 @@ def _collect_market_entries(
         if float(net_stake_info.get("guaranteed_profit") or 0.0) <= 0:
             continue
         gross_stake_info = (
-            _calculate_stakes(outcomes, stake_total, price_field="display_price") if has_exchange else None
+            _calculate_stakes(
+                outcomes,
+                _safe_float(net_stake_info.get("total")) or stake_total,
+                price_field="display_price",
+            )
+            if has_exchange
+            else None
         )
         net_roi = net_stake_info["roi_percent"]
         gross_roi = gross_stake_info["roi_percent"] if gross_stake_info else net_roi
@@ -2581,6 +2587,11 @@ def _collect_middle_opportunities(
                         "line": point_value,
                         "display_price": display_price,
                         "effective_price": effective_price,
+                        "max_stake": _safe_float(
+                            outcome.get("stake")
+                            or outcome.get("max_stake")
+                            or outcome.get("liquidity")
+                        ),
                         "is_exchange": is_exchange,
                     }
                 )
@@ -2774,10 +2785,40 @@ def _build_middle_entry(
     if middle_probability <= 0:
         return None
 
-    stake_a, stake_b = _calculate_middle_stakes(
-        side_a["effective_price"], side_b["effective_price"], stake_total
+    pricing_outcomes = [
+        {
+            "name": side_a["team"],
+            "display_name": side_a["team"],
+            "bookmaker": side_a["bookmaker"],
+            "price": side_a["display_price"],
+            "display_price": side_a["display_price"],
+            "effective_price": side_a["effective_price"],
+            "point": side_a["line"],
+            "max_stake": side_a.get("max_stake"),
+            "is_exchange": side_a["is_exchange"],
+        },
+        {
+            "name": side_b["team"],
+            "display_name": side_b["team"],
+            "bookmaker": side_b["bookmaker"],
+            "price": side_b["display_price"],
+            "display_price": side_b["display_price"],
+            "effective_price": side_b["effective_price"],
+            "point": side_b["line"],
+            "max_stake": side_b.get("max_stake"),
+            "is_exchange": side_b["is_exchange"],
+        },
+    ]
+    net_stake_info = _calculate_stakes(
+        pricing_outcomes, stake_total, price_field="effective_price"
     )
-    if stake_a <= 0 or stake_b <= 0:
+    net_breakdown = net_stake_info.get("breakdown") if isinstance(net_stake_info, dict) else []
+    if not isinstance(net_breakdown, list) or len(net_breakdown) != 2:
+        return None
+    stake_a = _safe_float(net_breakdown[0].get("stake")) or 0.0
+    stake_b = _safe_float(net_breakdown[1].get("stake")) or 0.0
+    used_total = _safe_float(net_stake_info.get("total")) or 0.0
+    if used_total <= 0 or stake_a <= 0 or stake_b <= 0:
         return None
     outcomes = _calculate_middle_outcomes(stake_a, stake_b, side_a["effective_price"], side_b["effective_price"])
     ev_dollars = _calculate_middle_ev(
@@ -2786,14 +2827,21 @@ def _build_middle_entry(
         outcomes["side_b_wins_profit"],
         middle_probability,
     )
-    ev_percent = round((ev_dollars / stake_total) * 100, 2) if stake_total else 0.0
+    ev_percent = round((ev_dollars / used_total) * 100, 2) if used_total else 0.0
     has_exchange = side_a["is_exchange"] or side_b["is_exchange"]
     gross_ev_percent = None
     if has_exchange:
-        gross_stake_a, gross_stake_b = _calculate_middle_stakes(
-            side_a["display_price"], side_b["display_price"], stake_total
+        gross_stake_info = _calculate_stakes(
+            pricing_outcomes, used_total, price_field="display_price"
         )
-        if gross_stake_a > 0 and gross_stake_b > 0:
+        gross_breakdown = (
+            gross_stake_info.get("breakdown")
+            if isinstance(gross_stake_info, dict)
+            else []
+        )
+        if isinstance(gross_breakdown, list) and len(gross_breakdown) == 2:
+            gross_stake_a = _safe_float(gross_breakdown[0].get("stake")) or 0.0
+            gross_stake_b = _safe_float(gross_breakdown[1].get("stake")) or 0.0
             gross_outcomes = _calculate_middle_outcomes(
                 gross_stake_a, gross_stake_b, side_a["display_price"], side_b["display_price"]
             )
@@ -2803,7 +2851,8 @@ def _build_middle_entry(
                 gross_outcomes["side_b_wins_profit"],
                 middle_probability,
             )
-            gross_ev_percent = round((gross_ev / stake_total) * 100, 2) if stake_total else 0.0
+            gross_total = _safe_float(gross_stake_info.get("total")) or used_total
+            gross_ev_percent = round((gross_ev / gross_total) * 100, 2) if gross_total else 0.0
 
     key_numbers_crossed: List[int] = []
     includes_key_number = False
@@ -2821,6 +2870,7 @@ def _build_middle_entry(
             "price": side_a["display_price"],
             "effective_price": side_a["effective_price"],
             "bookmaker": side_a["bookmaker"],
+            "max_stake": side_a.get("max_stake"),
             "is_exchange": side_a["is_exchange"],
         },
         {
@@ -2829,11 +2879,15 @@ def _build_middle_entry(
             "price": side_b["display_price"],
             "effective_price": side_b["effective_price"],
             "bookmaker": side_b["bookmaker"],
+            "max_stake": side_b.get("max_stake"),
             "is_exchange": side_b["is_exchange"],
         },
     )
     stakes_payload = {
-        "total": stake_total,
+        "requested_total": net_stake_info.get("requested_total", stake_total),
+        "total": used_total,
+        "limited_by_max_stake": bool(net_stake_info.get("limited_by_max_stake")),
+        "max_executable_total": net_stake_info.get("max_executable_total"),
         "side_a": {
             "stake": stake_a,
             "payout": round(stake_a * side_a["effective_price"], 2),
@@ -2879,16 +2933,23 @@ def _calculate_stakes(outcomes: List[dict], stake_total: float, price_field: str
     if stake_total <= 0 or len(outcomes) < 2:
         return {
             "total": 0.0,
+            "requested_total": max(0.0, round(float(stake_total or 0.0), 2)),
+            "max_executable_total": 0.0,
+            "limited_by_max_stake": False,
             "breakdown": [],
             "guaranteed_profit": 0.0,
             "roi_percent": 0.0,
         }
-    inverses = []
+    requested_total = max(0.0, round(float(stake_total or 0.0), 2))
+    inverses: List[float] = []
     for outcome in outcomes:
         price = outcome.get(price_field)
         if not price or price <= 0:
             return {
                 "total": 0.0,
+                "requested_total": requested_total,
+                "max_executable_total": 0.0,
+                "limited_by_max_stake": False,
                 "breakdown": [],
                 "guaranteed_profit": 0.0,
                 "roi_percent": 0.0,
@@ -2898,14 +2959,81 @@ def _calculate_stakes(outcomes: List[dict], stake_total: float, price_field: str
     if inverse_sum <= 0:
         return {
             "total": 0.0,
+            "requested_total": requested_total,
+            "max_executable_total": 0.0,
+            "limited_by_max_stake": False,
+            "breakdown": [],
+            "guaranteed_profit": 0.0,
+            "roi_percent": 0.0,
+        }
+    fractions = [inv / inverse_sum for inv in inverses]
+    cap_total: Optional[float] = None
+    max_stakes: List[Optional[float]] = []
+    for outcome, fraction in zip(outcomes, fractions):
+        cap_raw = None
+        for cap_key in ("max_stake", "stake", "liquidity"):
+            if cap_key in outcome and outcome.get(cap_key) is not None:
+                cap_raw = outcome.get(cap_key)
+                break
+        cap_value = _safe_float(cap_raw)
+        if cap_value is None:
+            max_stakes.append(None)
+            continue
+        cap = max(0.0, float(cap_value))
+        max_stakes.append(cap)
+        if fraction > 0:
+            leg_total_limit = cap / fraction
+            cap_total = leg_total_limit if cap_total is None else min(cap_total, leg_total_limit)
+
+    executable_total = requested_total
+    if cap_total is not None:
+        executable_total = min(executable_total, cap_total)
+    executable_total = max(0.0, math.floor(executable_total * 100.0 + 1e-9) / 100.0)
+    if executable_total <= 0:
+        return {
+            "total": 0.0,
+            "requested_total": requested_total,
+            "max_executable_total": round(cap_total, 2) if cap_total is not None else requested_total,
+            "limited_by_max_stake": cap_total is not None and requested_total > 0,
+            "breakdown": [],
+            "guaranteed_profit": 0.0,
+            "roi_percent": 0.0,
+        }
+
+    total_cents = int(round(executable_total * 100))
+    raw_cents = [fraction * total_cents for fraction in fractions]
+    stake_cents = [int(math.floor(value + 1e-9)) for value in raw_cents]
+    remaining = total_cents - sum(stake_cents)
+    order = sorted(
+        range(len(stake_cents)),
+        key=lambda idx: (raw_cents[idx] - stake_cents[idx]),
+        reverse=True,
+    )
+    for idx in order:
+        if remaining <= 0:
+            break
+        cap = max_stakes[idx]
+        if cap is not None:
+            cap_cents = int(math.floor(cap * 100 + 1e-9))
+            if stake_cents[idx] + 1 > cap_cents:
+                continue
+        stake_cents[idx] += 1
+        remaining -= 1
+
+    actual_total = round(sum(stake_cents) / 100.0, 2)
+    if actual_total <= 0:
+        return {
+            "total": 0.0,
+            "requested_total": requested_total,
+            "max_executable_total": round(cap_total, 2) if cap_total is not None else requested_total,
+            "limited_by_max_stake": cap_total is not None and requested_total > 0,
             "breakdown": [],
             "guaranteed_profit": 0.0,
             "roi_percent": 0.0,
         }
     breakdown = []
-    for outcome, inv in zip(outcomes, inverses):
-        fraction = inv / inverse_sum
-        stake_value = round(stake_total * fraction, 2)
+    for outcome, fraction, stake_cent in zip(outcomes, fractions, stake_cents):
+        stake_value = round(stake_cent / 100.0, 2)
         price_used = outcome.get(price_field)
         display_price = outcome.get("display_price", price_used)
         payout = round(stake_value * price_used, 2)
@@ -2917,16 +3045,20 @@ def _calculate_stakes(outcomes: List[dict], stake_total: float, price_field: str
                 "effective_price": outcome.get("effective_price", price_used),
                 "point": outcome.get("point"),
                 "stake": stake_value,
+                "max_stake": outcome.get("max_stake"),
                 "payout": payout,
                 "fraction": fraction,
                 "is_exchange": outcome.get("is_exchange", False),
             }
         )
     min_payout = min(item["payout"] for item in breakdown) if breakdown else 0.0
-    guaranteed = round(min_payout - stake_total, 2)
-    roi = round((guaranteed / stake_total) * 100, 4) if stake_total else 0.0
+    guaranteed = round(min_payout - actual_total, 2)
+    roi = round((guaranteed / actual_total) * 100, 4) if actual_total else 0.0
     return {
-        "total": stake_total,
+        "total": actual_total,
+        "requested_total": requested_total,
+        "max_executable_total": round(cap_total, 2) if cap_total is not None else requested_total,
+        "limited_by_max_stake": bool(cap_total is not None and actual_total + 1e-9 < requested_total),
         "breakdown": breakdown,
         "guaranteed_profit": guaranteed,
         "roi_percent": roi,
