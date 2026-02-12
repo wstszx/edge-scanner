@@ -161,6 +161,21 @@ def _normalize_token(value: object) -> str:
     return text.strip("-")
 
 
+def _normalize_market_key(value: object) -> str:
+    text = _normalize_text(value).lower()
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    return text.strip("_")
+
+
+def _requested_market_keys(markets: Sequence[str]) -> set[str]:
+    requested = {_normalize_market_key(item) for item in (markets or []) if _normalize_market_key(item)}
+    if "both_teams_to_score" in requested:
+        requested.add("btts")
+    if "btts" in requested:
+        requested.add("both_teams_to_score")
+    return requested
+
+
 def _safe_float(value) -> Optional[float]:
     try:
         return float(value)
@@ -199,6 +214,71 @@ def _normalize_commence_time(value: object) -> Optional[str]:
         )
     except ValueError:
         return None
+
+
+def _parse_datetime_utc(value: object) -> Optional[dt.datetime]:
+    normalized = _normalize_commence_time(value)
+    if not normalized:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(normalized[:-1] + "+00:00")
+    except ValueError:
+        return None
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def _flag_is_true(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    text = _normalize_text(value).lower()
+    return text in {"1", "true", "yes", "y", "on"}
+
+
+def _flag_is_false(value: object) -> bool:
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, (int, float)):
+        return value == 0
+    text = _normalize_text(value).lower()
+    return text in {"0", "false", "no", "n", "off"}
+
+
+def _event_is_tradeable(event: dict, now_utc: dt.datetime) -> bool:
+    if not isinstance(event, dict):
+        return False
+    if _flag_is_true(event.get("closed")):
+        return False
+    if _flag_is_true(event.get("archived")):
+        return False
+    if event.get("active") is not None and _flag_is_false(event.get("active")):
+        return False
+    if _flag_is_true(event.get("ended")):
+        return False
+    end_at = _parse_datetime_utc(event.get("endDate"))
+    if end_at is not None and end_at < now_utc:
+        return False
+    return True
+
+
+def _market_is_tradeable(market: dict, now_utc: dt.datetime) -> bool:
+    if not isinstance(market, dict):
+        return False
+    if _flag_is_true(market.get("closed")):
+        return False
+    if _flag_is_true(market.get("archived")):
+        return False
+    if market.get("active") is not None and _flag_is_false(market.get("active")):
+        return False
+    if _flag_is_true(market.get("ended")):
+        return False
+    if market.get("acceptingOrders") is not None and _flag_is_false(market.get("acceptingOrders")):
+        return False
+    end_at = _parse_datetime_utc(market.get("endDate"))
+    if end_at is not None and end_at < now_utc:
+        return False
+    return True
 
 
 def _load_sport_tag_mapping(retries: int, backoff_seconds: float) -> Dict[str, set]:
@@ -367,22 +447,29 @@ def _price_to_decimal_odds(price) -> Optional[float]:
     return round(odds, 6)
 
 
-def _pick_two_outcome_market(
+def _pick_match_markets(
     event: dict,
     home_team: str,
     away_team: str,
-) -> Optional[dict]:
+    requested_markets: set[str],
+    now_utc: dt.datetime,
+) -> List[dict]:
     home_token = _team_token(home_team)
     away_token = _team_token(away_team)
     if not home_token or not away_token:
-        return None
+        return []
 
     direct_candidates: List[dict] = []
     yes_by_team: Dict[str, float] = {}
+    draw_yes_odds: Optional[float] = None
+    btts_yes_odds: Optional[float] = None
+    btts_no_odds: Optional[float] = None
     has_draw_prompt = False
 
     for market in (event.get("markets") or []):
         if not isinstance(market, dict):
+            continue
+        if not _market_is_tradeable(market, now_utc):
             continue
         outcomes = [_normalize_text(item) for item in _parse_list(market.get("outcomes"))]
         prices = _parse_list(market.get("outcomePrices"))
@@ -398,7 +485,6 @@ def _pick_two_outcome_market(
 
         if "draw" in question:
             has_draw_prompt = True
-            continue
 
         if set(outcome_tokens) == {home_token, away_token}:
             direct_candidates.append(
@@ -416,6 +502,14 @@ def _pick_two_outcome_market(
         if normalized_outcomes == ["yes", "no"] or normalized_outcomes == ["no", "yes"]:
             yes_index = 0 if normalized_outcomes[0] == "yes" else 1
             yes_odds = odds_0 if yes_index == 0 else odds_1
+            no_odds = odds_1 if yes_index == 0 else odds_0
+            if "both teams to score" in question or "btts" in question:
+                btts_yes_odds = yes_odds
+                btts_no_odds = no_odds
+                continue
+            if "draw" in question:
+                draw_yes_odds = yes_odds
+                continue
             team_match = re.match(
                 r"^\s*will\s+(.+?)\s+win(?:\s+on\s+\d{4}-\d{2}-\d{2})?\??\s*$",
                 _normalize_text(market.get("question")),
@@ -428,37 +522,73 @@ def _pick_two_outcome_market(
                 elif team_token == away_token:
                     yes_by_team[away_token] = yes_odds
 
+    collected: List[dict] = []
     if direct_candidates:
         best = max(direct_candidates, key=lambda item: item.get("volume", 0.0))
         outcomes = best["outcomes"]
         # Normalize outcome order to home/away.
-        ordered = { _team_token(item["name"]): item for item in outcomes }
+        ordered = {_team_token(item["name"]): item for item in outcomes}
         home_outcome = ordered.get(home_token)
         away_outcome = ordered.get(away_token)
-        if home_outcome and away_outcome:
-            return {
-                "key": "h2h",
+        if "h2h" in requested_markets:
+            if home_outcome and away_outcome:
+                collected.append(
+                    {
+                        "key": "h2h",
+                        "outcomes": [
+                            {"name": home_team, "price": home_outcome["price"]},
+                            {"name": away_team, "price": away_outcome["price"]},
+                        ],
+                    }
+                )
+            else:
+                collected.append(
+                    {
+                        "key": "h2h",
+                        "outcomes": outcomes,
+                    }
+                )
+        return collected
+
+    if home_token in yes_by_team and away_token in yes_by_team:
+        if "h2h" in requested_markets and not has_draw_prompt:
+            collected.append(
+                {
+                    "key": "h2h",
+                    "outcomes": [
+                        {"name": home_team, "price": yes_by_team[home_token]},
+                        {"name": away_team, "price": yes_by_team[away_token]},
+                    ],
+                }
+            )
+        if "h2h_3_way" in requested_markets and draw_yes_odds is not None:
+            collected.append(
+                {
+                    "key": "h2h_3_way",
+                    "outcomes": [
+                        {"name": home_team, "price": yes_by_team[home_token]},
+                        {"name": "Draw", "price": draw_yes_odds},
+                        {"name": away_team, "price": yes_by_team[away_token]},
+                    ],
+                }
+            )
+
+    if (
+        {"btts", "both_teams_to_score"} & requested_markets
+        and btts_yes_odds is not None
+        and btts_no_odds is not None
+    ):
+        market_key = "both_teams_to_score" if "both_teams_to_score" in requested_markets else "btts"
+        collected.append(
+            {
+                "key": market_key,
                 "outcomes": [
-                    {"name": home_team, "price": home_outcome["price"]},
-                    {"name": away_team, "price": away_outcome["price"]},
+                    {"name": "Yes", "price": btts_yes_odds},
+                    {"name": "No", "price": btts_no_odds},
                 ],
             }
-        return {
-            "key": "h2h",
-            "outcomes": outcomes,
-        }
-
-    if has_draw_prompt:
-        return None
-    if home_token in yes_by_team and away_token in yes_by_team:
-        return {
-            "key": "h2h",
-            "outcomes": [
-                {"name": home_team, "price": yes_by_team[home_token]},
-                {"name": away_team, "price": yes_by_team[away_token]},
-            ],
-        }
-    return None
+        )
+    return collected
 
 
 def _event_url(event: dict) -> str:
@@ -488,6 +618,7 @@ def _load_active_game_events(
     total_retries = 0
     pages_fetched = 0
     offset = 0
+    now_iso = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     for _page in range(max_pages):
         payload, retries_used = _request_json(
             "events",
@@ -495,6 +626,10 @@ def _load_active_game_events(
                 "tag_id": POLYMARKET_GAME_TAG_ID or "100639",
                 "active": "true",
                 "closed": "false",
+                "archived": "false",
+                "end_date_min": now_iso,
+                "order": "id",
+                "ascending": "false",
                 "limit": page_size,
                 "offset": offset,
             },
@@ -530,6 +665,7 @@ def fetch_events(
         "events_payload_count": 0,
         "events_sports_count": 0,
         "events_sport_filtered_count": 0,
+        "events_status_filtered_count": 0,
         "events_matchup_count": 0,
         "events_with_market_count": 0,
         "events_returned_count": 0,
@@ -539,8 +675,8 @@ def fetch_events(
     }
     fetch_events.last_stats = stats
 
-    supported_markets = {str(item).strip().lower() for item in (markets or []) if str(item).strip()}
-    if "h2h" not in supported_markets:
+    supported_markets = _requested_market_keys(markets)
+    if not ({"h2h", "h2h_3_way", "btts", "both_teams_to_score"} & supported_markets):
         return []
 
     if bookmakers:
@@ -568,6 +704,7 @@ def fetch_events(
     stats["retries_used"] += int(payload_meta.get("retries_used", 0) or 0)
 
     events_out: List[dict] = []
+    now_utc = dt.datetime.now(dt.timezone.utc)
     stats["events_payload_count"] = len(payload)
     for event in payload:
         if not isinstance(event, dict):
@@ -578,6 +715,9 @@ def fetch_events(
         if not _event_matches_sport(event, sport_key, sport_tag_mapping):
             continue
         stats["events_sport_filtered_count"] += 1
+        if not _event_is_tradeable(event, now_utc):
+            stats["events_status_filtered_count"] += 1
+            continue
 
         matchup = _extract_matchup(event)
         if not matchup:
@@ -585,21 +725,32 @@ def fetch_events(
         home_team, away_team = matchup
         stats["events_matchup_count"] += 1
 
-        market_h2h = _pick_two_outcome_market(event, home_team, away_team)
-        if not market_h2h:
+        market_list = _pick_match_markets(
+            event,
+            home_team,
+            away_team,
+            supported_markets,
+            now_utc,
+        )
+        if not market_list:
             continue
         stats["events_with_market_count"] += 1
 
         commence = _normalize_commence_time(
-            event.get("startDate")
-            or event.get("creationDate")
-            or event.get("createdAt")
+            event.get("startTime")
         )
         if not commence:
             commence = _normalize_commence_time(
-                (event.get("markets") or [{}])[0].get("startDate")
+                (event.get("markets") or [{}])[0].get("gameStartTime")
                 if isinstance(event.get("markets"), list) and event.get("markets")
                 else None
+            )
+        if not commence:
+            commence = _normalize_commence_time(
+                event.get("eventDate")
+                or event.get("startDate")
+                or event.get("creationDate")
+                or event.get("createdAt")
             )
         if not commence:
             continue
@@ -621,7 +772,7 @@ def fetch_events(
                         "title": PROVIDER_TITLE,
                         "event_id": event_id,
                         "event_url": _event_url(event),
-                        "markets": [market_h2h],
+                        "markets": market_list,
                     }
                 ],
             }

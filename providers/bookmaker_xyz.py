@@ -49,7 +49,6 @@ BOOKMAKER_XYZ_USER_AGENT = os.getenv(
     ),
 ).strip()
 
-SUPPORTED_MARKETS = {"h2h", "spreads", "totals"}
 DICT_SKIP_TEAM_PLAYER_MARKET_IDS = {"3", "31"}
 
 CHAIN_ID_TO_SLUG = {
@@ -181,6 +180,21 @@ def _normalize_text(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _normalize_market_key(value: object) -> str:
+    token = _normalize_text(value).lower()
+    token = re.sub(r"[^a-z0-9]+", "_", token)
+    return token.strip("_")
+
+
+def _requested_market_keys(markets: Sequence[str]) -> set[str]:
+    requested = {_normalize_market_key(item) for item in (markets or []) if _normalize_market_key(item)}
+    if "both_teams_to_score" in requested:
+        requested.add("btts")
+    if "btts" in requested:
+        requested.add("both_teams_to_score")
+    return requested
 
 
 def _safe_float(value) -> Optional[float]:
@@ -652,6 +666,38 @@ def _market_score(market: dict) -> float:
     return score
 
 
+def _condition_market_aliases(market_meta: dict) -> List[str]:
+    aliases: List[str] = []
+    market_id = _normalize_text(market_meta.get("market_id"))
+    market_name = _normalize_text(market_meta.get("market_name"))
+    market_key = _normalize_text(market_meta.get("market_key"))
+
+    for token in (market_key, market_name, market_id):
+        key = _normalize_market_key(token)
+        if key:
+            aliases.append(key)
+
+    market_name_lc = market_name.lower()
+    if market_id in {"1", "19", "20", "21"} or any(
+        token in market_name_lc for token in ("winner", "full time result", "match winner")
+    ):
+        aliases.append("h2h")
+    if "handicap" in market_name_lc:
+        aliases.append("spreads")
+    if any(token in market_name_lc for token in ("total", "over/under", "over under")):
+        aliases.append("totals")
+    if "both teams to score" in market_name_lc or "btts" in market_name_lc:
+        aliases.extend(["btts", "both_teams_to_score"])
+
+    out: List[str] = []
+    seen = set()
+    for alias in aliases:
+        if alias and alias not in seen:
+            out.append(alias)
+            seen.add(alias)
+    return out
+
+
 def _normalize_condition_market(
     condition: dict,
     home_team: str,
@@ -699,6 +745,7 @@ def _normalize_condition_market(
         selection_label = _normalize_text(_dict_get(selections, selection_id))
         if not selection_label:
             selection_label = _normalize_text(raw_outcome.get("title"))
+        base_selection_label = selection_label
         team_player_label = _normalize_text(_dict_get(team_players, team_player_id))
         if team_player_label and market_id in DICT_SKIP_TEAM_PLAYER_MARKET_IDS:
             selection_label = team_player_label
@@ -713,6 +760,7 @@ def _normalize_condition_market(
                 "outcome_id": outcome_id,
                 "price": round(float(price), 6),
                 "selection_label": selection_label,
+                "selection_base_label": base_selection_label,
                 "selection_name": selection_name,
                 "point": point_value,
                 "sort_order": _safe_float(raw_outcome.get("sortOrder")),
@@ -794,6 +842,36 @@ def _normalize_condition_market(
                         {"name": "Under", "price": by_selection["Under"]["price"], "point": point},
                     ],
                 }
+
+    dynamic_key = None
+    for alias in _condition_market_aliases(market_meta):
+        if alias in {"h2h", "spreads", "totals"}:
+            continue
+        if alias in requested_markets:
+            dynamic_key = alias
+            break
+    if dynamic_key and len(parsed_outcomes) == 2:
+        if dynamic_key == "btts":
+            dynamic_key = (
+                "both_teams_to_score" if "both_teams_to_score" in requested_markets else "btts"
+            )
+        dynamic_outcomes = []
+        for index, item in enumerate(parsed_outcomes[:2]):
+            name = _normalize_text(
+                item.get("selection_base_label")
+                or item.get("selection_label")
+                or item.get("selection_name")
+            )
+            if not name:
+                name = f"Outcome {index + 1}"
+            row = {"name": name, "price": item["price"]}
+            point = item.get("point")
+            if point is not None:
+                row["point"] = round(float(point), 6)
+            if market_name:
+                row["description"] = _normalize_text(market_meta.get("market_name"))
+            dynamic_outcomes.append(row)
+        return {"key": dynamic_key, "outcomes": dynamic_outcomes}
 
     return None
 
@@ -981,9 +1059,7 @@ def fetch_events(
     }
     fetch_events.last_stats = stats
 
-    requested_markets = {
-        _normalize_text(item).lower() for item in (markets or []) if _normalize_text(item).lower() in SUPPORTED_MARKETS
-    }
+    requested_markets = _requested_market_keys(markets)
     if not requested_markets:
         return []
 

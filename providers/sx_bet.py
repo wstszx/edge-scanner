@@ -214,6 +214,276 @@ def _safe_float(value) -> Optional[float]:
         return None
 
 
+def _normalize_token(value: object) -> str:
+    text = _normalize_text(value).lower()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalize_market_key(value: object) -> str:
+    token = _normalize_text(value).lower()
+    token = re.sub(r"[^a-z0-9]+", "_", token)
+    return token.strip("_")
+
+
+def _requested_market_keys(markets: Sequence[str]) -> set[str]:
+    requested = {_normalize_market_key(item) for item in (markets or []) if _normalize_market_key(item)}
+    if "both_teams_to_score" in requested:
+        requested.add("btts")
+    if "btts" in requested:
+        requested.add("both_teams_to_score")
+    return requested
+
+
+def _market_signature(market: dict) -> str:
+    key = _normalize_text(market.get("key"))
+    outcomes = market.get("outcomes") if isinstance(market.get("outcomes"), list) else []
+    parts: List[str] = []
+    for outcome in outcomes:
+        if not isinstance(outcome, dict):
+            continue
+        name = _normalize_token(outcome.get("name"))
+        point = _safe_float(outcome.get("point"))
+        if point is None:
+            parts.append(name)
+        else:
+            parts.append(f"{name}:{point:.6f}")
+    return f"{key}:{'|'.join(sorted(parts))}"
+
+
+def _market_score(market: dict) -> float:
+    outcomes = market.get("outcomes") if isinstance(market.get("outcomes"), list) else []
+    prices = [float(item.get("price")) for item in outcomes if _safe_float(item.get("price"))]
+    if len(prices) < 2:
+        return 0.0
+    return min(prices)
+
+
+def _parse_number(value: object) -> Optional[float]:
+    if isinstance(value, (int, float)):
+        return _safe_float(value)
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", _normalize_text(value))
+    if not match:
+        return None
+    return _safe_float(match.group(0))
+
+
+def _parse_number_pair(value: object) -> Tuple[Optional[float], Optional[float]]:
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        return _safe_float(value[0]), _safe_float(value[1])
+    parts = re.findall(r"[-+]?\d+(?:\.\d+)?", _normalize_text(value))
+    if len(parts) < 2:
+        return None, None
+    return _safe_float(parts[0]), _safe_float(parts[1])
+
+
+def _spread_name_point(value: object) -> Tuple[str, Optional[float]]:
+    label = _normalize_text(value)
+    if not label:
+        return "", None
+    match = re.match(r"^(.*?)([-+]\d+(?:\.\d+)?)$", label)
+    if match:
+        return _normalize_text(match.group(1)), _safe_float(match.group(2))
+    return label, _parse_number(label)
+
+
+def _total_side_point(value: object) -> Tuple[Optional[str], Optional[float]]:
+    label = _normalize_text(value)
+    if not label:
+        return None, None
+    lower = label.lower()
+    side: Optional[str] = None
+    if lower.startswith("over"):
+        side = "Over"
+    elif lower.startswith("under"):
+        side = "Under"
+    return side, _parse_number(label)
+
+
+def _market_type_aliases(market: dict) -> List[str]:
+    raw_type = _normalize_text(market.get("marketType") or market.get("type")).upper()
+    raw_name = _normalize_text(market.get("marketName") or market.get("name"))
+    aliases: List[str] = []
+
+    for raw in (raw_type, raw_name):
+        key = _normalize_market_key(raw)
+        if key:
+            aliases.append(key)
+
+    type_lc = raw_type.lower()
+    name_lc = raw_name.lower()
+
+    if any(token in type_lc for token in ("money_line", "moneyline", "match_odds", "h2h")) or any(
+        token in name_lc for token in ("moneyline", "match winner", "winner", "to win")
+    ):
+        aliases.append("h2h")
+    if any(token in type_lc for token in ("spread", "handicap")) or any(
+        token in name_lc for token in ("spread", "handicap")
+    ):
+        aliases.append("spreads")
+    if any(token in type_lc for token in ("total", "over_under", "overunder")) or any(
+        token in name_lc for token in ("total", "over/under", "over under")
+    ):
+        aliases.append("totals")
+    if "btts" in type_lc or "both teams to score" in name_lc:
+        aliases.extend(["btts", "both_teams_to_score"])
+
+    out: List[str] = []
+    seen = set()
+    for alias in aliases:
+        if alias and alias not in seen:
+            out.append(alias)
+            seen.add(alias)
+    return out
+
+
+def _market_value_pair(market: dict) -> Tuple[Optional[float], Optional[float]]:
+    for key in ("marketValue", "value", "marketLine", "line", "handicap", "spread"):
+        if key not in market:
+            continue
+        left, right = _parse_number_pair(market.get(key))
+        if left is not None and right is not None:
+            return left, right
+    return None, None
+
+
+def _market_value_single(market: dict) -> Optional[float]:
+    for key in ("marketValue", "value", "marketLine", "line", "handicap", "spread", "total", "point"):
+        if key not in market:
+            continue
+        parsed = _parse_number(market.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _normalize_fixture_market(
+    market: dict,
+    requested_markets: set[str],
+    home_team: str,
+    away_team: str,
+) -> Optional[dict]:
+    if not isinstance(market, dict):
+        return None
+
+    target_market_key = None
+    for alias in _market_type_aliases(market):
+        if alias in requested_markets:
+            target_market_key = alias
+            break
+    if not target_market_key:
+        return None
+    if target_market_key == "btts":
+        target_market_key = (
+            "both_teams_to_score" if "both_teams_to_score" in requested_markets else "btts"
+        )
+
+    odds_one = _moneyline_decimal_from_summary(market.get("bestOddsOutcomeOne"))
+    odds_two = _moneyline_decimal_from_summary(market.get("bestOddsOutcomeTwo"))
+    market_hash = _normalize_text(market.get("marketHash"))
+    outcome_one_label = _normalize_text(market.get("outcomeOneName")) or home_team
+    outcome_two_label = _normalize_text(market.get("outcomeTwoName")) or away_team
+    home_token = _normalize_token(home_team)
+    away_token = _normalize_token(away_team)
+    label_one_token = _normalize_token(outcome_one_label)
+    label_two_token = _normalize_token(outcome_two_label)
+
+    description = _normalize_text(market.get("marketName") or market.get("name"))
+    if not description:
+        description = _normalize_text(market.get("marketType") or market.get("type"))
+
+    candidate = {
+        "market_key": target_market_key,
+        "market_hash": market_hash,
+        "odds_one": odds_one,
+        "odds_two": odds_two,
+        "description": description,
+        "outcome_one_name": outcome_one_label,
+        "outcome_two_name": outcome_two_label,
+        "outcome_one_point": None,
+        "outcome_two_point": None,
+    }
+
+    if target_market_key == "h2h":
+        if "draw" in {label_one_token, label_two_token}:
+            return None
+        if label_one_token == away_token and label_two_token == home_token:
+            candidate["outcome_one_name"] = away_team
+            candidate["outcome_two_name"] = home_team
+        elif label_one_token == home_token and label_two_token == away_token:
+            candidate["outcome_one_name"] = home_team
+            candidate["outcome_two_name"] = away_team
+        else:
+            candidate["outcome_one_name"] = home_team
+            candidate["outcome_two_name"] = away_team
+        return candidate
+
+    if target_market_key == "spreads":
+        name_one, point_one = _spread_name_point(outcome_one_label)
+        name_two, point_two = _spread_name_point(outcome_two_label)
+        value_one, value_two = _market_value_pair(market)
+        shared = _market_value_single(market)
+        if point_one is None and value_one is not None:
+            point_one = value_one
+        if point_two is None and value_two is not None:
+            point_two = value_two
+        if point_one is None and point_two is None and shared is not None:
+            point_one = shared
+            point_two = -shared
+        if point_one is None or point_two is None:
+            return None
+        if _normalize_token(name_one) == away_token:
+            candidate["outcome_one_name"] = away_team
+        elif _normalize_token(name_one) == home_token:
+            candidate["outcome_one_name"] = home_team
+        else:
+            candidate["outcome_one_name"] = home_team
+        if _normalize_token(name_two) == home_token:
+            candidate["outcome_two_name"] = home_team
+        elif _normalize_token(name_two) == away_token:
+            candidate["outcome_two_name"] = away_team
+        else:
+            candidate["outcome_two_name"] = away_team
+        candidate["outcome_one_point"] = round(float(point_one), 6)
+        candidate["outcome_two_point"] = round(float(point_two), 6)
+        return candidate
+
+    if target_market_key == "totals":
+        side_one, point_one = _total_side_point(outcome_one_label)
+        side_two, point_two = _total_side_point(outcome_two_label)
+        if side_one is None and side_two is None:
+            side_one, side_two = "Over", "Under"
+        elif side_one is None:
+            side_one = "Under" if side_two == "Over" else "Over"
+        elif side_two is None:
+            side_two = "Under" if side_one == "Over" else "Over"
+        if side_one == side_two:
+            return None
+        shared = point_one if point_one is not None else point_two
+        if shared is None:
+            shared = _market_value_single(market)
+        if shared is None:
+            return None
+        total_point = round(float(shared), 6)
+        candidate["outcome_one_name"] = side_one
+        candidate["outcome_two_name"] = side_two
+        candidate["outcome_one_point"] = total_point
+        candidate["outcome_two_point"] = total_point
+        return candidate
+
+    value_one, value_two = _market_value_pair(market)
+    shared = _market_value_single(market)
+    if value_one is not None:
+        candidate["outcome_one_point"] = round(float(value_one), 6)
+    elif shared is not None:
+        candidate["outcome_one_point"] = round(float(shared), 6)
+    if value_two is not None:
+        candidate["outcome_two_point"] = round(float(value_two), 6)
+    elif shared is not None:
+        candidate["outcome_two_point"] = round(float(shared), 6)
+    return candidate
+
+
 def _parse_manual_league_map() -> Dict[str, Set[str]]:
     if not SX_BET_LEAGUE_MAP_RAW:
         return {}
@@ -280,14 +550,17 @@ def _moneyline_decimal_from_summary(value) -> Optional[float]:
 
 def _moneyline_decimal_from_percentage(value) -> Optional[float]:
     """
-    SX orders endpoint returns percentage odds:
-    - 0..1 => probability
-    - 1..100 => percent probability
+    SX odds endpoints can return probabilities in multiple scales:
+    - 0..1 => direct probability
+    - 1..100 => percentage probability
+    - >10000 => 1e20-scaled probability (official orders/odds docs format)
     """
     raw = _safe_float(value)
     if raw is None or raw <= 0:
         return None
-    if raw > 1:
+    if raw > 10000:
+        probability = raw / 1e20
+    elif raw > 1:
         if raw <= 100:
             probability = raw / 100.0
         elif raw <= 10000:
@@ -446,8 +719,8 @@ def fetch_events(
     }
     fetch_events.last_stats = stats
 
-    requested_markets = {str(item).strip().lower() for item in (markets or []) if str(item).strip()}
-    if "h2h" not in requested_markets:
+    requested_markets = _requested_market_keys(markets)
+    if not requested_markets:
         return []
 
     if bookmakers:
@@ -499,37 +772,34 @@ def fetch_events(
         markets_list = fixture.get("markets")
         if not isinstance(markets_list, list):
             continue
-        moneyline = None
+        fixture_event_id = _normalize_text(fixture.get("eventId") or fixture.get("id"))
+        fixture_id = _normalize_text(fixture.get("id") or fixture.get("eventId"))
         for market in markets_list:
-            if not isinstance(market, dict):
+            normalized_market = _normalize_fixture_market(
+                market=market,
+                requested_markets=requested_markets,
+                home_team=team_one,
+                away_team=team_two,
+            )
+            if not normalized_market:
                 continue
-            if _normalize_text(market.get("marketType")).upper() == "MONEY_LINE":
-                moneyline = market
-                break
-        if not isinstance(moneyline, dict):
-            continue
-        stats["fixtures_market_found_count"] += 1
-
-        odds_one = _moneyline_decimal_from_summary(moneyline.get("bestOddsOutcomeOne"))
-        odds_two = _moneyline_decimal_from_summary(moneyline.get("bestOddsOutcomeTwo"))
-        market_hash = _normalize_text(moneyline.get("marketHash"))
-        if (odds_one is None or odds_two is None) and market_hash:
-            unresolved_hashes.append(market_hash)
-
-        candidates.append(
-            {
-                "id": _normalize_text(fixture.get("id") or fixture.get("eventId") or market_hash),
-                "event_id": _normalize_text(fixture.get("eventId") or fixture.get("id") or market_hash),
-                "home_team": team_one,
-                "away_team": team_two,
-                "commence_time": commence,
-                "market_hash": market_hash,
-                "odds_one": odds_one,
-                "odds_two": odds_two,
-                "outcome_one_name": _normalize_text(moneyline.get("outcomeOneName")) or team_one,
-                "outcome_two_name": _normalize_text(moneyline.get("outcomeTwoName")) or team_two,
-            }
-        )
+            stats["fixtures_market_found_count"] += 1
+            market_hash = normalized_market.get("market_hash")
+            if (
+                (normalized_market.get("odds_one") is None or normalized_market.get("odds_two") is None)
+                and market_hash
+            ):
+                unresolved_hashes.append(str(market_hash))
+            candidates.append(
+                {
+                    "id": fixture_id or str(market_hash or ""),
+                    "event_id": fixture_event_id or str(market_hash or ""),
+                    "home_team": team_one,
+                    "away_team": team_two,
+                    "commence_time": commence,
+                    **normalized_market,
+                }
+            )
 
     odds_map: Dict[str, Tuple[Optional[float], Optional[float]]] = {}
     if unresolved_hashes:
@@ -542,8 +812,15 @@ def fetch_events(
             backoff_seconds=backoff,
         )
         stats["retries_used"] += retries_used
+        stats["odds_lookup_resolved"] = sum(
+            1
+            for market_hash in unique_hashes
+            if market_hash in odds_map
+            and odds_map[market_hash][0] is not None
+            and odds_map[market_hash][1] is not None
+        )
 
-    events_out: List[dict] = []
+    events_by_id: Dict[str, dict] = {}
     for candidate in candidates:
         odds_one = candidate.get("odds_one")
         odds_two = candidate.get("odds_two")
@@ -557,41 +834,75 @@ def fetch_events(
             continue
         if odds_one <= 1 or odds_two <= 1:
             continue
-        stats["odds_lookup_resolved"] += 1 if market_hash else 0
 
         event_id = candidate.get("event_id") or candidate.get("id")
         home_team = candidate.get("home_team")
         away_team = candidate.get("away_team")
         if not (event_id and home_team and away_team):
             continue
-        events_out.append(
+        event = events_by_id.setdefault(
+            str(event_id),
             {
                 "id": candidate.get("id") or event_id,
+                "event_id": str(event_id),
                 "sport_key": sport_key,
                 "home_team": home_team,
                 "away_team": away_team,
                 "commence_time": candidate.get("commence_time"),
+                "markets_by_sig": {},
+            },
+        )
+
+        outcomes = [
+            {
+                "name": _normalize_text(candidate.get("outcome_one_name")) or home_team,
+                "price": round(float(odds_one), 6),
+            },
+            {
+                "name": _normalize_text(candidate.get("outcome_two_name")) or away_team,
+                "price": round(float(odds_two), 6),
+            },
+        ]
+        point_one = _safe_float(candidate.get("outcome_one_point"))
+        point_two = _safe_float(candidate.get("outcome_two_point"))
+        if point_one is not None:
+            outcomes[0]["point"] = round(float(point_one), 6)
+        if point_two is not None:
+            outcomes[1]["point"] = round(float(point_two), 6)
+
+        description = _normalize_text(candidate.get("description"))
+        if description and candidate.get("market_key") not in {"h2h", "spreads", "totals"}:
+            outcomes[0]["description"] = description
+            outcomes[1]["description"] = description
+
+        market_payload = {
+            "key": _normalize_text(candidate.get("market_key")).lower(),
+            "outcomes": outcomes,
+        }
+        signature = _market_signature(market_payload)
+        previous = event["markets_by_sig"].get(signature)
+        if previous is None or _market_score(market_payload) > _market_score(previous):
+            event["markets_by_sig"][signature] = market_payload
+
+    events_out: List[dict] = []
+    for event in events_by_id.values():
+        market_list = list(event.get("markets_by_sig", {}).values())
+        if not market_list:
+            continue
+        events_out.append(
+            {
+                "id": event["id"],
+                "sport_key": sport_key,
+                "home_team": event["home_team"],
+                "away_team": event["away_team"],
+                "commence_time": event["commence_time"],
                 "bookmakers": [
                     {
                         "key": PROVIDER_KEY,
                         "title": PROVIDER_TITLE,
-                        "event_id": event_id,
-                        "event_url": _event_url(event_id),
-                        "markets": [
-                            {
-                                "key": "h2h",
-                                "outcomes": [
-                                    {
-                                        "name": home_team,
-                                        "price": round(float(odds_one), 6),
-                                    },
-                                    {
-                                        "name": away_team,
-                                        "price": round(float(odds_two), 6),
-                                    },
-                                ],
-                            }
-                        ],
+                        "event_id": event["event_id"],
+                        "event_url": _event_url(event["event_id"]),
+                        "markets": market_list,
                     }
                 ],
             }

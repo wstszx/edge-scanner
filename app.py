@@ -208,6 +208,7 @@ def index() -> str:
         default_theme=DEFAULT_THEME,
         default_language=DEFAULT_LANGUAGE,
         default_all_sports=DEFAULT_ALL_SPORTS,
+        default_all_markets=ENV_ALL_MARKETS,
         kelly_options=KELLY_OPTIONS,
         bookmaker_links=BOOKMAKER_URLS,
     )

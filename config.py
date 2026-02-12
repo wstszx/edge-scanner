@@ -178,6 +178,7 @@ MAX_MIDDLE_PROBABILITY = 0.35
 SPORT_DISPLAY_NAMES = {
     "americanfootball_nfl": "NFL",
     "basketball_nba": "NBA",
+    "basketball_ncaab": "NCAAB",
     "baseball_mlb": "MLB",
     "icehockey_nhl": "NHL",
     "soccer_epl": "Premier League",
@@ -191,6 +192,7 @@ SPORT_DISPLAY_NAMES = {
 AMERICAN_SPORTS = {
     "americanfootball_nfl",
     "basketball_nba",
+    "basketball_ncaab",
     "baseball_mlb",
     "icehockey_nhl",
 }
@@ -207,6 +209,7 @@ SOCCER_SPORTS = {
 _DEFAULT_SPORT_KEYS = [
     "americanfootball_nfl",
     "basketball_nba",
+    "basketball_ncaab",
     "baseball_mlb",
     "icehockey_nhl",
     "soccer_epl",

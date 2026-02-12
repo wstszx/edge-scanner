@@ -143,6 +143,21 @@ def _normalize_text(value: object) -> str:
     return str(value).strip()
 
 
+def _normalize_market_key(value: object) -> str:
+    token = _normalize_text(value).lower()
+    token = re.sub(r"[^a-z0-9]+", "_", token)
+    return token.strip("_")
+
+
+def _requested_market_keys(markets: Sequence[str]) -> set[str]:
+    requested = {_normalize_market_key(item) for item in (markets or []) if _normalize_market_key(item)}
+    if "both_teams_to_score" in requested:
+        requested.add("btts")
+    if "btts" in requested:
+        requested.add("both_teams_to_score")
+    return requested
+
+
 def _safe_float(value) -> Optional[float]:
     try:
         return float(value)
@@ -195,6 +210,30 @@ def _decimal_odds_from_value(value) -> Optional[float]:
         return None
     converted = 1.0 / odd
     return converted if converted > 1 else None
+
+
+def _market_signature(market: dict) -> str:
+    key = _normalize_text(market.get("key"))
+    outcomes = market.get("outcomes") if isinstance(market.get("outcomes"), list) else []
+    parts = [key]
+    for outcome in outcomes:
+        if not isinstance(outcome, dict):
+            continue
+        parts.append(_normalize_text(outcome.get("name")))
+        point = outcome.get("point")
+        if point is not None:
+            parts.append(str(point))
+    return "|".join(parts)
+
+
+def _market_score(market: dict) -> float:
+    outcomes = market.get("outcomes") if isinstance(market.get("outcomes"), list) else []
+    score = 0.0
+    for outcome in outcomes:
+        price = _safe_float(outcome.get("price"))
+        if price and price > 1:
+            score += price
+    return score
 
 
 def _curl_get_json(
@@ -365,6 +404,164 @@ def _is_h2h_market(market: dict) -> bool:
     return any(token in market_type for token in ("winner", "money", "h2h", "win"))
 
 
+def _market_aliases(market: dict) -> List[str]:
+    aliases: List[str] = []
+    market_type = _normalize_text(
+        market.get("type") or market.get("marketType") or market.get("typeName")
+    )
+    market_name = _normalize_text(
+        market.get("marketName") or market.get("name") or market.get("label")
+    )
+    for raw in (market_type, market_name):
+        key = _normalize_market_key(raw)
+        if key:
+            aliases.append(key)
+
+    market_type_lc = market_type.lower()
+    market_name_lc = market_name.lower()
+    if _is_h2h_market(market):
+        aliases.append("h2h")
+    if any(token in market_type_lc for token in ("spread", "handicap")) or any(
+        token in market_name_lc for token in ("spread", "handicap")
+    ):
+        aliases.append("spreads")
+    if any(token in market_type_lc for token in ("total", "over_under", "overunder")) or any(
+        token in market_name_lc for token in ("total", "over/under", "over under")
+    ):
+        aliases.append("totals")
+    if "btts" in market_type_lc or "both teams to score" in market_name_lc:
+        aliases.extend(["btts", "both_teams_to_score"])
+
+    out: List[str] = []
+    seen = set()
+    for alias in aliases:
+        if alias and alias not in seen:
+            out.append(alias)
+            seen.add(alias)
+    return out
+
+
+def _market_point_value(market: dict) -> Optional[float]:
+    for key in ("line", "marketValue", "value", "handicap", "spread", "total", "point"):
+        if key not in market:
+            continue
+        raw = market.get(key)
+        if isinstance(raw, (int, float)):
+            parsed = _safe_float(raw)
+            if parsed is not None:
+                return parsed
+        match = re.search(r"[-+]?\d+(?:\.\d+)?", _normalize_text(raw))
+        if match:
+            parsed = _safe_float(match.group(0))
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def _market_option_names(market: dict) -> Optional[Tuple[str, str]]:
+    for key in ("options", "positions", "outcomes", "sides"):
+        options = market.get(key)
+        if not isinstance(options, list) or len(options) < 2:
+            continue
+        names: List[str] = []
+        for item in options[:2]:
+            if isinstance(item, dict):
+                name = _normalize_text(
+                    item.get("name") or item.get("label") or item.get("title") or item.get("outcome")
+                )
+            else:
+                name = _normalize_text(item)
+            names.append(name)
+        if names[0] and names[1]:
+            return names[0], names[1]
+    return None
+
+
+def _build_market(
+    row: dict,
+    requested_markets: set[str],
+    home_team: str,
+    away_team: str,
+) -> Optional[dict]:
+    target_market = None
+    for alias in _market_aliases(row):
+        if alias in requested_markets:
+            target_market = alias
+            break
+    if not target_market:
+        return None
+    if target_market == "btts":
+        target_market = (
+            "both_teams_to_score" if "both_teams_to_score" in requested_markets else "btts"
+        )
+
+    odds_raw = row.get("odds")
+    if not isinstance(odds_raw, list) or len(odds_raw) < 2:
+        return None
+    odd_one = _decimal_odds_from_value(odds_raw[0])
+    odd_two = _decimal_odds_from_value(odds_raw[1])
+    if odd_one is None or odd_two is None or odd_one <= 1 or odd_two <= 1:
+        return None
+
+    if target_market == "h2h":
+        if len(odds_raw) != 2:
+            return None
+        return {
+            "key": "h2h",
+            "outcomes": [
+                {"name": home_team, "price": round(float(odd_one), 6)},
+                {"name": away_team, "price": round(float(odd_two), 6)},
+            ],
+        }
+
+    point = _market_point_value(row)
+    if target_market == "spreads":
+        if point is None:
+            return None
+        value = round(float(point), 6)
+        return {
+            "key": "spreads",
+            "outcomes": [
+                {"name": home_team, "price": round(float(odd_one), 6), "point": value},
+                {"name": away_team, "price": round(float(odd_two), 6), "point": round(-value, 6)},
+            ],
+        }
+
+    if target_market == "totals":
+        if point is None:
+            return None
+        value = round(float(point), 6)
+        return {
+            "key": "totals",
+            "outcomes": [
+                {"name": "Over", "price": round(float(odd_one), 6), "point": value},
+                {"name": "Under", "price": round(float(odd_two), 6), "point": value},
+            ],
+        }
+
+    option_names = _market_option_names(row)
+    outcome_one_name = option_names[0] if option_names else "Outcome 1"
+    outcome_two_name = option_names[1] if option_names else "Outcome 2"
+    description = _normalize_text(
+        row.get("marketName") or row.get("name") or row.get("type") or row.get("typeName")
+    )
+    dynamic = {
+        "key": target_market,
+        "outcomes": [
+            {"name": outcome_one_name, "price": round(float(odd_one), 6)},
+            {"name": outcome_two_name, "price": round(float(odd_two), 6)},
+        ],
+    }
+    if point is not None:
+        value = round(float(point), 6)
+        dynamic["outcomes"][0]["point"] = value
+        dynamic["outcomes"][1]["point"] = value
+    if description:
+        dynamic["outcomes"][0]["description"] = description
+        dynamic["outcomes"][1]["description"] = description
+    return dynamic
+
+
 def _event_url(game_id: object) -> str:
     raw = _normalize_text(game_id)
     if not raw:
@@ -439,8 +636,8 @@ def fetch_events(
     }
     fetch_events.last_stats = stats
 
-    requested_markets = {str(item).strip().lower() for item in (markets or []) if str(item).strip()}
-    if "h2h" not in requested_markets:
+    requested_markets = _requested_market_keys(markets)
+    if not requested_markets:
         return []
     if bookmakers:
         lowered = {str(book).strip().lower() for book in bookmakers if isinstance(book, str)}
@@ -478,28 +675,22 @@ def fetch_events(
         if not _market_matches_sport(row, sport_key, manual_league_map):
             continue
         stats["events_sport_filtered_count"] += 1
-        if not _is_h2h_market(row):
-            continue
-        stats["events_h2h_candidates_count"] += 1
-
-        odds_raw = row.get("odds")
-        if not isinstance(odds_raw, list) or len(odds_raw) < 2:
-            continue
-        if len(odds_raw) != 2:
-            # Skip 3-way markets (draw) to avoid invalid two-way arbitrage math.
-            continue
-        odd_home = _decimal_odds_from_value(odds_raw[0])
-        odd_away = _decimal_odds_from_value(odds_raw[1])
-        if odd_home is None or odd_away is None:
-            continue
-        if odd_home <= 1 or odd_away <= 1:
-            continue
-        stats["events_with_odds_count"] += 1
-
         home_team = _normalize_text(row.get("homeTeam"))
         away_team = _normalize_text(row.get("awayTeam"))
         if not (home_team and away_team):
             continue
+
+        market_payload = _build_market(
+            row=row,
+            requested_markets=requested_markets,
+            home_team=home_team,
+            away_team=away_team,
+        )
+        if not market_payload:
+            continue
+        if market_payload.get("key") == "h2h":
+            stats["events_h2h_candidates_count"] += 1
+        stats["events_with_odds_count"] += 1
 
         event_id = _normalize_text(row.get("gameId") or row.get("id"))
         if not event_id:
@@ -509,35 +700,47 @@ def fetch_events(
             continue
 
         current = events_by_id.get(event_id)
-        if current is not None:
+        if current is None:
+            current = {
+                "id": event_id,
+                "sport_key": sport_key,
+                "home_team": home_team,
+                "away_team": away_team,
+                "commence_time": commence,
+                "event_id": event_id,
+                "event_url": _event_url(event_id),
+                "markets_by_sig": {},
+            }
+            events_by_id[event_id] = current
+
+        signature = _market_signature(market_payload)
+        previous = current["markets_by_sig"].get(signature)
+        if previous is None or _market_score(market_payload) > _market_score(previous):
+            current["markets_by_sig"][signature] = market_payload
+
+    events_out = []
+    for event in events_by_id.values():
+        market_list = list(event.get("markets_by_sig", {}).values())
+        if not market_list:
             continue
-
-        events_by_id[event_id] = {
-            "id": event_id,
-            "sport_key": sport_key,
-            "home_team": home_team,
-            "away_team": away_team,
-            "commence_time": commence,
-            "bookmakers": [
-                {
-                    "key": PROVIDER_KEY,
-                    "title": PROVIDER_TITLE,
-                    "event_id": event_id,
-                    "event_url": _event_url(event_id),
-                    "markets": [
-                        {
-                            "key": "h2h",
-                            "outcomes": [
-                                {"name": home_team, "price": round(float(odd_home), 6)},
-                                {"name": away_team, "price": round(float(odd_away), 6)},
-                            ],
-                        }
-                    ],
-                }
-            ],
-        }
-
-    events_out = list(events_by_id.values())
+        events_out.append(
+            {
+                "id": event["id"],
+                "sport_key": sport_key,
+                "home_team": event["home_team"],
+                "away_team": event["away_team"],
+                "commence_time": event["commence_time"],
+                "bookmakers": [
+                    {
+                        "key": PROVIDER_KEY,
+                        "title": PROVIDER_TITLE,
+                        "event_id": event["event_id"],
+                        "event_url": event["event_url"],
+                        "markets": market_list,
+                    }
+                ],
+            }
+        )
     stats["events_returned_count"] = len(events_out)
     fetch_events.last_stats = stats
     return events_out

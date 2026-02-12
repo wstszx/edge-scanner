@@ -60,7 +60,104 @@ from providers import PROVIDER_FETCHERS, PROVIDER_TITLES, resolve_provider_key
 
 BASE_URL = "https://api.the-odds-api.com/v4"
 MIDDLE_MARKETS = {"spreads", "totals"}
-ALLOWED_PLUS_EV_MARKETS = {"h2h", "spreads", "totals"}
+ODDS_API_ALL_MARKETS_RAW = os.getenv("ODDS_API_ALL_MARKETS", "").strip()
+ODDS_API_MARKET_BATCH_SIZE_RAW = os.getenv("ODDS_API_MARKET_BATCH_SIZE", "8").strip()
+ODDS_API_INVALID_MARKET_STATUS_CODES = {400, 422}
+CUSTOM_PROVIDER_SNAPSHOT_ENABLED = os.getenv(
+    "CUSTOM_PROVIDER_SNAPSHOT_ENABLED", "1"
+).strip().lower() not in {"0", "false", "no", "off"}
+CUSTOM_PROVIDER_SNAPSHOT_DIR = os.getenv(
+    "CUSTOM_PROVIDER_SNAPSHOT_DIR",
+    str(Path("data") / "provider_snapshots"),
+).strip()
+
+COMMON_EXTRA_MARKETS = [
+    "h2h_lay",
+    "h2h_3_way",
+    "alternate_spreads",
+    "alternate_totals",
+    "spreads_h1",
+    "spreads_h2",
+    "totals_h1",
+    "totals_h2",
+    "spreads_q1",
+    "spreads_q2",
+    "spreads_q3",
+    "spreads_q4",
+    "totals_q1",
+    "totals_q2",
+    "totals_q3",
+    "totals_q4",
+    "team_totals",
+    "team_totals_h1",
+    "team_totals_h2",
+]
+
+FOOTBALL_EXTRA_MARKETS = [
+    "h2h_q1",
+    "h2h_q2",
+    "h2h_q3",
+    "h2h_q4",
+    "h2h_h1",
+    "h2h_h2",
+    "player_pass_tds",
+    "player_pass_yds",
+    "player_pass_completions",
+    "player_pass_attempts",
+    "player_pass_interceptions",
+    "player_rush_yds",
+    "player_rush_attempts",
+    "player_receptions",
+    "player_reception_yds",
+    "player_anytime_td",
+    "player_first_td",
+]
+
+BASKETBALL_EXTRA_MARKETS = [
+    "player_points",
+    "player_rebounds",
+    "player_assists",
+    "player_threes",
+    "player_blocks",
+    "player_steals",
+    "player_turnovers",
+    "player_points_rebounds_assists",
+    "player_points_rebounds",
+    "player_points_assists",
+    "player_rebounds_assists",
+]
+
+BASEBALL_EXTRA_MARKETS = [
+    "pitcher_strikeouts",
+    "pitcher_outs",
+    "pitcher_hits_allowed",
+    "pitcher_walks",
+    "pitcher_earned_runs",
+    "batter_hits",
+    "batter_total_bases",
+    "batter_rbis",
+    "batter_runs_scored",
+    "batter_home_runs",
+]
+
+HOCKEY_EXTRA_MARKETS = [
+    "player_points",
+    "player_assists",
+    "player_goals",
+    "player_shots_on_goal",
+    "player_blocks",
+    "player_power_play_points",
+    "player_goal_scorer_anytime",
+]
+
+SOCCER_EXTRA_MARKETS = [
+    "h2h",
+    "h2h_3_way",
+    "draw_no_bet",
+    "double_chance",
+    "both_teams_to_score",
+    "team_totals",
+]
 SOFT_BOOK_KEY_SET = set(SOFT_BOOK_KEYS)
 SHARP_BOOK_MAP = {book["key"]: book for book in SHARP_BOOKS}
 PUREBET_BOOK_KEY = "purebet"
@@ -97,6 +194,7 @@ PUREBET_LEAGUE_SYNC_ENABLED = os.getenv(
 ).strip().lower() not in {"0", "false", "no", "off"}
 PUREBET_LEAGUE_SYNC_TTL_RAW = os.getenv("PUREBET_LEAGUE_SYNC_TTL", "600").strip()
 EVENT_TIME_TOLERANCE_MINUTES = os.getenv("EVENT_TIME_TOLERANCE_MINUTES", "15").strip()
+EVENT_MAX_PAST_MINUTES_RAW = os.getenv("EVENT_MAX_PAST_MINUTES", "30").strip()
 PUREBET_DEFAULT_LEAGUE_MAP = {
     487: "basketball_nba",
     493: "basketball_ncaab",
@@ -127,6 +225,53 @@ class ScannerError(Exception):
 
 def _iso_now() -> str:
     return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _provider_snapshot_filename(provider_key: object) -> str:
+    token = re.sub(r"[^a-z0-9._-]+", "_", str(provider_key or "").strip().lower())
+    return token or "provider"
+
+
+def _persist_provider_snapshots(scan_time: str, snapshots: Dict[str, dict]) -> Dict[str, str]:
+    saved_paths: Dict[str, str] = {}
+    if not CUSTOM_PROVIDER_SNAPSHOT_ENABLED:
+        return saved_paths
+    if not CUSTOM_PROVIDER_SNAPSHOT_DIR:
+        return saved_paths
+    if not snapshots:
+        return saved_paths
+    try:
+        target_dir = Path(CUSTOM_PROVIDER_SNAPSHOT_DIR)
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return saved_paths
+
+    for provider_key, payload in snapshots.items():
+        if not isinstance(payload, dict):
+            continue
+        path = target_dir / f"{_provider_snapshot_filename(provider_key)}.json"
+        tmp_path = path.with_suffix(".json.tmp")
+        document = {
+            "saved_at": scan_time,
+            "provider_key": provider_key,
+            "provider_name": payload.get("provider_name")
+            or PROVIDER_TITLES.get(str(provider_key), str(provider_key)),
+            "sports": payload.get("sports") if isinstance(payload.get("sports"), list) else [],
+            "events": payload.get("events") if isinstance(payload.get("events"), list) else [],
+        }
+        try:
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                json.dump(document, handle, ensure_ascii=False, indent=2)
+            tmp_path.replace(path)
+            saved_paths[str(provider_key)] = str(path)
+        except OSError:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
+            continue
+    return saved_paths
 
 
 def _resolve_purebet_enabled(value: Optional[bool]) -> bool:
@@ -222,6 +367,321 @@ def _clamp_commission(rate: float) -> float:
     if rate is None:
         return DEFAULT_COMMISSION
     return max(0.0, min(rate, 0.2))
+
+
+def _parse_token_list(raw: str) -> List[str]:
+    if not raw:
+        return []
+    if raw.startswith("["):
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            payload = None
+        if isinstance(payload, list):
+            out = []
+            seen = set()
+            for item in payload:
+                token = str(item).strip()
+                if token and token not in seen:
+                    out.append(token)
+                    seen.add(token)
+            return out
+    out = []
+    seen = set()
+    for token in re.split(r"[,\s]+", raw):
+        cleaned = token.strip()
+        if cleaned and cleaned not in seen:
+            out.append(cleaned)
+            seen.add(cleaned)
+    return out
+
+
+def _odds_api_market_batch_size() -> int:
+    try:
+        return max(1, int(float(ODDS_API_MARKET_BATCH_SIZE_RAW)))
+    except (TypeError, ValueError):
+        return 8
+
+
+def _default_all_markets_for_sport(sport_key: str) -> List[str]:
+    if sport_key.startswith("americanfootball_"):
+        return COMMON_EXTRA_MARKETS + FOOTBALL_EXTRA_MARKETS
+    if sport_key.startswith("basketball_"):
+        return COMMON_EXTRA_MARKETS + BASKETBALL_EXTRA_MARKETS
+    if sport_key.startswith("baseball_"):
+        return COMMON_EXTRA_MARKETS + BASEBALL_EXTRA_MARKETS
+    if sport_key.startswith("icehockey_"):
+        return COMMON_EXTRA_MARKETS + HOCKEY_EXTRA_MARKETS
+    if sport_key.startswith("soccer_"):
+        return COMMON_EXTRA_MARKETS + SOCCER_EXTRA_MARKETS
+    return COMMON_EXTRA_MARKETS.copy()
+
+
+def _requested_api_markets(
+    sport_key: str,
+    base_markets: Sequence[str],
+    all_markets: bool,
+) -> List[str]:
+    requested: List[str] = []
+    seen = set()
+    for market in base_markets or []:
+        key = str(market).strip()
+        if key and key not in seen:
+            requested.append(key)
+            seen.add(key)
+    if not all_markets:
+        return requested
+
+    configured = _parse_token_list(ODDS_API_ALL_MARKETS_RAW)
+    extras = configured or _default_all_markets_for_sport(sport_key)
+    for market in extras:
+        key = str(market).strip()
+        if key and key not in seen:
+            requested.append(key)
+            seen.add(key)
+
+    # Soccer three-way markets are usually omitted in base defaults; include when full scan is enabled.
+    if sport_key.startswith("soccer_") and "h2h_3_way" not in seen:
+        requested.append("h2h_3_way")
+    return requested
+
+
+def _normalize_requested_sport_keys(sports: Optional[Sequence[str]]) -> List[str]:
+    source = sports or DEFAULT_SPORT_KEYS
+    normalized: List[str] = []
+    seen = set()
+    for item in source:
+        key = _normalize_line_component(item)
+        if not key or key in seen:
+            continue
+        normalized.append(key)
+        seen.add(key)
+    return normalized or list(DEFAULT_SPORT_KEYS)
+
+
+def _provider_requested_markets(
+    sport_key: str,
+    requested_markets: Sequence[str],
+    all_markets: bool,
+) -> List[str]:
+    merged: List[str] = []
+    seen = set()
+    for market in requested_markets or []:
+        key = str(market).strip()
+        if not key or key in seen:
+            continue
+        merged.append(key)
+        seen.add(key)
+    if sport_key.startswith("soccer_"):
+        for extra in ("h2h", "h2h_3_way"):
+            if extra not in seen:
+                merged.append(extra)
+                seen.add(extra)
+        if all_markets:
+            for extra in ("both_teams_to_score",):
+                if extra not in seen:
+                    merged.append(extra)
+                    seen.add(extra)
+    return merged
+
+
+def _sport_stub(sport_key: str) -> dict:
+    return {
+        "key": sport_key,
+        "title": SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
+        "active": True,
+    }
+
+
+def _chunked(values: Sequence[str], size: int) -> List[List[str]]:
+    if size <= 0:
+        size = 1
+    out: List[List[str]] = []
+    for index in range(0, len(values), size):
+        out.append(list(values[index : index + size]))
+    return out
+
+
+def _normalize_line_component(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip().lower()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _outcome_description_token(outcome: dict) -> str:
+    for key in ("description", "participant", "player", "label"):
+        token = _normalize_line_component(outcome.get(key))
+        if token:
+            return token
+    return ""
+
+
+def _safe_point_key(value: object) -> Optional[object]:
+    if value is None:
+        return None
+    numeric = _safe_float(value)
+    if numeric is None:
+        token = _normalize_line_component(value)
+        return token or None
+    return round(float(numeric), 6)
+
+
+def _outcome_signature(outcome: dict) -> Tuple[str, str, Optional[object]]:
+    return (
+        _normalize_line_component(outcome.get("name")),
+        _outcome_description_token(outcome),
+        _safe_point_key(outcome.get("point")),
+    )
+
+
+def _merge_market_outcomes(target_market: dict, incoming_market: dict) -> None:
+    target_outcomes = target_market.get("outcomes")
+    incoming_outcomes = incoming_market.get("outcomes")
+    if not isinstance(incoming_outcomes, list):
+        return
+    if not isinstance(target_outcomes, list):
+        target_market["outcomes"] = [item for item in incoming_outcomes if isinstance(item, dict)]
+        return
+
+    index: Dict[Tuple[str, str, Optional[object]], int] = {}
+    for idx, outcome in enumerate(target_outcomes):
+        if not isinstance(outcome, dict):
+            continue
+        index[_outcome_signature(outcome)] = idx
+
+    for outcome in incoming_outcomes:
+        if not isinstance(outcome, dict):
+            continue
+        signature = _outcome_signature(outcome)
+        existing_index = index.get(signature)
+        if existing_index is None:
+            target_outcomes.append(outcome)
+            index[signature] = len(target_outcomes) - 1
+            continue
+        existing = target_outcomes[existing_index]
+        if not isinstance(existing, dict):
+            target_outcomes[existing_index] = outcome
+            continue
+        existing_price = _safe_float(existing.get("price"))
+        incoming_price = _safe_float(outcome.get("price"))
+        if incoming_price is not None and (
+            existing_price is None or incoming_price > existing_price
+        ):
+            merged = dict(existing)
+            merged.update(outcome)
+            target_outcomes[existing_index] = merged
+            continue
+        merged = dict(outcome)
+        merged.update(existing)
+        target_outcomes[existing_index] = merged
+
+
+def _merge_bookmaker_markets(target_book: dict, incoming_book: dict) -> None:
+    target_markets = target_book.get("markets")
+    incoming_markets = incoming_book.get("markets")
+    if not isinstance(incoming_markets, list):
+        return
+    if not isinstance(target_markets, list):
+        target_book["markets"] = [item for item in incoming_markets if isinstance(item, dict)]
+        return
+
+    market_index: Dict[str, dict] = {}
+    for market in target_markets:
+        if not isinstance(market, dict):
+            continue
+        key = _normalize_line_component(market.get("key"))
+        if key and key not in market_index:
+            market_index[key] = market
+
+    for market in incoming_markets:
+        if not isinstance(market, dict):
+            continue
+        key = _normalize_line_component(market.get("key"))
+        if not key:
+            target_markets.append(market)
+            continue
+        existing = market_index.get(key)
+        if existing is None:
+            target_markets.append(market)
+            market_index[key] = market
+            continue
+        _merge_market_outcomes(existing, market)
+
+
+def _merge_event_bookmakers(target_event: dict, incoming_event: dict) -> None:
+    target_books = target_event.get("bookmakers")
+    incoming_books = incoming_event.get("bookmakers")
+    if not isinstance(incoming_books, list):
+        return
+    if not isinstance(target_books, list):
+        target_event["bookmakers"] = [item for item in incoming_books if isinstance(item, dict)]
+        return
+
+    book_index: Dict[str, dict] = {}
+    for book in target_books:
+        if not isinstance(book, dict):
+            continue
+        key = _normalize_line_component(book.get("key") or book.get("title"))
+        if key and key not in book_index:
+            book_index[key] = book
+
+    for book in incoming_books:
+        if not isinstance(book, dict):
+            continue
+        key = _normalize_line_component(book.get("key") or book.get("title"))
+        if not key:
+            target_books.append(book)
+            continue
+        existing = book_index.get(key)
+        if existing is None:
+            target_books.append(book)
+            book_index[key] = book
+            continue
+        _merge_bookmaker_markets(existing, book)
+
+
+def _event_merge_key(event: dict) -> Optional[Tuple[str, str]]:
+    event_id = str(event.get("id") or "").strip()
+    if event_id:
+        return ("id", event_id)
+    sport_key = _normalize_line_component(event.get("sport_key"))
+    home = _normalize_line_component(event.get("home_team"))
+    away = _normalize_line_component(event.get("away_team"))
+    commence = str(event.get("commence_time") or "").strip()
+    if sport_key and home and away and commence:
+        return ("fixture", f"{sport_key}|{home}|{away}|{commence}")
+    return None
+
+
+def _merge_odds_event_lists(target: List[dict], incoming: List[dict]) -> List[dict]:
+    if not incoming:
+        return target
+    if not target:
+        return list(incoming)
+    event_index: Dict[Tuple[str, str], dict] = {}
+    for event in target:
+        if not isinstance(event, dict):
+            continue
+        key = _event_merge_key(event)
+        if key and key not in event_index:
+            event_index[key] = event
+
+    for event in incoming:
+        if not isinstance(event, dict):
+            continue
+        key = _event_merge_key(event)
+        if key is None:
+            target.append(event)
+            continue
+        existing = event_index.get(key)
+        if existing is None:
+            target.append(event)
+            event_index[key] = event
+            continue
+        _merge_event_bookmakers(existing, event)
+    return target
 
 
 def _purebet_headers() -> Dict[str, str]:
@@ -458,6 +918,38 @@ def _event_time_seconds(event: dict) -> Optional[int]:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=dt.timezone.utc)
     return int(parsed.timestamp())
+
+
+def _event_max_past_seconds() -> int:
+    try:
+        minutes = int(float(EVENT_MAX_PAST_MINUTES_RAW))
+    except (TypeError, ValueError):
+        minutes = 30
+    return max(0, minutes) * 60
+
+
+def _filter_events_for_scan(events: Sequence[dict]) -> Tuple[List[dict], dict]:
+    now_epoch = int(time.time())
+    max_past_seconds = _event_max_past_seconds()
+    min_epoch = now_epoch - max_past_seconds
+    filtered: List[dict] = []
+    dropped_past = 0
+    dropped_missing_time = 0
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_epoch = _event_time_seconds(event)
+        if event_epoch is None:
+            dropped_missing_time += 1
+            continue
+        if event_epoch < min_epoch:
+            dropped_past += 1
+            continue
+        filtered.append(event)
+    return filtered, {
+        "dropped_past": dropped_past,
+        "dropped_missing_time": dropped_missing_time,
+    }
 
 
 def _merge_bookmakers(target: List[dict], incoming: List[dict]) -> None:
@@ -1513,7 +2005,7 @@ def _build_sharp_reference(
     line_map: Dict[Tuple[str, str], List[dict]] = {}
     for market in bookmaker.get("markets", []):
         market_key = market.get("key")
-        if market_key not in ALLOWED_PLUS_EV_MARKETS:
+        if not market_key:
             continue
         for outcome in market.get("outcomes", []):
             price = outcome.get("price")
@@ -1530,7 +2022,7 @@ def _build_sharp_reference(
             line_map.setdefault((market_key, line_key), []).append(
                 {
                     "name": (outcome.get("name") or "").strip().lower(),
-                    "display_name": outcome.get("name") or "",
+                    "display_name": _outcome_display_name(outcome),
                     "price": adjusted_price,
                     "raw_price": price_val,
                     "point": outcome.get("point"),
@@ -1574,7 +2066,7 @@ def _two_way_outcomes(bookmaker: dict) -> Dict[Tuple[str, str], List[dict]]:
     line_map: Dict[Tuple[str, str], List[dict]] = {}
     for market in bookmaker.get("markets", []):
         market_key = market.get("key")
-        if market_key not in ALLOWED_PLUS_EV_MARKETS:
+        if not market_key:
             continue
         for outcome in market.get("outcomes", []):
             price = outcome.get("price")
@@ -1590,7 +2082,7 @@ def _two_way_outcomes(bookmaker: dict) -> Dict[Tuple[str, str], List[dict]]:
             line_map.setdefault((market_key, line_key), []).append(
                 {
                     "name": (outcome.get("name") or "").strip().lower(),
-                    "display_name": outcome.get("name") or "",
+                    "display_name": _outcome_display_name(outcome),
                     "price": display_price,
                     "point": outcome.get("point"),
                 }
@@ -1769,25 +2261,127 @@ def fetch_odds_for_sport(
         raise ScannerError(f"Failed to parse odds for {sport_key}") from exc
 
 
+def _fetch_odds_for_market_batch(
+    api_pool: ApiKeyPool,
+    sport_key: str,
+    markets: Sequence[str],
+    regions: Sequence[str],
+    bookmakers: Optional[Sequence[str]],
+    invalid_markets: List[str],
+) -> List[dict]:
+    if not markets:
+        return []
+    try:
+        return fetch_odds_for_sport(
+            api_pool,
+            sport_key,
+            markets,
+            regions,
+            bookmakers=bookmakers,
+        )
+    except ScannerError as exc:
+        if exc.status_code not in ODDS_API_INVALID_MARKET_STATUS_CODES:
+            raise
+        if len(markets) == 1:
+            invalid_markets.append(markets[0])
+            return []
+        midpoint = len(markets) // 2
+        left = _fetch_odds_for_market_batch(
+            api_pool,
+            sport_key,
+            markets[:midpoint],
+            regions,
+            bookmakers,
+            invalid_markets,
+        )
+        right = _fetch_odds_for_market_batch(
+            api_pool,
+            sport_key,
+            markets[midpoint:],
+            regions,
+            bookmakers,
+            invalid_markets,
+        )
+        return _merge_odds_event_lists(left, right)
+
+
+def fetch_odds_for_sport_multi_market(
+    api_pool: ApiKeyPool,
+    sport_key: str,
+    markets: Sequence[str],
+    regions: Sequence[str],
+    bookmakers: Optional[Sequence[str]] = None,
+) -> Tuple[List[dict], List[str]]:
+    cleaned_markets = []
+    seen = set()
+    for market in markets or []:
+        token = str(market).strip()
+        if token and token not in seen:
+            cleaned_markets.append(token)
+            seen.add(token)
+    if not cleaned_markets:
+        return [], []
+
+    invalid_markets: List[str] = []
+    merged_events: List[dict] = []
+    for batch in _chunked(cleaned_markets, _odds_api_market_batch_size()):
+        batch_events = _fetch_odds_for_market_batch(
+            api_pool,
+            sport_key,
+            batch,
+            regions,
+            bookmakers,
+            invalid_markets,
+        )
+        merged_events = _merge_odds_event_lists(merged_events, batch_events)
+    return merged_events, invalid_markets
+
+
 OutcomeInfo = Dict[str, object]
 LineMap = Dict[str, Dict[str, OutcomeInfo]]
 
 
+def _is_spread_market_key(market_key: object) -> bool:
+    token = _normalize_line_component(market_key)
+    if not token:
+        return False
+    return token == "spreads" or token.startswith("spreads_") or token == "alternate_spreads"
+
+
+def _is_total_market_key(market_key: object) -> bool:
+    token = _normalize_line_component(market_key)
+    if not token:
+        return False
+    return token == "totals" or token.startswith("totals_") or token == "alternate_totals"
+
+
 def _line_key(market: str, outcome: dict) -> Optional[str]:
+    descriptor = _outcome_description_token(outcome)
     if market == "h2h":
-        return "moneyline"
+        return f"moneyline:{descriptor}" if descriptor else "moneyline"
     point = outcome.get("point")
     if point is None:
+        if descriptor:
+            return f"{market}_{descriptor}"
         return f"{market}_nopoint"
     try:
         point_val = float(point)
     except (TypeError, ValueError):
         return None
-    if market == "spreads":
-        return f"spread_{abs(point_val):.2f}"
-    if market == "totals":
-        return f"total_{point_val:.2f}"
-    return f"{market}_{point_val:.2f}"
+    suffix = f":{descriptor}" if descriptor else ""
+    if _is_spread_market_key(market):
+        return f"spread_{abs(point_val):.2f}{suffix}"
+    if _is_total_market_key(market):
+        return f"total_{point_val:.2f}{suffix}"
+    return f"{market}_{point_val:.2f}{suffix}"
+
+
+def _outcome_display_name(outcome: dict) -> str:
+    name = str(outcome.get("name") or "").strip()
+    description = str(outcome.get("description") or "").strip()
+    if name and description:
+        return f"{name} ({description})"
+    return name or description
 
 
 def _record_best_prices(
@@ -1825,8 +2419,11 @@ def _record_best_prices(
                     or outcome.get("liquidity")
                 )
                 entry = lines.setdefault(key, {})
-                name = outcome.get("name", "")
+                name = str(outcome.get("name") or "").strip()
+                if not name:
+                    continue
                 existing = entry.get(name)
+                display_name = _outcome_display_name(outcome)
                 display_price = float(price)
                 is_exchange = bookmaker_key_normalized in EXCHANGE_KEYS
                 effective_price = _apply_commission(display_price, commission_rate, is_exchange)
@@ -1837,6 +2434,8 @@ def _record_best_prices(
                         "bookmaker": bookmaker,
                         "bookmaker_key": bookmaker_key,
                         "name": name,
+                        "display_name": display_name,
+                        "description": outcome.get("description"),
                         "point": normalized_point,
                         "max_stake": stake_value,
                         "is_exchange": is_exchange,
@@ -1877,7 +2476,7 @@ def _collect_market_entries(
         if len(offers) != 2:
             continue
         outcomes = list(offers.values())
-        if market_key == "spreads":
+        if _is_spread_market_key(market_key):
             try:
                 point_values = [float(o.get("point")) for o in outcomes]
             except (TypeError, ValueError):
@@ -1893,7 +2492,7 @@ def _collect_market_entries(
         has_exchange = any(o.get("is_exchange") for o in outcomes)
         outcome_payload = [
             {
-                "outcome": o["name"],
+                "outcome": o.get("display_name") or o["name"],
                 "bookmaker": o["bookmaker"],
                 "bookmaker_key": o.get("bookmaker_key"),
                 "price": o["display_price"],
@@ -1907,6 +2506,10 @@ def _collect_market_entries(
             for o in outcomes
         ]
         net_stake_info = _calculate_stakes(outcomes, stake_total, price_field="effective_price")
+        if _safe_float(net_stake_info.get("guaranteed_profit")) is None:
+            continue
+        if float(net_stake_info.get("guaranteed_profit") or 0.0) <= 0:
+            continue
         gross_stake_info = (
             _calculate_stakes(outcomes, stake_total, price_field="display_price") if has_exchange else None
         )
@@ -2308,7 +2911,7 @@ def _calculate_stakes(outcomes: List[dict], stake_total: float, price_field: str
         payout = round(stake_value * price_used, 2)
         breakdown.append(
             {
-                "outcome": outcome["name"],
+                "outcome": outcome.get("display_name") or outcome["name"],
                 "bookmaker": outcome["bookmaker"],
                 "price": display_price,
                 "effective_price": outcome.get("effective_price", price_used),
@@ -2478,11 +3081,10 @@ def run_scan(
     include_providers: Optional[Sequence[str]] = None,
 ) -> dict:
     api_keys = _normalize_api_keys(api_key)
-    if not api_keys:
-        return {"success": False, "error": "API key is required", "error_code": 400}
     if stake_amount is None or stake_amount <= 0:
         stake_amount = DEFAULT_STAKE_AMOUNT
     all_markets = bool(all_markets)
+    requested_sport_keys = _normalize_requested_sport_keys(sports)
     enabled_provider_keys = _resolve_enabled_provider_keys(include_purebet, include_providers)
     enabled_provider_set = set(enabled_provider_keys)
     normalized_regions = _normalize_regions(regions)
@@ -2495,6 +3097,11 @@ def run_scan(
     if provider_bookmaker_keys:
         enabled_provider_set.update(provider_bookmaker_keys)
         enabled_provider_keys = [key for key in PROVIDER_FETCHERS if key in enabled_provider_set]
+    provider_target_sport_keys = set(requested_sport_keys) if enabled_provider_keys else set()
+    explicit_provider_only = include_providers is not None and not api_bookmakers
+    should_fetch_api = not explicit_provider_only and not (
+        normalized_bookmakers and not api_bookmakers
+    )
     include_purebet = PUREBET_BOOK_KEY in enabled_provider_set
     if not normalized_regions:
         return {
@@ -2502,14 +3109,38 @@ def run_scan(
             "error": "At least one region must be selected",
             "error_code": 400,
         }
+    if should_fetch_api and not api_keys:
+        return {"success": False, "error": "API key is required", "error_code": 400}
+    if not should_fetch_api and not enabled_provider_keys:
+        return {"success": False, "error": "No enabled providers selected", "error_code": 400}
     commission_rate = _clamp_commission(commission_rate)
     api_pool = ApiKeyPool(api_keys)
-    try:
-        sports_list = fetch_sports(api_pool)
-    except ScannerError as exc:
-        return {"success": False, "error": str(exc), "error_code": 500}
+    filtered_api_sports: List[dict] = []
+    api_sports_fetch_error = ""
+    if should_fetch_api:
+        try:
+            sports_list = fetch_sports(api_pool)
+            filtered_api_sports = filter_sports(sports_list, requested_sport_keys, all_sports)
+        except ScannerError as exc:
+            if not enabled_provider_keys:
+                return {"success": False, "error": str(exc), "error_code": 500}
+            api_sports_fetch_error = str(exc)
+            should_fetch_api = False
 
-    filtered = filter_sports(sports_list, sports or DEFAULT_SPORT_KEYS, all_sports)
+    scan_sports_by_key: Dict[str, dict] = {}
+    for sport in filtered_api_sports:
+        if not isinstance(sport, dict):
+            continue
+        sport_key = _normalize_line_component(sport.get("key"))
+        if not sport_key:
+            continue
+        if sport_key not in scan_sports_by_key:
+            scan_sports_by_key[sport_key] = sport
+    for sport_key in requested_sport_keys:
+        if sport_key not in scan_sports_by_key and sport_key in provider_target_sport_keys:
+            scan_sports_by_key[sport_key] = _sport_stub(sport_key)
+    filtered = list(scan_sports_by_key.values())
+
     provider_summaries = {
         key: _empty_provider_summary(key, key in enabled_provider_set)
         for key in PROVIDER_FETCHERS
@@ -2521,6 +3152,8 @@ def run_scan(
         return {
             "success": True,
             "scan_time": _iso_now(),
+            "api_market_skips": [],
+            "provider_snapshot_paths": {},
             "arbitrage": {
                 "opportunities": [],
                 "opportunities_count": 0,
@@ -2549,28 +3182,55 @@ def run_scan(
     arb_opportunities: List[dict] = []
     middle_opportunities: List[dict] = []
     plus_ev_opportunities: List[dict] = []
+    api_market_skips: List[dict] = []
+    provider_snapshots: Dict[str, dict] = {}
     events_scanned = 0
     total_profit = 0.0
     sport_errors: List[dict] = []
+    if api_sports_fetch_error:
+        sport_errors.append(
+            {
+                "sport_key": "odds_api",
+                "sport": "Odds API",
+                "error": f"Failed to load active sports list: {api_sports_fetch_error}",
+            }
+        )
     successful_sports = 0
     sharp_priority = _sharp_priority(sharp_book or DEFAULT_SHARP_BOOK)
+    stale_event_filters: List[dict] = []
 
     for sport in filtered:
         sport_key = sport.get("key")
         if not sport_key:
             continue
         base_markets = markets_for_sport(sport_key)
+        requested_markets = _requested_api_markets(
+            sport_key,
+            base_markets,
+            all_markets=all_markets,
+        )
+        provider_markets = _provider_requested_markets(
+            sport_key,
+            requested_markets,
+            all_markets=all_markets,
+        )
         events: List[dict] = []
-        should_fetch_api = not (normalized_bookmakers and not api_bookmakers)
         if should_fetch_api:
             try:
-                events = fetch_odds_for_sport(
+                events, invalid_markets = fetch_odds_for_sport_multi_market(
                     api_pool,
                     sport_key,
-                    base_markets,
+                    requested_markets,
                     normalized_regions,
                     bookmakers=api_bookmakers or None,
                 )
+                if invalid_markets:
+                    api_market_skips.append(
+                        {
+                            "sport_key": sport_key,
+                            "markets": sorted(set(invalid_markets)),
+                        }
+                    )
             except ScannerError as exc:
                 sport_errors.append(
                     {
@@ -2580,7 +3240,11 @@ def run_scan(
                         "error": str(exc),
                     }
                 )
+        if sport_key not in provider_target_sport_keys:
+            provider_markets = []
         for provider_key in enabled_provider_keys:
+            if not provider_markets:
+                break
             fetch_provider_events = PROVIDER_FETCHERS.get(provider_key)
             if not callable(fetch_provider_events):
                 continue
@@ -2591,13 +3255,28 @@ def run_scan(
             provider_title = provider_summary.get("name") or PROVIDER_TITLES.get(
                 provider_key, provider_key
             )
+            provider_snapshot = provider_snapshots.setdefault(
+                provider_key,
+                {
+                    "provider_name": provider_title,
+                    "sports": [],
+                    "events": [],
+                },
+            )
+            sport_snapshot = {
+                "sport_key": sport_key,
+                "requested_markets": list(provider_markets),
+                "regions": list(normalized_regions),
+            }
             try:
                 provider_events = fetch_provider_events(
                     sport_key,
-                    base_markets,
+                    provider_markets,
                     normalized_regions,
                     bookmakers=normalized_bookmakers,
                 )
+                if not isinstance(provider_events, list):
+                    provider_events = []
                 stats = getattr(fetch_provider_events, "last_stats", {}) or {}
                 provider_summary["sports"].append(
                     {
@@ -2606,6 +3285,15 @@ def run_scan(
                         "stats": stats,
                     }
                 )
+                sport_snapshot.update(
+                    {
+                        "events_returned": len(provider_events),
+                        "stats": stats,
+                    }
+                )
+                provider_snapshot["sports"].append(sport_snapshot)
+                if provider_events:
+                    provider_snapshot["events"].extend(provider_events)
                 if provider_key == PUREBET_BOOK_KEY:
                     purebet_summary["sports"].append(
                         {
@@ -2668,6 +3356,8 @@ def run_scan(
                         "error": str(exc),
                     }
                 )
+                sport_snapshot["error"] = str(exc)
+                provider_snapshot["sports"].append(sport_snapshot)
                 if provider_key == PUREBET_BOOK_KEY:
                     purebet_summary["sports"].append(
                         {
@@ -2683,6 +3373,17 @@ def run_scan(
                         "error": f"{provider_title}: {exc}",
                     }
                 )
+        events, time_filter_stats = _filter_events_for_scan(events)
+        dropped_past = int(time_filter_stats.get("dropped_past", 0) or 0)
+        dropped_missing = int(time_filter_stats.get("dropped_missing_time", 0) or 0)
+        if dropped_past or dropped_missing:
+            stale_event_filters.append(
+                {
+                    "sport_key": sport_key,
+                    "dropped_past": dropped_past,
+                    "dropped_missing_time": dropped_missing,
+                }
+            )
         successful_sports += 1
         events_scanned += len(events)
         for game in events:
@@ -2704,7 +3405,7 @@ def run_scan(
                     middle_opportunities.extend(middle_entries)
             plus_entries = _collect_plus_ev_opportunities(
                 game,
-                base_markets,
+                arb_markets,
                 sharp_priority,
                 commission_rate,
                 min_edge_percent,
@@ -2724,9 +3425,13 @@ def run_scan(
     )
     middle_summary = _middle_summary(middle_opportunities)
     plus_ev_summary = _plus_ev_summary(plus_ev_opportunities)
+    scan_time = _iso_now()
+    provider_snapshot_paths = _persist_provider_snapshots(scan_time, provider_snapshots)
     return {
         "success": True,
-        "scan_time": _iso_now(),
+        "scan_time": scan_time,
+        "api_market_skips": api_market_skips,
+        "provider_snapshot_paths": provider_snapshot_paths,
         "arbitrage": {
             "opportunities": arb_opportunities,
             "opportunities_count": len(arb_opportunities),
@@ -2759,6 +3464,7 @@ def run_scan(
         "partial": bool(sport_errors),
         "regions": normalized_regions,
         "commission_rate": commission_rate,
+        "stale_event_filters": stale_event_filters,
         "purebet": purebet_summary,
         "custom_providers": provider_summaries,
     }

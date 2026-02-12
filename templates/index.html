@@ -64,7 +64,6 @@
           <div class="modal-panel">
             <div class="modal-head">
               <h3 id="advanced-title" data-i18n="advanced_settings">Advanced settings</h3>
-              <button type="button" id="close-advanced" class="icon-btn" aria-label="Close" data-i18n="close">Close</button>
             </div>
             <p class="helper" data-i18n="advanced_hint">Less frequently adjusted options live here.</p>
             <div class="advanced-layout">
@@ -116,6 +115,11 @@
                     <input type="checkbox" id="all-sports" {% if default_all_sports %}checked{% endif %} />
                     <span data-i18n="all_sports_label">Scan all active sports (uses more API credits)</span>
                   </label>
+                  <label class="checkbox all-toggle">
+                    <input type="checkbox" id="all-markets" {% if default_all_markets %}checked{% endif %} />
+                    <span data-i18n="all_markets_label">Scan extended markets (can use more API credits)</span>
+                  </label>
+                  <p class="helper" data-i18n="all_markets_helper">Attempts to include extra market types and player props for arbitrage/+EV.</p>
                 </div>
               </section>
               <section class="advanced-panel">
@@ -209,6 +213,7 @@
               </section>
             </div>
             <div class="advanced-actions">
+              <button type="button" id="close-advanced" class="secondary-btn" aria-label="Close" data-i18n="close">Close</button>
               <button type="button" id="save-settings" class="secondary-btn" data-i18n="save_settings">Save Settings</button>
             </div>
           </div>
@@ -561,6 +566,7 @@
     data-default-density="{{ default_density }}"
     data-default-theme="{{ default_theme }}"
     data-default-language="{{ default_language }}"
+    data-default-all-markets="{{ 'true' if default_all_markets else 'false' }}"
     data-kelly-options='{{ kelly_options | tojson }}'
     data-bookmaker-links='{{ bookmaker_links | tojson }}'
     hidden
@@ -588,6 +594,7 @@
           defaultDensity: configEl.dataset.defaultDensity || '',
           defaultTheme: configEl.dataset.defaultTheme || '',
           defaultLanguage: configEl.dataset.defaultLanguage || '',
+          defaultAllMarkets: configEl.dataset.defaultAllMarkets === 'true',
           kellyOptions: parseConfigJson(configEl.dataset.kellyOptions, []),
           bookmakerLinks: parseConfigJson(configEl.dataset.bookmakerLinks, {})
         }
@@ -603,6 +610,7 @@
     const resultsBody = document.querySelector('#results-table tbody');
     const emptyState = document.getElementById('table-empty');
     const allSportsToggle = document.getElementById('all-sports');
+    const allMarketsToggle = document.getElementById('all-markets');
     const allBookmakersToggle = document.getElementById('all-bookmakers');
     const bookmakersList = document.getElementById('bookmakers-list');
     const bookmakerLinksList = bookmakersList;
@@ -711,6 +719,8 @@
         stake_helper: 'Used for arbitrage + middles stake splits.',
         sports_label: 'Sports',
         all_sports_label: 'Scan all active sports (uses more API credits)',
+        all_markets_label: 'Scan extended markets (can use more API credits)',
+        all_markets_helper: 'Attempts to include extra market types and player props for arbitrage/+EV.',
         sports_helper: 'Each selected sport consumes one API request.',
         bookmakers_label: 'Bookmakers',
         all_bookmakers_label: 'Use all available bookmakers',
@@ -797,6 +807,7 @@
         status_error: 'Error',
         status_partial: 'Partial',
         scan_errors: '<strong>Errors:</strong> {details}',
+        scan_market_skips: '<strong>Skipped markets:</strong> {details}',
         by_roi_band: 'By ROI Band',
         by_sport: 'By Sport',
         by_edge_band: 'By Edge Band',
@@ -864,6 +875,7 @@
         results_count: '{count} results',
         results_profit: '{count} results | {profit} profit',
         partial_results: '<strong>Partial results:</strong> Failed to fetch odds for {details}.',
+        market_skips: '<strong>Skipped markets:</strong> {details}.',
         tbd: 'TBD',
         gross: 'Gross',
         net_at: 'Net @ {odds}',
@@ -909,6 +921,8 @@
         stake_helper: '用于套利和中间盘的下注拆分计算。',
         sports_label: '体育项目',
         all_sports_label: '扫描所有活跃项目（消耗更多 API 额度）',
+        all_markets_label: '扫描扩展盘口（可能消耗更多 API 额度）',
+        all_markets_helper: '尝试纳入更多盘口类型和球员道具盘用于套利/+EV。',
         sports_helper: '每个已选项目会消耗一次 API 请求。',
         bookmakers_label: '博彩平台',
         all_bookmakers_label: '使用所有可用平台',
@@ -995,6 +1009,7 @@
         status_error: '错误',
         status_partial: '部分结果',
         scan_errors: '<strong>错误：</strong>{details}',
+        scan_market_skips: '<strong>已跳过盘口：</strong>{details}',
         by_roi_band: '按 ROI 区间',
         by_sport: '按项目',
         by_edge_band: '按 Edge 区间',
@@ -1062,6 +1077,7 @@
         results_count: '{count} 条结果',
         results_profit: '{count} 条结果 | 利润 {profit}',
         partial_results: '<strong>部分结果：</strong>以下项目未能获取赔率：{details}。',
+        market_skips: '<strong>已跳过盘口：</strong>{details}。',
         tbd: '待定',
         gross: '总',
         net_at: '净 @ {odds}',
@@ -1849,6 +1865,7 @@
         regions,
         commission: commissionValue,
         allSports: useAllSports,
+        allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
         stake: stakeValue,
         sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
         minEdgePercent: parseFloat(minEdgeInput?.value) || appConfig.defaultMinEdgePercent || 1,
@@ -1895,6 +1912,7 @@
         stake: stakeInput ? stakeInput.value : '',
         commission: commissionInput ? commissionInput.value : '',
         allSports: allSportsToggle ? allSportsToggle.checked : false,
+        allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
         sports,
         regions,
         allBookmakers: allBookmakersToggle ? allBookmakersToggle.checked : true,
@@ -1923,6 +1941,7 @@
       if (stakeInput && settings.stake !== undefined) stakeInput.value = settings.stake;
       if (commissionInput && settings.commission !== undefined) commissionInput.value = settings.commission;
       if (allSportsToggle && settings.allSports !== undefined) allSportsToggle.checked = Boolean(settings.allSports);
+      if (allMarketsToggle && settings.allMarkets !== undefined) allMarketsToggle.checked = Boolean(settings.allMarkets);
       setCheckboxGroup('sports', settings.sports);
       setCheckboxGroup('regions', settings.regions);
       if (allBookmakersToggle && settings.allBookmakers !== undefined) {
@@ -2030,6 +2049,7 @@
         bookmakers,
         commission: commissionValue,
         allSports: allSportsToggle.checked,
+        allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
         stake: stakeValue,
         sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
         minEdgePercent: parseFloat(minEdgeInput?.value) || appConfig.defaultMinEdgePercent || 1,
@@ -2068,6 +2088,7 @@
             apiKey: payload.apiKey,
             sports: payload.sports,
             allSports: payload.allSports,
+            allMarkets: payload.allMarkets,
             stake: payload.stake,
             regions: payload.regions,
             bookmakers: payload.bookmakers,
@@ -2689,11 +2710,9 @@
 
     function formatMarket(opp) {
       const marketLabel = translateMarketLabel(opp.market || '');
-      if (opp.market === 'spreads' || opp.market === 'totals') {
-        const point = opp.best_odds?.[0]?.point ?? opp.point;
-        if (point !== undefined && point !== null) {
-          return `${marketLabel} (${point})`;
-        }
+      const point = opp.best_odds?.[0]?.point ?? opp.point;
+      if (point !== undefined && point !== null) {
+        return `${marketLabel} (${point})`;
       }
       return marketLabel;
     }
@@ -2753,14 +2772,37 @@
     }
 
     function renderPartialWarning(data) {
-      if (data && data.partial && Array.isArray(data.sport_errors) && data.sport_errors.length) {
-        const details = data.sport_errors
-          .map((err) => `${err.sport || err.sport_key || t('unknown')} (${err.error || t('unknown_error')})`)
-          .join(', ');
-        partialWarning.innerHTML = t('partial_results', { details });
+      const errorDetails = data && data.partial && Array.isArray(data.sport_errors)
+        ? data.sport_errors
+            .map((err) => `${err.sport || err.sport_key || t('unknown')} (${err.error || t('unknown_error')})`)
+            .join(', ')
+        : '';
+      const skipDetails = data && Array.isArray(data.api_market_skips)
+        ? data.api_market_skips
+            .filter((entry) => entry && Array.isArray(entry.markets) && entry.markets.length)
+            .map((entry) => {
+              const sportLabel = translateSportKey(entry.sport_key, entry.sport_key || t('unknown'));
+              return `${sportLabel}: ${entry.markets.join('/')}`;
+            })
+            .join(', ')
+        : '';
+
+      const warningBlocks = [];
+      if (errorDetails) {
+        warningBlocks.push(t('partial_results', { details: errorDetails }));
+      }
+      if (skipDetails) {
+        warningBlocks.push(t('market_skips', { details: skipDetails }));
+      }
+
+      if (warningBlocks.length) {
+        partialWarning.innerHTML = warningBlocks.join('<br/>');
         partialWarning.classList.remove('hidden');
         if (scanErrors) {
-          scanErrors.innerHTML = t('scan_errors', { details });
+          const scanBlocks = [];
+          if (errorDetails) scanBlocks.push(t('scan_errors', { details: errorDetails }));
+          if (skipDetails) scanBlocks.push(t('scan_market_skips', { details: skipDetails }));
+          scanErrors.innerHTML = scanBlocks.join('<br/>');
           scanErrors.classList.remove('hidden');
         }
       } else {

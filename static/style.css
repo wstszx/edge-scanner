@@ -661,6 +661,8 @@ body.modal-open .content {
   margin-top: 0.8rem;
   display: flex;
   justify-content: flex-end;
+  gap: 0.55rem;
+  flex-wrap: wrap;
 }
 
 .tabs {

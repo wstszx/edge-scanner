@@ -45,6 +45,7 @@ Or provide a key pool (comma/space separated) to rotate when a key is exhausted:
 ```
 ODDS_API_KEYS=key_one,key_two,key_three
 ```
+If you run provider-only scans (`includeProviders`/provider bookmakers without Odds API books), API keys are optional.
 
 Optional Purebet (Solana) integration (read-only for now):
 ```
@@ -151,6 +152,7 @@ BETDEX_MARKETS_MAX_PAGES=8
 BETDEX_EVENT_BATCH_SIZE=60
 BETDEX_PRICE_BATCH_SIZE=120
 BETDEX_MARKET_STATUSES=Open
+BETDEX_BACK_PRICE_SIDE=against
 ```
 Optional file fallback for local fixtures:
 ```
@@ -169,9 +171,16 @@ You can also override per request with `includeProviders`:
 Optional: scan all available markets for arbitrage (per event data returned by providers):
 ```
 ARBITRAGE_ALL_MARKETS=1
+ODDS_API_MARKET_BATCH_SIZE=8
 ```
-Note: The Odds API still only returns the markets you request, so this mainly affects
-providers that already supply multiple markets in their payloads.
+When enabled, scanner expands API requests beyond base `h2h/spreads/totals` and batches
+market calls automatically. Unsupported market keys are skipped per sport.
+
+Optional custom market list override (comma/space separated or JSON array):
+```
+ODDS_API_ALL_MARKETS=h2h_3_way,alternate_spreads,alternate_totals,player_points,player_assists
+```
+If omitted, scanner uses built-in sport-specific expanded market presets.
 
 Optional: save only the latest scan payload + result to disk:
 ```
@@ -182,14 +191,37 @@ You can also pass `saveScan=true` in the `/scan` request JSON to save per-reques
 When enabled, the scanner keeps only the newest `scan_*.json` file in `SCAN_SAVE_DIR`.
 Saved request payloads automatically redact `apiKey`/`apiKeys`.
 
+Optional: save latest custom-provider fetch results per provider (overwrites each scan):
+```
+CUSTOM_PROVIDER_SNAPSHOT_ENABLED=1
+CUSTOM_PROVIDER_SNAPSHOT_DIR=data/provider_snapshots
+```
+Each provider is written to its own file, e.g.:
+- `data/provider_snapshots/polymarket.json`
+- `data/provider_snapshots/purebet.json`
+- `data/provider_snapshots/betdex.json`
+
+Optional: drop stale fixtures before opportunity calculation (applies to merged API + custom provider events):
+```
+EVENT_MAX_PAST_MINUTES=30
+```
+Events older than this threshold are excluded from arbitrage/middle/+EV detection.
+
 ## Markets Scanned
 
-| Sport | Markets |
-|-------|---------|
-| NFL, NBA, MLB, NHL | Moneyline, Spreads, Totals |
-| Soccer (EPL, La Liga, etc.) | Spreads, Totals only* |
+Default mode (`allMarkets=false`):
 
-*Soccer moneyline is three-way (win/draw/lose) — excluded from two-way scanning.
+| Sport | Default Markets |
+|-------|------------------|
+| NFL, NBA, NCAAB, MLB, NHL | `h2h`, `spreads`, `totals` |
+| Soccer (EPL, La Liga, etc.) | `spreads`, `totals` |
+
+Extended mode (`allMarkets=true` or `ARBITRAGE_ALL_MARKETS=1`):
+- Odds API requests sport-specific extra market keys in batches; unsupported keys are auto-skipped per sport.
+- Providers attempt dynamic mapping for additional two-way markets where source data includes them.
+- `polymarket` supports `h2h`, `h2h_3_way`, and BTTS (`both_teams_to_score`) when detectable from market questions.
+
+Note: arbitrage and +EV calculations still require compatible two-way pricing on both sides of the same line; not every returned market will produce opportunities.
 
 ## API Usage
 

@@ -267,6 +267,10 @@ def _infer_sport_key_from_active_league(league: dict) -> Optional[str]:
         return "basketball_nba"
     if "ncaa" in haystack and "basket" in haystack:
         return "basketball_ncaab"
+    if "mlb" in haystack or ("major league" in haystack and "baseball" in haystack):
+        return "baseball_mlb"
+    if "nhl" in haystack or ("national hockey league" in haystack):
+        return "icehockey_nhl"
 
     is_soccer = sport_name == "soccer" or sport_id == "29"
     if is_soccer:
@@ -289,6 +293,12 @@ def _infer_sport_key_from_active_league(league: dict) -> Optional[str]:
             return "basketball_nba"
         if "ncaa" in haystack:
             return "basketball_ncaab"
+    is_baseball = sport_name == "baseball"
+    if is_baseball and ("mlb" in haystack or "major league" in haystack):
+        return "baseball_mlb"
+    is_hockey = sport_name in {"ice hockey", "hockey"}
+    if is_hockey and ("nhl" in haystack or "national hockey league" in haystack):
+        return "icehockey_nhl"
     return None
 
 def _build_dynamic_purebet_league_map(
@@ -407,10 +417,13 @@ def _safe_float(value) -> Optional[float]:
     except (TypeError, ValueError):
         return None
 
-def _normalize_text(value: Optional[str]) -> str:
-    if not value:
+def _text(value: object) -> str:
+    if value is None:
         return ""
-    return str(value).strip().lower()
+    return str(value).strip()
+
+def _normalize_text(value: Optional[str]) -> str:
+    return _text(value).lower()
 
 def _normalize_team_name(value: Optional[str]) -> str:
     if not value:
@@ -524,6 +537,68 @@ def _normalize_purebet_market_type(value: Optional[str]) -> str:
         return "BTTS"
     return text.upper()
 
+
+def _normalize_market_key(value: object) -> str:
+    token = _normalize_text(value).lower()
+    token = re.sub(r"[^a-z0-9]+", "_", token)
+    return token.strip("_")
+
+
+def _normalize_purebet_requested_markets(markets: Sequence[str]) -> set[str]:
+    requested = {_normalize_market_key(item) for item in (markets or []) if _normalize_market_key(item)}
+    if "both_teams_to_score" in requested:
+        requested.add("btts")
+    if "btts" in requested:
+        requested.add("both_teams_to_score")
+    return requested
+
+
+def _normalize_purebet_market_key(raw_value: object, normalized_type: str) -> str:
+    if normalized_type == "AH":
+        return "spreads"
+    if normalized_type == "OU":
+        return "totals"
+    if normalized_type == "H2H":
+        return "h2h"
+    if normalized_type == "BTTS":
+        return "both_teams_to_score"
+    raw_key = _normalize_market_key(raw_value)
+    if raw_key:
+        return raw_key
+    return _normalize_market_key(normalized_type)
+
+
+def _parse_purebet_market_value_pair(value: object) -> Tuple[Optional[float], Optional[float]]:
+    parts = re.findall(r"[-+]?\d+(?:\.\d+)?", _normalize_text(value))
+    if len(parts) < 2:
+        return None, None
+    return _safe_float(parts[0]), _safe_float(parts[1])
+
+
+def _purebet_side_name(market: dict, side_index: int, home: str, away: str, market_key: str) -> str:
+    if side_index == 2:
+        return "Draw"
+    if market_key == "totals":
+        return "Over" if side_index == 0 else "Under"
+    if market_key in {"both_teams_to_score", "btts"}:
+        return "Yes" if side_index == 0 else "No"
+    if market_key in {"h2h", "spreads"}:
+        return home if side_index == 0 else away
+    for key in (
+        f"side{side_index}Name",
+        f"side{side_index}_name",
+        f"side{side_index}Label",
+        f"side{side_index}_label",
+        f"outcome{side_index}Name",
+        f"outcome{side_index}_name",
+        f"outcome{side_index}Label",
+        f"outcome{side_index}_label",
+    ):
+        label = _text(market.get(key))
+        if label:
+            return label
+    return f"Outcome {side_index + 1}"
+
 def _parse_purebet_market_value(value) -> Optional[float]:
     if value is None:
         return None
@@ -586,7 +661,7 @@ def _normalize_purebet_markets_payload(
 ) -> List[dict]:
     if not isinstance(payload, list):
         return []
-    supported = set(supported_markets or [])
+    supported = _normalize_purebet_requested_markets(supported_markets)
     if not supported:
         return []
     min_stake = _purebet_min_stake()
@@ -599,19 +674,19 @@ def _normalize_purebet_markets_payload(
         period = market.get("period")
         if period not in (None, 1, "1"):
             continue
-        market_type = _normalize_purebet_market_type(
-            market.get("marketType") or market.get("type") or market.get("market_type")
-        )
+        raw_market_type = market.get("marketType") or market.get("type") or market.get("market_type")
+        market_type = _normalize_purebet_market_type(raw_market_type)
         if not market_type:
             continue
-        if market_type == "AH" and "spreads" not in supported:
+        market_key = _normalize_purebet_market_key(raw_market_type, market_type)
+        if not market_key:
             continue
-        if market_type == "OU" and "totals" not in supported:
-            continue
-        if market_type == "H2H" and "h2h" not in supported:
-            continue
-        if market_type == "BTTS":
-            continue
+        target_market_key = market_key
+        if market_key not in supported:
+            if market_key == "h2h" and "h2h_3_way" in supported:
+                target_market_key = "h2h_3_way"
+            else:
+                continue
         side0 = _select_purebet_side(
             market.get("side0odds"), min_stake, max_age_seconds, now_epoch
         )
@@ -623,10 +698,10 @@ def _normalize_purebet_markets_payload(
         )
         if not side0 or not side1:
             continue
-        market_value = _parse_purebet_market_value(
-            market.get("marketValue") or market.get("value") or market.get("market_value")
-        )
-        if market_type == "AH":
+        market_value_source = market.get("marketValue") or market.get("value") or market.get("market_value")
+        market_value = _parse_purebet_market_value(market_value_source)
+        value_a, value_b = _parse_purebet_market_value_pair(market_value_source)
+        if market_key == "spreads":
             if market_value is None:
                 continue
             home_point = float(market_value)
@@ -652,7 +727,7 @@ def _normalize_purebet_markets_payload(
                     ],
                 }
             )
-        elif market_type == "OU":
+        elif market_key == "totals":
             if market_value is None:
                 continue
             total = float(market_value)
@@ -677,7 +752,12 @@ def _normalize_purebet_markets_payload(
                     ],
                 }
             )
-        elif market_type == "H2H":
+        elif market_key == "h2h":
+            h2h_key = "h2h"
+            if side2 and "h2h_3_way" in supported and "h2h" not in supported:
+                h2h_key = "h2h_3_way"
+            if h2h_key not in supported:
+                continue
             outcomes = [
                 {
                     "name": home,
@@ -701,7 +781,31 @@ def _normalize_purebet_markets_payload(
                         "last_updated": side2.get("last_updated"),
                     }
                 )
-            normalized.append({"key": "h2h", "outcomes": outcomes})
+            normalized.append({"key": h2h_key, "outcomes": outcomes})
+        else:
+            description = _text(
+                market.get("marketName") or market.get("name") or raw_market_type or market_type
+            )
+            outcomes = []
+            for side_index, side in enumerate((side0, side1)):
+                row = {
+                    "name": _purebet_side_name(market, side_index, home, away, market_key),
+                    "price": side["odds"],
+                    "stake": side.get("stake"),
+                    "last_updated": side.get("last_updated"),
+                }
+                if description:
+                    row["description"] = description
+                point = None
+                if value_a is not None and value_b is not None:
+                    point = value_a if side_index == 0 else value_b
+                elif market_value is not None:
+                    point = market_value
+                if point is not None:
+                    row["point"] = round(float(point), 6)
+                outcomes.append(row)
+            if len(outcomes) == 2:
+                normalized.append({"key": target_market_key, "outcomes": outcomes})
     return normalized
 
 def _fetch_purebet_event_markets(
@@ -815,7 +919,7 @@ def _normalize_purebet_v3_events(
     league_map: Optional[Dict[str, str]] = None,
     allow_empty_markets: bool = False,
 ) -> List[dict]:
-    supported_markets = PUREBET_SUPPORTED_MARKETS.intersection(markets or [])
+    supported_markets = _normalize_purebet_requested_markets(markets)
     if not supported_markets:
         return []
     if league_map is None:
@@ -845,7 +949,7 @@ def _normalize_purebet_v3_events(
         event_url = _purebet_event_url(event_id)
         markets_out: List[dict] = []
         odds = event.get("odds")
-        if isinstance(odds, list) and "h2h" in supported_markets:
+        if isinstance(odds, list) and ("h2h" in supported_markets or "h2h_3_way" in supported_markets):
             markets_out.extend(_normalize_purebet_h2h_markets(odds, home, away))
         if not markets_out and not allow_empty_markets:
             continue
@@ -927,10 +1031,10 @@ def fetch_events(
         if not isinstance(payload, list):
             raise ProviderError("Purebet API response must be a JSON array of events")
         stats["events_payload_count"] = len(payload)
-        supported_markets = PUREBET_SUPPORTED_MARKETS.intersection(markets or [])
+        supported_markets = _normalize_purebet_requested_markets(markets)
         needs_details = (
             PUREBET_MARKETS_ENABLED
-            and bool({"spreads", "totals"}.intersection(supported_markets))
+            and bool(supported_markets.difference({"h2h"}))
         )
         stats["details_enabled"] = bool(needs_details)
         league_map = _load_purebet_league_map(
@@ -941,7 +1045,7 @@ def fetch_events(
         events = _normalize_purebet_v3_events(
             payload,
             sport_key,
-            markets,
+            list(supported_markets),
             base_url=base_url,
             league_map=league_map,
             allow_empty_markets=needs_details,
@@ -960,7 +1064,7 @@ def fetch_events(
                         _fetch_purebet_event_markets,
                         base_url,
                         event,
-                        supported_markets,
+                        list(supported_markets),
                         _purebet_headers(),
                         retries,
                         backoff,

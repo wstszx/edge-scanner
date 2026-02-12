@@ -29,13 +29,12 @@ BETDEX_MARKETS_MAX_PAGES_RAW = os.getenv("BETDEX_MARKETS_MAX_PAGES", "8").strip(
 BETDEX_EVENT_BATCH_SIZE_RAW = os.getenv("BETDEX_EVENT_BATCH_SIZE", "60").strip()
 BETDEX_PRICE_BATCH_SIZE_RAW = os.getenv("BETDEX_PRICE_BATCH_SIZE", "120").strip()
 BETDEX_MARKET_STATUSES_RAW = os.getenv("BETDEX_MARKET_STATUSES", "Open").strip()
+BETDEX_BACK_PRICE_SIDE_RAW = os.getenv("BETDEX_BACK_PRICE_SIDE", "against").strip()
 BETDEX_USER_AGENT = os.getenv(
     "BETDEX_USER_AGENT",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 ).strip()
-
-SUPPORTED_MARKETS = {"h2h", "spreads", "totals"}
 
 SPORT_SUBCATEGORY_DEFAULTS: Dict[str, Sequence[str]] = {
     "americanfootball_nfl": ("AMFOOT",),
@@ -220,6 +219,24 @@ def _parse_env_list(raw: str) -> List[str]:
         if isinstance(payload, list):
             return [_normalize_text(item) for item in payload if _normalize_text(item)]
     return [item for item in re.split(r"[,\s]+", raw) if item]
+
+
+def _canonical_price_side(value: object) -> str:
+    token = re.sub(r"[^a-z]+", "", _normalize_text(value).lower())
+    mapping = {
+        "for": "for",
+        "back": "for",
+        "buy": "for",
+        "against": "against",
+        "lay": "against",
+        "sell": "against",
+    }
+    return mapping.get(token, "")
+
+
+def _back_price_side() -> str:
+    configured = _canonical_price_side(BETDEX_BACK_PRICE_SIDE_RAW)
+    return configured or "against"
 
 
 def _normalize_commence_time(value: object) -> Optional[str]:
@@ -421,6 +438,7 @@ def _fetch_prices_by_market(
     out: Dict[str, dict] = {}
     pages_fetched = 0
     retries_used = 0
+    side_counts = {"for": 0, "against": 0, "unknown": 0}
     for market_batch in _chunked(market_ids, batch_size):
         params = [("marketIds", market_id) for market_id in market_batch]
         payload, attempt = _request_json(
@@ -439,9 +457,25 @@ def _fetch_prices_by_market(
             if not isinstance(entry, dict):
                 continue
             market_id = _normalize_text(entry.get("marketId"))
+            rows = entry.get("prices")
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    side = _canonical_price_side(row.get("side"))
+                    if side == "for":
+                        side_counts["for"] += 1
+                    elif side == "against":
+                        side_counts["against"] += 1
+                    else:
+                        side_counts["unknown"] += 1
             if market_id:
                 out[market_id] = entry
-    return out, {"pages_fetched": pages_fetched, "retries_used": retries_used}
+    return out, {
+        "pages_fetched": pages_fetched,
+        "retries_used": retries_used,
+        "price_side_counts": side_counts,
+    }
 
 def _clean_team_name(value: object) -> str:
     text = _normalize_text(value)
@@ -522,17 +556,18 @@ def _event_matches_sport(
     return True
 
 
-def _best_for_prices(entry: Optional[dict]) -> Dict[str, float]:
+def _best_back_prices(entry: Optional[dict], back_side: Optional[str] = None) -> Dict[str, float]:
     best: Dict[str, float] = {}
     if not isinstance(entry, dict):
         return best
     prices = entry.get("prices")
     if not isinstance(prices, list):
         return best
+    target_side = _canonical_price_side(back_side) if back_side is not None else _back_price_side()
     for item in prices:
         if not isinstance(item, dict):
             continue
-        if _normalize_text(item.get("side")).lower() != "for":
+        if _canonical_price_side(item.get("side")) != target_side:
             continue
         outcome_id = _normalize_text(item.get("outcomeId"))
         price = _safe_float(item.get("price"))
@@ -545,6 +580,47 @@ def _best_for_prices(entry: Optional[dict]) -> Dict[str, float]:
 
 def _market_type_id(market: dict) -> str:
     return _normalize_text(_doc_ref_first_id(market.get("marketType"))).upper()
+
+
+def _normalize_market_key(value: object) -> str:
+    token = _normalize_text(value).lower()
+    token = re.sub(r"[^a-z0-9]+", "_", token)
+    return token.strip("_")
+
+
+def _requested_market_keys(markets: Sequence[str]) -> set[str]:
+    requested = {_normalize_market_key(item) for item in (markets or []) if _normalize_market_key(item)}
+    if "both_teams_to_score" in requested:
+        requested.add("btts")
+    if "btts" in requested:
+        requested.add("both_teams_to_score")
+    return requested
+
+
+def _market_aliases_for_type(market_type: str) -> List[str]:
+    aliases: List[str] = []
+    token = _normalize_market_key(market_type)
+    if token:
+        aliases.append(token)
+    if "HANDICAP" in market_type:
+        aliases.append("spreads")
+    if "OVER_UNDER" in market_type:
+        aliases.append("totals")
+    if (
+        "MONEYLINE" in market_type
+        or "FULL_TIME_RESULT" in market_type
+        or "MATCH_RESULT" in market_type
+    ):
+        aliases.append("h2h")
+    if "BTTS" in market_type:
+        aliases.extend(["btts", "both_teams_to_score"])
+    out = []
+    seen = set()
+    for alias in aliases:
+        if alias and alias not in seen:
+            out.append(alias)
+            seen.add(alias)
+    return out
 
 
 def _parse_market_value_pair(value: object) -> Tuple[Optional[float], Optional[float]]:
@@ -677,19 +753,19 @@ def fetch_events(
     bookmakers: Optional[Sequence[str]] = None,
 ) -> List[dict]:
     _ = regions
-    requested_markets = {
-        _normalize_text(item).lower()
-        for item in (markets or [])
-        if _normalize_text(item)
-    } & SUPPORTED_MARKETS
+    requested_markets = _requested_market_keys(markets)
 
     stats = {
         "provider": PROVIDER_KEY,
         "source": BETDEX_SOURCE or "api",
+        "back_price_side": _back_price_side(),
         "events_payload_count": 0,
         "events_sport_filtered_count": 0,
         "markets_payload_count": 0,
         "prices_payload_count": 0,
+        "price_rows_for": 0,
+        "price_rows_against": 0,
+        "price_rows_unknown": 0,
         "events_with_market_count": 0,
         "events_returned_count": 0,
         "pages_fetched": 0,
@@ -858,6 +934,7 @@ def fetch_events(
     market_ids = list(dict.fromkeys(market_ids))
 
     prices_by_market_id: Dict[str, dict] = {}
+    back_side = _back_price_side()
     if market_ids:
         prices_by_market_id, prices_meta = _fetch_prices_by_market(
             token=token,
@@ -869,6 +946,11 @@ def fetch_events(
         )
         stats["pages_fetched"] += int(prices_meta.get("pages_fetched", 0) or 0)
         stats["retries_used"] += int(prices_meta.get("retries_used", 0) or 0)
+        side_counts = prices_meta.get("price_side_counts") if isinstance(prices_meta, dict) else {}
+        if isinstance(side_counts, dict):
+            stats["price_rows_for"] = int(side_counts.get("for", 0) or 0)
+            stats["price_rows_against"] = int(side_counts.get("against", 0) or 0)
+            stats["price_rows_unknown"] = int(side_counts.get("unknown", 0) or 0)
     stats["prices_payload_count"] = len(prices_by_market_id)
 
     event_by_id = {
@@ -899,7 +981,10 @@ def fetch_events(
         for market in event_markets:
             market_id = _normalize_text(market.get("id"))
             market_type = _market_type_id(market)
-            prices_by_outcome = _best_for_prices(prices_by_market_id.get(market_id))
+            prices_by_outcome = _best_back_prices(
+                prices_by_market_id.get(market_id),
+                back_side=back_side,
+            )
 
             outcomes = []
             for outcome_id in _doc_ref_ids(market.get("marketOutcomes")):
@@ -989,6 +1074,38 @@ def fetch_events(
                         if prev is None or _score_market(total_market) > _score_market(prev):
                             by_signature[sig] = total_market
 
+            if len(outcomes) == 2:
+                dynamic_key = None
+                for alias in _market_aliases_for_type(market_type):
+                    if alias in {"h2h", "spreads", "totals"}:
+                        continue
+                    if alias in requested_markets:
+                        dynamic_key = alias
+                        break
+                if dynamic_key:
+                    value_a, value_b = _parse_market_value_pair(market.get("marketValue"))
+                    shared_value = _parse_market_value_single(market.get("marketValue"))
+                    dynamic_outcomes = []
+                    for idx, outcome in enumerate(outcomes):
+                        row = {
+                            "name": outcome["title"],
+                            "price": outcome["price"],
+                        }
+                        _, title_point = _parse_spread_title(outcome["title"])
+                        point = title_point
+                        if point is None and value_a is not None and value_b is not None:
+                            point = value_a if idx == 0 else value_b
+                        if point is None:
+                            point = shared_value
+                        if point is not None:
+                            row["point"] = round(float(point), 6)
+                        dynamic_outcomes.append(row)
+                    dynamic_market = {"key": dynamic_key, "outcomes": dynamic_outcomes}
+                    sig = _market_signature(dynamic_market)
+                    prev = by_signature.get(sig)
+                    if prev is None or _score_market(dynamic_market) > _score_market(prev):
+                        by_signature[sig] = dynamic_market
+
         market_list: List[dict] = []
         if best_h2h is not None:
             market_list.append(best_h2h)
@@ -1025,10 +1142,14 @@ def fetch_events(
 fetch_events.last_stats = {
     "provider": PROVIDER_KEY,
     "source": BETDEX_SOURCE or "api",
+    "back_price_side": _back_price_side(),
     "events_payload_count": 0,
     "events_sport_filtered_count": 0,
     "markets_payload_count": 0,
     "prices_payload_count": 0,
+    "price_rows_for": 0,
+    "price_rows_against": 0,
+    "price_rows_unknown": 0,
     "events_with_market_count": 0,
     "events_returned_count": 0,
     "pages_fetched": 0,
