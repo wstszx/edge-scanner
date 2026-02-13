@@ -2355,6 +2355,10 @@ def _is_total_market_key(market_key: object) -> bool:
     return token == "totals" or token.startswith("totals_") or token == "alternate_totals"
 
 
+def _is_h2h_market_key(market_key: object) -> bool:
+    return _normalize_line_component(market_key) == "h2h"
+
+
 def _line_key(market: str, outcome: dict) -> Optional[str]:
     descriptor = _outcome_description_token(outcome)
     if market == "h2h":
@@ -2472,8 +2476,11 @@ def _collect_market_entries(
     best_lines = _record_best_prices(markets, market_key, commission_rate)
     entries = []
     for line_key, offers in best_lines.items():
-        # Skip lines that aren't genuine two-way markets (e.g., moneyline with a draw option).
-        if len(offers) != 2:
+        offer_count = len(offers)
+        if offer_count < 2:
+            continue
+        # Only h2h can be genuine 3-way (home/draw/away). Other market types stay 2-way.
+        if offer_count > 3 or (offer_count > 2 and not _is_h2h_market_key(market_key)):
             continue
         outcomes = list(offers.values())
         if _is_spread_market_key(market_key):

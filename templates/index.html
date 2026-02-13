@@ -238,6 +238,10 @@
           <span id="scan-status-text">Idle</span>
         </div>
         <div class="status-chip">
+          <span class="status-label" data-i18n="stat_opportunities">Opportunities</span>
+          <span id="scan-opportunities">0</span>
+        </div>
+        <div class="status-chip">
           <span class="status-label" data-i18n="scan_last_scan">Last Scan</span>
           <span id="scan-last-time">-</span>
         </div>
@@ -254,6 +258,7 @@
           <span id="scan-sports">-</span>
         </div>
       </div>
+      <section id="summary-info" class="summary-info hidden"></section>
       <div id="scan-errors" class="scan-errors hidden"></div>
     </section>
       </aside>
@@ -349,58 +354,137 @@
     </section>
 
     <section id="arbitrage-panel">
-      <section class="stats-row">
-        <div class="stat-card" id="stat-opps">
-          <span class="stat-label" data-i18n="stat_opportunities">Opportunities</span>
-          <span class="stat-value">0</span>
-        </div>
-        <div class="stat-card" id="stat-events">
-          <span class="stat-label" data-i18n="stat_events_scanned">Events Scanned</span>
-          <span class="stat-value">0</span>
-        </div>
-        <div class="stat-card" id="stat-sports">
-          <span class="stat-label" data-i18n="stat_sports">Sports</span>
-          <span class="stat-value">0</span>
-        </div>
-        <div class="stat-card" id="stat-calls">
-          <span class="stat-label" data-i18n="stat_api_calls">API Calls</span>
-          <span class="stat-value">0</span>
-        </div>
-      </section>
-
-      <section id="summary-info" class="card summary-info hidden"></section>
       <div id="partial-warning" class="alert warning hidden"></div>
 
-      <section class="card results-card">
-        <div class="card-head">
-          <h3 data-i18n="opportunities_title">Opportunities</h3>
-          <div class="table-meta">
-            <span id="table-count">0 results</span>
-            <span class="muted" id="arb-sort-label" data-i18n="sorted_by_roi">Sorted by ROI</span>
+      <div class="arbitrage-workspace">
+        <section class="card results-card">
+          <div class="card-head">
+            <h3 data-i18n="opportunities_title">Opportunities</h3>
+            <div class="table-meta">
+              <span id="table-count">0 results</span>
+              <span class="muted" id="arb-sort-label" data-i18n="sorted_by_roi">Sorted by ROI</span>
+            </div>
           </div>
-        </div>
-        <div class="table-scroll">
-          <table id="results-table">
-            <thead>
-              <tr>
-                <th data-i18n="table_net_roi">Net ROI</th>
-                <th data-i18n="table_gross_roi">Gross ROI</th>
-                <th data-i18n="table_profit">Profit</th>
-                <th data-i18n="table_exchange">Exchange</th>
-                <th data-i18n="table_sport">Sport</th>
-                <th data-i18n="table_event">Event</th>
-                <th data-i18n="table_time">Time</th>
-                <th data-i18n="table_market">Market</th>
-                <th data-i18n="table_outcome_1">Outcome 1</th>
-                <th data-i18n="table_outcome_2">Outcome 2</th>
-                <th data-i18n="table_open">Open</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <div id="table-empty" class="empty" data-i18n="empty_arbitrage">No arbitrage opportunities yet.</div>
-      </section>
+          <div class="table-scroll">
+            <table id="results-table">
+              <thead>
+                <tr>
+                  <th data-i18n="table_net_roi">Net ROI</th>
+                  <th data-i18n="table_gross_roi">Gross ROI</th>
+                  <th data-i18n="table_profit">Profit</th>
+                  <th data-i18n="table_exchange">Exchange</th>
+                  <th data-i18n="table_sport">Sport</th>
+                  <th data-i18n="table_event">Event</th>
+                  <th data-i18n="table_time">Time</th>
+                  <th data-i18n="table_market">Market</th>
+                  <th data-i18n="table_outcome_1">Outcome 1</th>
+                  <th data-i18n="table_outcome_2">Outcome 2</th>
+                  <th data-i18n="table_outcome_3">Outcome 3</th>
+                  <th data-i18n="table_open">Open</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="table-empty" class="empty" data-i18n="empty_arbitrage">No arbitrage opportunities yet.</div>
+        </section>
+
+        <aside class="card arb-calculator-card" id="arb-calculator">
+          <div class="card-head">
+            <h3 data-i18n="arb_calc_title">Arbitrage Calculator</h3>
+          </div>
+          <div id="arb-calc-empty" class="empty" data-i18n="arb_calc_empty">Select an opportunity to open the calculator.</div>
+          <div id="arb-calc-body" class="arb-calc-body hidden">
+            <div class="arb-calc-context">
+              <p id="arb-calc-event" class="arb-calc-event"></p>
+              <p id="arb-calc-market" class="helper"></p>
+            </div>
+
+            <div class="arb-calc-total">
+              <label class="field-label" for="arb-calc-total-input" data-i18n="arb_calc_total_stake">Total Stake ($)</label>
+              <div class="arb-calc-total-row">
+                <input type="number" id="arb-calc-total-input" min="0" step="0.01" />
+                <button type="button" class="secondary-btn" id="arb-calc-auto-split" data-i18n="arb_calc_apply_total">Auto Split</button>
+              </div>
+            </div>
+
+            <div class="arb-calc-legs">
+              <section class="arb-calc-leg" id="arb-calc-leg-a">
+                <h4 id="arb-calc-leg-a-title"></h4>
+                <p class="helper" id="arb-calc-leg-a-book"></p>
+                <div class="arb-calc-inputs">
+                  <label>
+                    <span data-i18n="arb_calc_odds">Odds</span>
+                    <input type="number" id="arb-calc-odds-a" min="1.01" step="0.01" />
+                  </label>
+                  <label>
+                    <span data-i18n="arb_calc_stake">Stake ($)</span>
+                    <input type="number" id="arb-calc-stake-a" min="0" step="0.01" />
+                  </label>
+                </div>
+                <div class="arb-calc-leg-actions">
+                  <button type="button" class="secondary-btn" id="arb-calc-base-a" data-i18n="arb_calc_use_this_stake">Use This Stake</button>
+                  <span class="mono" id="arb-calc-payout-a">-</span>
+                </div>
+              </section>
+
+              <section class="arb-calc-leg" id="arb-calc-leg-b">
+                <h4 id="arb-calc-leg-b-title"></h4>
+                <p class="helper" id="arb-calc-leg-b-book"></p>
+                <div class="arb-calc-inputs">
+                  <label>
+                    <span data-i18n="arb_calc_odds">Odds</span>
+                    <input type="number" id="arb-calc-odds-b" min="1.01" step="0.01" />
+                  </label>
+                  <label>
+                    <span data-i18n="arb_calc_stake">Stake ($)</span>
+                    <input type="number" id="arb-calc-stake-b" min="0" step="0.01" />
+                  </label>
+                </div>
+                <div class="arb-calc-leg-actions">
+                  <button type="button" class="secondary-btn" id="arb-calc-base-b" data-i18n="arb_calc_use_this_stake">Use This Stake</button>
+                  <span class="mono" id="arb-calc-payout-b">-</span>
+                </div>
+              </section>
+
+              <section class="arb-calc-leg hidden" id="arb-calc-leg-c">
+                <h4 id="arb-calc-leg-c-title"></h4>
+                <p class="helper" id="arb-calc-leg-c-book"></p>
+                <div class="arb-calc-inputs">
+                  <label>
+                    <span data-i18n="arb_calc_odds">Odds</span>
+                    <input type="number" id="arb-calc-odds-c" min="1.01" step="0.01" />
+                  </label>
+                  <label>
+                    <span data-i18n="arb_calc_stake">Stake ($)</span>
+                    <input type="number" id="arb-calc-stake-c" min="0" step="0.01" />
+                  </label>
+                </div>
+                <div class="arb-calc-leg-actions">
+                  <button type="button" class="secondary-btn" id="arb-calc-base-c" data-i18n="arb_calc_use_this_stake">Use This Stake</button>
+                  <span class="mono" id="arb-calc-payout-c">-</span>
+                </div>
+              </section>
+            </div>
+
+            <div class="arb-calc-summary">
+              <div class="arb-calc-metric">
+                <span class="stat-label" data-i18n="arb_calc_min_payout">Min Payout</span>
+                <strong class="mono" id="arb-calc-min-payout">-</strong>
+              </div>
+              <div class="arb-calc-metric">
+                <span class="stat-label" data-i18n="arb_calc_profit">Guaranteed Profit</span>
+                <strong class="mono" id="arb-calc-profit">-</strong>
+              </div>
+              <div class="arb-calc-metric">
+                <span class="stat-label" data-i18n="arb_calc_roi">ROI</span>
+                <strong class="mono" id="arb-calc-roi">-</strong>
+              </div>
+            </div>
+            <p class="helper arb-calc-warning hidden" id="arb-calc-warning"></p>
+          </div>
+        </aside>
+      </div>
     </section>
 
     <section id="middles-panel" class="hidden">
@@ -609,6 +693,67 @@
     const summaryEl = document.getElementById('summary-info');
     const resultsBody = document.querySelector('#results-table tbody');
     const emptyState = document.getElementById('table-empty');
+    const arbCalculator = document.getElementById('arb-calculator');
+    const arbCalcEmpty = document.getElementById('arb-calc-empty');
+    const arbCalcBody = document.getElementById('arb-calc-body');
+    const arbCalcEvent = document.getElementById('arb-calc-event');
+    const arbCalcMarket = document.getElementById('arb-calc-market');
+    const arbCalcTotalInput = document.getElementById('arb-calc-total-input');
+    const arbCalcAutoSplitBtn = document.getElementById('arb-calc-auto-split');
+    const arbCalcLegA = document.getElementById('arb-calc-leg-a');
+    const arbCalcLegATitle = document.getElementById('arb-calc-leg-a-title');
+    const arbCalcLegAInfo = document.getElementById('arb-calc-leg-a-book');
+    const arbCalcOddsAInput = document.getElementById('arb-calc-odds-a');
+    const arbCalcStakeAInput = document.getElementById('arb-calc-stake-a');
+    const arbCalcBaseABtn = document.getElementById('arb-calc-base-a');
+    const arbCalcPayoutA = document.getElementById('arb-calc-payout-a');
+    const arbCalcLegB = document.getElementById('arb-calc-leg-b');
+    const arbCalcLegBTitle = document.getElementById('arb-calc-leg-b-title');
+    const arbCalcLegBInfo = document.getElementById('arb-calc-leg-b-book');
+    const arbCalcOddsBInput = document.getElementById('arb-calc-odds-b');
+    const arbCalcStakeBInput = document.getElementById('arb-calc-stake-b');
+    const arbCalcBaseBBtn = document.getElementById('arb-calc-base-b');
+    const arbCalcPayoutB = document.getElementById('arb-calc-payout-b');
+    const arbCalcLegC = document.getElementById('arb-calc-leg-c');
+    const arbCalcLegCTitle = document.getElementById('arb-calc-leg-c-title');
+    const arbCalcLegCInfo = document.getElementById('arb-calc-leg-c-book');
+    const arbCalcOddsCInput = document.getElementById('arb-calc-odds-c');
+    const arbCalcStakeCInput = document.getElementById('arb-calc-stake-c');
+    const arbCalcBaseCBtn = document.getElementById('arb-calc-base-c');
+    const arbCalcPayoutC = document.getElementById('arb-calc-payout-c');
+    const arbCalcMinPayout = document.getElementById('arb-calc-min-payout');
+    const arbCalcProfit = document.getElementById('arb-calc-profit');
+    const arbCalcRoi = document.getElementById('arb-calc-roi');
+    const arbCalcWarning = document.getElementById('arb-calc-warning');
+    const arbCalcLegRefs = [
+      {
+        section: arbCalcLegA,
+        title: arbCalcLegATitle,
+        info: arbCalcLegAInfo,
+        oddsInput: arbCalcOddsAInput,
+        stakeInput: arbCalcStakeAInput,
+        baseBtn: arbCalcBaseABtn,
+        payoutEl: arbCalcPayoutA,
+      },
+      {
+        section: arbCalcLegB,
+        title: arbCalcLegBTitle,
+        info: arbCalcLegBInfo,
+        oddsInput: arbCalcOddsBInput,
+        stakeInput: arbCalcStakeBInput,
+        baseBtn: arbCalcBaseBBtn,
+        payoutEl: arbCalcPayoutB,
+      },
+      {
+        section: arbCalcLegC,
+        title: arbCalcLegCTitle,
+        info: arbCalcLegCInfo,
+        oddsInput: arbCalcOddsCInput,
+        stakeInput: arbCalcStakeCInput,
+        baseBtn: arbCalcBaseCBtn,
+        payoutEl: arbCalcPayoutC,
+      },
+    ];
     const allSportsToggle = document.getElementById('all-sports');
     const allMarketsToggle = document.getElementById('all-markets');
     const allBookmakersToggle = document.getElementById('all-bookmakers');
@@ -622,10 +767,7 @@
       const quickActionButtons = document.querySelectorAll('[data-quick-action][data-quick-target]');
     const tableCount = document.getElementById('table-count');
     const arbSortLabel = document.getElementById('arb-sort-label');
-    const statOpps = document.querySelector('#stat-opps .stat-value');
-    const statEvents = document.querySelector('#stat-events .stat-value');
-    const statSports = document.querySelector('#stat-sports .stat-value');
-    const statCalls = document.querySelector('#stat-calls .stat-value');
+    const scanOpportunities = document.getElementById('scan-opportunities');
     const themeToggle = document.getElementById('theme-toggle');
     const toggleKeyBtn = document.getElementById('toggle-key');
     let currencyFormatter;
@@ -696,6 +838,9 @@
       let lastFocusedElement = null;
       let autoScanTimer = null;
       let notificationAudioContext = null;
+      let selectedArbKey = null;
+      let selectedArbOpp = null;
+      let arbCalculatorState = null;
 
     const TRANSLATIONS = {
       en: {
@@ -834,7 +979,22 @@
         table_market: 'Market',
         table_outcome_1: 'Outcome 1',
         table_outcome_2: 'Outcome 2',
+        table_outcome_3: 'Outcome 3',
         table_open: 'Open',
+        arb_calc_title: 'Arbitrage Calculator',
+        arb_calc_empty: 'Select an opportunity to open the calculator.',
+        arb_calc_total_stake: 'Total Stake ($)',
+        arb_calc_apply_total: 'Auto Split',
+        arb_calc_odds: 'Odds',
+        arb_calc_stake: 'Stake ($)',
+        arb_calc_use_this_stake: 'Use This Stake',
+        arb_calc_payout: 'Payout',
+        arb_calc_market_time: 'Market: {market} | Start: {time}',
+        arb_calc_min_payout: 'Min Payout',
+        arb_calc_profit: 'Guaranteed Profit',
+        arb_calc_roi: 'ROI',
+        arb_calc_invalid: 'Enter valid decimal odds (>1.00) and stake values.',
+        arb_calc_exceeds_max: 'Stake exceeds listed max: {items}',
         table_ev: 'EV',
         table_prob: 'Prob',
         table_gap: 'Gap',
@@ -1037,7 +1197,22 @@
         table_market: '盘口',
         table_outcome_1: '选项 1',
         table_outcome_2: '选项 2',
+        table_outcome_3: '选项 3',
         table_open: '打开',
+        arb_calc_title: '套利计算器',
+        arb_calc_empty: '点击一条套利机会后在这里计算。',
+        arb_calc_total_stake: '总下注金额 ($)',
+        arb_calc_apply_total: '按总额拆分',
+        arb_calc_odds: '赔率',
+        arb_calc_stake: '下注额 ($)',
+        arb_calc_use_this_stake: '以此金额为准',
+        arb_calc_payout: '返还',
+        arb_calc_market_time: '盘口：{market} | 开赛：{time}',
+        arb_calc_min_payout: '最低返还',
+        arb_calc_profit: '保底利润',
+        arb_calc_roi: 'ROI',
+        arb_calc_invalid: '请输入有效十进制赔率（>1.00）和下注金额。',
+        arb_calc_exceeds_max: '下注超过可下上限：{items}',
         table_ev: 'EV',
         table_prob: '概率',
         table_gap: '间隔',
@@ -1217,6 +1392,7 @@
       applyScanStatus(scanStatusChip ? scanStatusChip.dataset.status : 'idle');
       updateScanMeta(lastScanData);
       renderPartialWarning(lastScanData);
+      renderArbCalculator();
     }
 
     function setLanguage(nextLang) {
@@ -2067,6 +2243,33 @@
       }
     });
 
+    if (arbCalcAutoSplitBtn) {
+      arbCalcAutoSplitBtn.addEventListener('click', () => rebalanceArbCalculator('total'));
+    }
+    if (arbCalcTotalInput) {
+      arbCalcTotalInput.addEventListener('change', () => rebalanceArbCalculator('total'));
+    }
+    arbCalcLegRefs.forEach((leg, idx) => {
+      if (leg.baseBtn) {
+        leg.baseBtn.addEventListener('click', () => rebalanceArbCalculator(`base_${idx}`));
+      }
+      if (leg.oddsInput) {
+        leg.oddsInput.addEventListener('change', () => {
+          const mode = arbCalculatorState?.mode || 'total';
+          rebalanceArbCalculator(mode);
+        });
+      }
+      if (leg.stakeInput) {
+        leg.stakeInput.addEventListener('change', () => {
+          if (!arbCalculatorState) return;
+          syncArbCalculatorStateFromInputs();
+          const total = (arbCalculatorState.legs || []).reduce((sum, item) => sum + (item?.stake || 0), 0);
+          arbCalculatorState.totalStake = roundMoney(total);
+          renderArbCalculator();
+        });
+      }
+    });
+
     if (minRoiInput) {
       minRoiInput.addEventListener('input', () => renderArbitrage());
       minRoiInput.addEventListener('change', () => persistSettings());
@@ -2153,6 +2356,7 @@
 
     function renderScanData(payload) {
       lastScanData = payload;
+      clearArbCalculatorSelection();
       if (payload && typeof payload.commission_rate === 'number') {
         lastCommissionRate = payload.commission_rate;
       }
@@ -2204,6 +2408,7 @@
             return (b.netRoi || 0) - (a.netRoi || 0);
         }
       });
+      let selectedVisible = false;
       resultsBody.innerHTML = '';
       tableCount.textContent = t('results_count', { count: filtered.length });
       if (!filtered.length) {
@@ -2216,6 +2421,9 @@
           const row = document.createElement('tr');
           const calcNet = entry.calcNet;
           const netRoi = entry.netRoi;
+          const oppKey = buildArbOpportunityKey(opp);
+          row.dataset.arbKey = oppKey;
+          row.tabIndex = 0;
           row.classList.add(roiBandClass(netRoi));
           const commence = formatDateTime(opp.commence_time);
           const calcGross = opp.has_exchange ? calculateStakes(opp, stakeValue, false) : null;
@@ -2231,6 +2439,11 @@
           const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
           const openLabel = t('open_books');
           const hasOpenTargets = collectBookTargets(opp).length > 0;
+          if (selectedArbKey && selectedArbKey === oppKey) {
+            row.classList.add('arb-selected-row');
+            selectedVisible = true;
+            selectedArbOpp = opp;
+          }
           row.innerHTML = `
             <td><span class="roi-badge">${formatPercent(netRoi)}</span>${netNegative ? `<span class="roi-warning" title="${t('net_roi_negative')}">⚠</span>` : ''}</td>
             <td>${grossCell}</td>
@@ -2242,6 +2455,7 @@
             <td>${formatMarket(opp)}</td>
             <td>${formatOutcome(breakdown[0])}</td>
             <td>${formatOutcome(breakdown[1])}</td>
+            <td>${formatOutcome(breakdown[2])}</td>
             <td class="open-cell"><button type="button" class="secondary-btn open-books-btn" ${hasOpenTargets ? '' : 'disabled'}>${openLabel}</button></td>`;
           const openBtn = row.querySelector('.open-books-btn');
           if (openBtn) {
@@ -2255,6 +2469,22 @@
               openBookmakerTabs(opp);
             });
           }
+          row.addEventListener('click', () => {
+            const wasSame = selectedArbKey === oppKey;
+            selectedArbKey = oppKey;
+            selectedArbOpp = opp;
+            if (!wasSame || !arbCalculatorState || arbCalculatorState.key !== oppKey) {
+              initializeArbCalculatorFromOpportunity(opp, oppKey);
+            } else {
+              renderArbCalculator();
+            }
+            renderArbitrage();
+          });
+          row.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            row.click();
+          });
           resultsBody.appendChild(row);
         });
         tableCount.textContent = t('results_profit', {
@@ -2262,12 +2492,14 @@
           profit: formatCurrency(runningProfit),
         });
       }
+      if (selectedArbKey && !selectedVisible) {
+        clearArbCalculatorSelection();
+      } else if (selectedVisible) {
+        renderArbCalculator();
+      }
+      if (scanOpportunities) scanOpportunities.textContent = String(filtered.length);
       const summary = arbData?.summary;
       if (summary) {
-        statOpps.textContent = filtered.length;
-        statEvents.textContent = summary.events_scanned;
-        statSports.textContent = summary.sports_scanned;
-        statCalls.textContent = summary.api_calls_used;
         const totalProfit = filtered.reduce((sum, item) => sum + (item.profitValue || 0), 0);
         const totalStaked = filtered.reduce((sum, item) => sum + (item.calcNet?.total || 0), 0);
         const commissionPercent = formatCommissionPercent(lastCommissionRate);
@@ -2299,9 +2531,289 @@
           ${filtersNote}
         `;
       } else {
-        statOpps.textContent = statEvents.textContent = statSports.textContent = statCalls.textContent = '0';
         summaryEl.classList.add('hidden');
         summaryEl.innerHTML = '';
+      }
+    }
+
+    function buildArbOpportunityKey(opp) {
+      if (!opp || typeof opp !== 'object') return '';
+      const odds = Array.isArray(opp.best_odds) ? opp.best_odds.slice(0, 3) : [];
+      const legs = odds
+        .map((item, idx) => {
+          const bookmaker = `${item?.bookmaker_key || item?.bookmaker || ''}`.trim();
+          const outcome = `${item?.outcome || ''}`.trim();
+          const point = item?.point !== undefined && item?.point !== null ? String(item.point) : '';
+          return `${idx}:${bookmaker}:${outcome}:${point}`;
+        })
+        .join('|');
+      return [
+        `${opp.event_id || ''}`.trim(),
+        `${opp.commence_time || ''}`.trim(),
+        `${opp.market || ''}`.trim(),
+        `${opp.event || ''}`.trim(),
+        legs,
+      ].join('::');
+    }
+
+    function roundMoney(value) {
+      if (!Number.isFinite(value)) return 0;
+      return Math.round((value + Number.EPSILON) * 100) / 100;
+    }
+
+    function parseStakeValue(value) {
+      const num = parseFloat(value);
+      if (!Number.isFinite(num) || num < 0) return null;
+      return roundMoney(num);
+    }
+
+    function parseOddsValue(value) {
+      const num = parseFloat(value);
+      if (!Number.isFinite(num) || num <= 1) return null;
+      return Number(num);
+    }
+
+    function splitStakesByTotal(totalStake, oddsList) {
+      if (!Number.isFinite(totalStake) || totalStake <= 0) return null;
+      if (!Array.isArray(oddsList) || oddsList.length < 2) return null;
+      const normalizedOdds = oddsList.map((value) => parseOddsValue(value));
+      if (normalizedOdds.some((value) => value === null)) return null;
+      const inverses = normalizedOdds.map((odds) => 1 / odds);
+      const sumInv = inverses.reduce((sum, value) => sum + value, 0);
+      if (sumInv <= 0) return null;
+      const totalCents = Math.round(totalStake * 100);
+      if (totalCents <= 0) return null;
+      const rawCents = inverses.map((inv) => (inv / sumInv) * totalCents);
+      const stakeCents = rawCents.map((value) => Math.floor(value));
+      let remaining = totalCents - stakeCents.reduce((sum, value) => sum + value, 0);
+      const order = rawCents
+        .map((value, idx) => ({ idx, frac: value - stakeCents[idx] }))
+        .sort((a, b) => b.frac - a.frac);
+      for (const item of order) {
+        if (remaining <= 0) break;
+        stakeCents[item.idx] += 1;
+        remaining -= 1;
+      }
+      return {
+        stakes: stakeCents.map((value) => roundMoney(value / 100)),
+      };
+    }
+
+    function initializeArbCalculatorFromOpportunity(opp, oppKey = null) {
+      const odds = Array.isArray(opp?.best_odds) ? opp.best_odds.slice(0, 3) : [];
+      const calcLegs = odds
+        .map((item) => {
+          const legOdds = parseOddsValue(item?.effective_price ?? item?.price);
+          if (!legOdds) return null;
+          return {
+            odds: legOdds,
+            stake: 0,
+            outcome: `${item?.outcome || ''}`,
+            bookmaker: `${item?.bookmaker || ''}`,
+            point: item?.point,
+            maxStake: item?.max_stake,
+          };
+        })
+        .filter(Boolean);
+      if (calcLegs.length < 2) {
+        arbCalculatorState = null;
+        renderArbCalculator();
+        return;
+      }
+      const defaultTotalRaw = parseFloat(stakeInput?.value);
+      const defaultTotal = Number.isFinite(defaultTotalRaw) && defaultTotalRaw > 0
+        ? roundMoney(defaultTotalRaw)
+        : 100;
+      const split = splitStakesByTotal(defaultTotal, calcLegs.map((item) => item.odds));
+      if (!split || !Array.isArray(split.stakes) || split.stakes.length !== calcLegs.length) {
+        arbCalculatorState = null;
+        renderArbCalculator();
+        return;
+      }
+      const legs = calcLegs.map((item, idx) => ({
+        ...item,
+        stake: split.stakes[idx],
+      }));
+      arbCalculatorState = {
+        key: oppKey || buildArbOpportunityKey(opp),
+        mode: 'total',
+        totalStake: defaultTotal,
+        legs,
+      };
+      renderArbCalculator();
+    }
+
+    function syncArbCalculatorStateFromInputs() {
+      if (!arbCalculatorState) return;
+      const nextTotal = parseStakeValue(arbCalcTotalInput?.value);
+      if (nextTotal !== null) arbCalculatorState.totalStake = nextTotal;
+      (arbCalculatorState.legs || []).forEach((leg, idx) => {
+        const refs = arbCalcLegRefs[idx];
+        if (!refs) return;
+        const nextOdds = parseOddsValue(refs.oddsInput?.value);
+        const nextStake = parseStakeValue(refs.stakeInput?.value);
+        if (nextOdds !== null) leg.odds = nextOdds;
+        if (nextStake !== null) leg.stake = nextStake;
+      });
+    }
+
+    function rebalanceArbCalculator(mode) {
+      if (!arbCalculatorState) return;
+      syncArbCalculatorStateFromInputs();
+      const legs = arbCalculatorState.legs || [];
+      if (legs.length < 2) {
+        renderArbCalculator();
+        return;
+      }
+      const oddsValues = legs.map((item) => item.odds);
+      const oddsValid = oddsValues.every((value) => Number.isFinite(value) && value > 1);
+      if (!oddsValid) {
+        renderArbCalculator();
+        return;
+      }
+
+      if (typeof mode === 'string' && mode.startsWith('base_')) {
+        const baseIdx = Number(mode.slice(5));
+        const baseRefs = arbCalcLegRefs[baseIdx];
+        const baseLeg = legs[baseIdx];
+        if (!baseLeg || !baseRefs) {
+          renderArbCalculator();
+          return;
+        }
+        const baseStake = parseStakeValue(baseRefs.stakeInput?.value ?? baseLeg.stake);
+        if (baseStake === null) {
+          renderArbCalculator();
+          return;
+        }
+        const payoutTarget = baseStake * baseLeg.odds;
+        legs.forEach((item) => {
+          item.stake = roundMoney(payoutTarget / item.odds);
+        });
+        const totalStake = legs.reduce((sum, item) => sum + (item.stake || 0), 0);
+        arbCalculatorState.totalStake = roundMoney(totalStake);
+        arbCalculatorState.mode = `base_${baseIdx}`;
+      } else {
+        const totalStake = parseStakeValue(arbCalcTotalInput?.value ?? arbCalculatorState.totalStake);
+        if (totalStake === null || totalStake <= 0) {
+          renderArbCalculator();
+          return;
+        }
+        const split = splitStakesByTotal(totalStake, oddsValues);
+        if (!split || !Array.isArray(split.stakes) || split.stakes.length !== legs.length) {
+          renderArbCalculator();
+          return;
+        }
+        legs.forEach((item, idx) => {
+          item.stake = split.stakes[idx];
+        });
+        arbCalculatorState.totalStake = totalStake;
+        arbCalculatorState.mode = 'total';
+      }
+      renderArbCalculator();
+    }
+
+    function clearArbCalculatorSelection() {
+      selectedArbKey = null;
+      selectedArbOpp = null;
+      arbCalculatorState = null;
+      renderArbCalculator();
+    }
+
+    function renderArbCalculator() {
+      if (!arbCalculator || !arbCalcEmpty || !arbCalcBody) return;
+      const legs = arbCalculatorState?.legs || [];
+      if (!arbCalculatorState || !selectedArbOpp || legs.length < 2) {
+        arbCalcEmpty.classList.remove('hidden');
+        arbCalcBody.classList.add('hidden');
+        arbCalcLegRefs.forEach((refs) => refs.section?.classList.add('hidden'));
+        return;
+      }
+
+      arbCalcEmpty.classList.add('hidden');
+      arbCalcBody.classList.remove('hidden');
+
+      const totalStake = roundMoney(
+        Number.isFinite(arbCalculatorState.totalStake)
+          ? arbCalculatorState.totalStake
+          : legs.reduce((sum, item) => sum + (item?.stake || 0), 0)
+      );
+      const validInputs = legs.every((item) =>
+        Number.isFinite(item.odds) &&
+        item.odds > 1 &&
+        Number.isFinite(item.stake) &&
+        item.stake >= 0
+      );
+
+      arbCalcEvent.textContent = selectedArbOpp.event || '';
+      arbCalcMarket.textContent = t('arb_calc_market_time', {
+        market: formatMarket(selectedArbOpp),
+        time: formatDateTime(selectedArbOpp.commence_time),
+      });
+
+      if (arbCalcTotalInput) arbCalcTotalInput.value = totalStake.toFixed(2);
+
+      arbCalcLegRefs.forEach((refs, idx) => {
+        const leg = legs[idx];
+        if (!leg) {
+          refs.section?.classList.add('hidden');
+          if (refs.payoutEl) refs.payoutEl.textContent = `${t('arb_calc_payout')}: -`;
+          return;
+        }
+        refs.section?.classList.remove('hidden');
+        const point = leg.point !== undefined && leg.point !== null ? ` (${formatLine(leg.point)})` : '';
+        if (refs.title) refs.title.textContent = `${leg.outcome || '-'}${point}`;
+        const maxStake = Number(leg.maxStake);
+        const maxText = Number.isFinite(maxStake)
+          ? t('available_label', { amount: formatCurrency(maxStake) })
+          : '';
+        if (refs.info) refs.info.textContent = [leg.bookmaker, maxText].filter(Boolean).join(' | ');
+        if (refs.oddsInput) refs.oddsInput.value = leg.odds ? leg.odds.toFixed(2) : '';
+        if (refs.stakeInput) refs.stakeInput.value = roundMoney(leg.stake || 0).toFixed(2);
+      });
+
+      if (!validInputs) {
+        arbCalcLegRefs.forEach((refs, idx) => {
+          if (idx < legs.length && refs.payoutEl) refs.payoutEl.textContent = `${t('arb_calc_payout')}: -`;
+        });
+        arbCalcMinPayout.textContent = '-';
+        arbCalcProfit.textContent = '-';
+        arbCalcProfit.classList.remove('gain', 'loss');
+        arbCalcRoi.textContent = '-';
+        arbCalcWarning.textContent = t('arb_calc_invalid');
+        arbCalcWarning.classList.remove('hidden');
+        return;
+      }
+
+      const payouts = legs.map((item) => roundMoney(item.stake * item.odds));
+      const minPayout = Math.min(...payouts);
+      const profit = roundMoney(minPayout - totalStake);
+      const roi = totalStake > 0 ? (profit / totalStake) * 100 : 0;
+
+      arbCalcLegRefs.forEach((refs, idx) => {
+        if (idx >= legs.length || !refs.payoutEl) return;
+        refs.payoutEl.textContent = `${t('arb_calc_payout')}: ${formatCurrency(payouts[idx])}`;
+      });
+      arbCalcMinPayout.textContent = formatCurrency(minPayout);
+      arbCalcProfit.textContent = formatCurrency(profit);
+      arbCalcRoi.textContent = formatPercent(roi);
+      arbCalcProfit.classList.toggle('gain', profit > 0);
+      arbCalcProfit.classList.toggle('loss', profit < 0);
+
+      const exceeded = [];
+      legs.forEach((leg) => {
+        const maxStake = leg.maxStake === null || leg.maxStake === undefined ? NaN : Number(leg.maxStake);
+        const currentStake = Number(leg.stake || 0);
+        if (!Number.isFinite(maxStake)) return;
+        if (currentStake > maxStake + 1e-9) {
+          exceeded.push(`${leg.outcome} (${formatCurrency(maxStake)})`);
+        }
+      });
+      if (exceeded.length) {
+        arbCalcWarning.textContent = t('arb_calc_exceeds_max', { items: exceeded.join(', ') });
+        arbCalcWarning.classList.remove('hidden');
+      } else {
+        arbCalcWarning.classList.add('hidden');
+        arbCalcWarning.textContent = '';
       }
     }
 
@@ -2571,7 +3083,7 @@
     }
 
     function formatOutcome(item) {
-      if (!item) return '';
+      if (!item) return '-';
       const point = item.point !== undefined && item.point !== null ? ` (${item.point})` : '';
       const availableValue =
         item.max_stake !== undefined &&
@@ -2730,7 +3242,7 @@
     }
 
     function calculateStakes(opp, totalStake, useEffectivePrices = true) {
-      const odds = (opp.best_odds || []).slice(0, 2);
+      const odds = (opp.best_odds || []).slice(0, 3);
       if (!totalStake || totalStake <= 0 || odds.length < 2) return null;
       const requestedTotal = Number(Number(totalStake).toFixed(2));
       const inverses = odds.map((o) => {
