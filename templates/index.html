@@ -250,6 +250,14 @@
           <span id="scan-api-calls">-</span>
         </div>
         <div class="status-chip">
+          <span class="status-label" data-i18n="scan_duration">Duration</span>
+          <span id="scan-duration">-</span>
+        </div>
+        <div class="status-chip">
+          <span class="status-label" data-i18n="scan_bottleneck">Bottleneck</span>
+          <span id="scan-slowest">-</span>
+        </div>
+        <div class="status-chip">
           <span class="status-label" data-i18n="scan_events">Events</span>
           <span id="scan-events">-</span>
         </div>
@@ -820,13 +828,15 @@
     const scanStatusText = document.getElementById('scan-status-text');
     const scanLastTime = document.getElementById('scan-last-time');
     const scanApiCalls = document.getElementById('scan-api-calls');
-      const scanEvents = document.getElementById('scan-events');
-      const scanSports = document.getElementById('scan-sports');
-      const scanErrors = document.getElementById('scan-errors');
-      const autoScanToggle = document.getElementById('auto-scan-toggle');
-      const autoScanIntervalInput = document.getElementById('auto-scan-interval');
-      const notifySoundToggle = document.getElementById('notify-sound-toggle');
-      const notifyPopupToggle = document.getElementById('notify-popup-toggle');
+    const scanDuration = document.getElementById('scan-duration');
+    const scanSlowest = document.getElementById('scan-slowest');
+    const scanEvents = document.getElementById('scan-events');
+    const scanSports = document.getElementById('scan-sports');
+    const scanErrors = document.getElementById('scan-errors');
+    const autoScanToggle = document.getElementById('auto-scan-toggle');
+    const autoScanIntervalInput = document.getElementById('auto-scan-interval');
+    const notifySoundToggle = document.getElementById('notify-sound-toggle');
+    const notifyPopupToggle = document.getElementById('notify-popup-toggle');
     const defaultCommissionPercent = commissionInput ? parseFloat(commissionInput.value) || 5 : 5;
     let lastCommissionRate = defaultCommissionPercent / 100;
     let lastScanData = null;
@@ -944,6 +954,8 @@
         scan_status_label: 'Status',
         scan_last_scan: 'Last Scan',
         scan_api_calls: 'API Calls',
+        scan_duration: 'Duration',
+        scan_bottleneck: 'Bottleneck',
         scan_events: 'Events',
         scan_sports: 'Sports',
         status_idle: 'Idle',
@@ -1162,6 +1174,8 @@
         scan_status_label: '状态',
         scan_last_scan: '上次扫描',
         scan_api_calls: 'API 调用',
+        scan_duration: '\u603b\u8017\u65f6',
+        scan_bottleneck: '\u6700\u6162\u9636\u6bb5',
         scan_events: '赛事数',
         scan_sports: '项目数',
         status_idle: '空闲',
@@ -1638,6 +1652,23 @@
       return date.toLocaleTimeString(activeLocale);
     }
 
+    function formatDurationMs(value) {
+      const ms = Number(value);
+      if (!Number.isFinite(ms) || ms < 0) return '-';
+      if (ms >= 1000) {
+        return `${(ms / 1000).toFixed(2)}s`;
+      }
+      return `${Math.round(ms)}ms`;
+    }
+
+    function formatSlowestStep(timings) {
+      const steps = timings?.slowest_steps;
+      if (!Array.isArray(steps) || !steps.length) return '-';
+      const top = steps[0] || {};
+      const label = top.label || top.name || '-';
+      return `${label} (${formatDurationMs(top.ms)})`;
+    }
+
     function refreshStatus() {
       if (!lastStatus) return;
       const { key, params, type, message } = lastStatus;
@@ -1677,6 +1708,8 @@
       if (!payload || !payload.arbitrage?.summary) {
         scanLastTime.textContent = '-';
         scanApiCalls.textContent = '-';
+        if (scanDuration) scanDuration.textContent = '-';
+        if (scanSlowest) scanSlowest.textContent = '-';
         scanEvents.textContent = '-';
         scanSports.textContent = '-';
         return;
@@ -1684,6 +1717,8 @@
       const summary = payload.arbitrage.summary;
       scanLastTime.textContent = formatDateTime(payload.scan_time);
       scanApiCalls.textContent = summary.api_calls_used ?? '-';
+      if (scanDuration) scanDuration.textContent = formatDurationMs(payload?.timings?.total_ms);
+      if (scanSlowest) scanSlowest.textContent = formatSlowestStep(payload?.timings);
       scanEvents.textContent = summary.events_scanned ?? '-';
       scanSports.textContent = summary.sports_scanned ?? '-';
     }

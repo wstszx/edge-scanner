@@ -1161,6 +1161,14 @@ body.modal-open .content {
   font-weight: 700;
 }
 
+#scan-slowest {
+  display: inline-block;
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .scan-errors {
   margin-top: 0.65rem;
   color: var(--warning);

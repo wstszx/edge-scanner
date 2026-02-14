@@ -89,6 +89,8 @@ SX_BET_ENABLED=0
 OVERTIMEMARKETS_XYZ_ENABLED=0
 POLYMARKET_ENABLED=0
 ```
+Provider rate-limit reference: `docs/provider_rate_limits.md`
+
 `PUREBET_ENABLED` still controls Purebet default.
 
 SX Bet provider settings (API mode):

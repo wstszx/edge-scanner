@@ -3203,6 +3203,35 @@ def _deduplicate_plus_ev(opportunities: List[dict]) -> List[dict]:
     return list(best_by_key.values())
 
 
+def _elapsed_ms(started_at: float) -> float:
+    return round((time.perf_counter() - started_at) * 1000, 2)
+
+
+def _build_scan_timings(
+    scan_started_at: float,
+    steps: List[dict],
+    sports: List[dict],
+    top_n: int = 10,
+) -> dict:
+    ranked_steps = sorted(
+        (step for step in steps if isinstance(step.get("ms"), (int, float))),
+        key=lambda item: item.get("ms", 0.0),
+        reverse=True,
+    )
+    ranked_sports = sorted(
+        sports,
+        key=lambda item: item.get("total_ms", 0.0),
+        reverse=True,
+    )
+    total_ms = _elapsed_ms(scan_started_at)
+    return {
+        "total_ms": total_ms,
+        "total_seconds": round(total_ms / 1000.0, 2),
+        "slowest_steps": ranked_steps[: max(1, top_n)],
+        "sports": ranked_sports,
+    }
+
+
 def run_scan(
     api_key: str | Sequence[str],
     sports: Optional[List[str]] = None,
@@ -3219,6 +3248,10 @@ def run_scan(
     include_purebet: Optional[bool] = None,
     include_providers: Optional[Sequence[str]] = None,
 ) -> dict:
+    scan_started_at = time.perf_counter()
+    timing_steps: List[dict] = []
+    sport_timings: List[dict] = []
+    setup_started_at = time.perf_counter()
     api_keys = _normalize_api_keys(api_key)
     if stake_amount is None or stake_amount <= 0:
         stake_amount = DEFAULT_STAKE_AMOUNT
@@ -3242,27 +3275,78 @@ def run_scan(
         normalized_bookmakers and not api_bookmakers
     )
     include_purebet = PUREBET_BOOK_KEY in enabled_provider_set
+    timing_steps.append(
+        {
+            "name": "prepare_inputs",
+            "label": "Prepare scan inputs",
+            "ms": _elapsed_ms(setup_started_at),
+            "sports_requested": len(requested_sport_keys),
+            "providers_enabled": len(enabled_provider_keys),
+        }
+    )
     if not normalized_regions:
         return {
             "success": False,
             "error": "At least one region must be selected",
             "error_code": 400,
+            "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
         }
     if should_fetch_api and not api_keys:
-        return {"success": False, "error": "API key is required", "error_code": 400}
+        return {
+            "success": False,
+            "error": "API key is required",
+            "error_code": 400,
+            "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
+        }
     if not should_fetch_api and not enabled_provider_keys:
-        return {"success": False, "error": "No enabled providers selected", "error_code": 400}
+        return {
+            "success": False,
+            "error": "No enabled providers selected",
+            "error_code": 400,
+            "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
+        }
     commission_rate = _clamp_commission(commission_rate)
     api_pool = ApiKeyPool(api_keys)
     filtered_api_sports: List[dict] = []
     api_sports_fetch_error = ""
     if should_fetch_api:
+        fetch_sports_started_at = time.perf_counter()
         try:
             sports_list = fetch_sports(api_pool)
+            timing_steps.append(
+                {
+                    "name": "fetch_sports",
+                    "label": "Fetch sports catalog",
+                    "ms": _elapsed_ms(fetch_sports_started_at),
+                    "sports_returned": len(sports_list),
+                }
+            )
+            filter_started_at = time.perf_counter()
             filtered_api_sports = filter_sports(sports_list, requested_sport_keys, all_sports)
+            timing_steps.append(
+                {
+                    "name": "filter_sports",
+                    "label": "Filter sports for scan",
+                    "ms": _elapsed_ms(filter_started_at),
+                    "sports_selected": len(filtered_api_sports),
+                }
+            )
         except ScannerError as exc:
+            timing_steps.append(
+                {
+                    "name": "fetch_sports",
+                    "label": "Fetch sports catalog",
+                    "ms": _elapsed_ms(fetch_sports_started_at),
+                    "error": str(exc),
+                }
+            )
             if not enabled_provider_keys:
-                return {"success": False, "error": str(exc), "error_code": 500}
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "error_code": 500,
+                    "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
+                }
             api_sports_fetch_error = str(exc)
             should_fetch_api = False
 
@@ -3316,6 +3400,7 @@ def run_scan(
             "commission_rate": commission_rate,
             "purebet": purebet_summary,
             "custom_providers": provider_summaries,
+            "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
         }
 
     arb_opportunities: List[dict] = []
@@ -3339,9 +3424,21 @@ def run_scan(
     stale_event_filters: List[dict] = []
 
     for sport in filtered:
+        sport_started_at = time.perf_counter()
         sport_key = sport.get("key")
         if not sport_key:
             continue
+        sport_name = sport.get("title") or SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
+        sport_timing = {
+            "sport_key": sport_key,
+            "sport": sport_name,
+            "api_fetch_ms": 0.0,
+            "provider_fetch_ms": 0.0,
+            "analysis_ms": 0.0,
+            "events_scanned": 0,
+            "providers": [],
+            "total_ms": 0.0,
+        }
         base_markets = markets_for_sport(sport_key)
         requested_markets = _requested_api_markets(
             sport_key,
@@ -3355,6 +3452,8 @@ def run_scan(
         )
         events: List[dict] = []
         if should_fetch_api:
+            api_fetch_started_at = time.perf_counter()
+            api_error = None
             try:
                 events, invalid_markets = fetch_odds_for_sport_multi_market(
                     api_pool,
@@ -3371,6 +3470,7 @@ def run_scan(
                         }
                     )
             except ScannerError as exc:
+                api_error = str(exc)
                 sport_errors.append(
                     {
                         "sport_key": sport_key,
@@ -3379,6 +3479,18 @@ def run_scan(
                         "error": str(exc),
                     }
                 )
+            api_fetch_ms = _elapsed_ms(api_fetch_started_at)
+            sport_timing["api_fetch_ms"] = api_fetch_ms
+            api_step = {
+                "name": "api_fetch",
+                "label": f"[{sport_key}] API odds fetch",
+                "sport_key": sport_key,
+                "ms": api_fetch_ms,
+                "events_returned": len(events),
+            }
+            if api_error:
+                api_step["error"] = api_error
+            timing_steps.append(api_step)
         if sport_key not in provider_target_sport_keys:
             provider_markets = []
         for provider_key in enabled_provider_keys:
@@ -3407,6 +3519,9 @@ def run_scan(
                 "requested_markets": list(provider_markets),
                 "regions": list(normalized_regions),
             }
+            provider_fetch_started_at = time.perf_counter()
+            provider_error = None
+            provider_events: List[dict] = []
             try:
                 provider_events = fetch_provider_events(
                     sport_key,
@@ -3489,6 +3604,7 @@ def run_scan(
                         purebet_summary["events_merged"] += len(provider_events)
                     events = _merge_events(events, provider_events)
             except Exception as exc:
+                provider_error = str(exc)
                 provider_summary["sports"].append(
                     {
                         "sport_key": sport_key,
@@ -3512,6 +3628,29 @@ def run_scan(
                         "error": f"{provider_title}: {exc}",
                     }
                 )
+            provider_fetch_ms = _elapsed_ms(provider_fetch_started_at)
+            sport_timing["provider_fetch_ms"] += provider_fetch_ms
+            provider_timing = {
+                "key": provider_key,
+                "name": provider_title,
+                "ms": provider_fetch_ms,
+                "events_returned": len(provider_events),
+            }
+            if provider_error:
+                provider_timing["error"] = provider_error
+            sport_timing["providers"].append(provider_timing)
+            provider_step = {
+                "name": "provider_fetch",
+                "label": f"[{sport_key}] Provider {provider_title}",
+                "sport_key": sport_key,
+                "provider_key": provider_key,
+                "provider": provider_title,
+                "ms": provider_fetch_ms,
+                "events_returned": len(provider_events),
+            }
+            if provider_error:
+                provider_step["error"] = provider_error
+            timing_steps.append(provider_step)
         events, time_filter_stats = _filter_events_for_scan(events)
         dropped_past = int(time_filter_stats.get("dropped_past", 0) or 0)
         dropped_missing = int(time_filter_stats.get("dropped_missing_time", 0) or 0)
@@ -3525,6 +3664,7 @@ def run_scan(
             )
         successful_sports += 1
         events_scanned += len(events)
+        analysis_started_at = time.perf_counter()
         for game in events:
             game["sport_key"] = sport_key
             game["sport_title"] = sport.get("title")
@@ -3552,7 +3692,31 @@ def run_scan(
                 kelly_fraction,
             )
             plus_ev_opportunities.extend(plus_entries)
+        analysis_ms = _elapsed_ms(analysis_started_at)
+        sport_timing["analysis_ms"] = analysis_ms
+        sport_timing["events_scanned"] = len(events)
+        timing_steps.append(
+            {
+                "name": "analyze_events",
+                "label": f"[{sport_key}] Analyze events",
+                "sport_key": sport_key,
+                "ms": analysis_ms,
+                "events_processed": len(events),
+            }
+        )
+        sport_timing["total_ms"] = _elapsed_ms(sport_started_at)
+        sport_timings.append(sport_timing)
+        timing_steps.append(
+            {
+                "name": "sport_total",
+                "label": f"[{sport_key}] Total",
+                "sport_key": sport_key,
+                "ms": sport_timing["total_ms"],
+                "events_scanned": len(events),
+            }
+        )
 
+    finalize_started_at = time.perf_counter()
     api_calls_used = api_pool.calls_made
     arb_opportunities.sort(key=lambda x: x["roi_percent"], reverse=True)
     middle_opportunities.sort(key=lambda x: x["ev_percent"], reverse=True)
@@ -3564,6 +3728,17 @@ def run_scan(
     )
     middle_summary = _middle_summary(middle_opportunities)
     plus_ev_summary = _plus_ev_summary(plus_ev_opportunities)
+    timing_steps.append(
+        {
+            "name": "finalize_results",
+            "label": "Finalize and rank results",
+            "ms": _elapsed_ms(finalize_started_at),
+            "arbitrage_count": len(arb_opportunities),
+            "middle_count": len(middle_opportunities),
+            "plus_ev_count": len(plus_ev_opportunities),
+        }
+    )
+    timings = _build_scan_timings(scan_started_at, timing_steps, sport_timings)
     scan_time = _iso_now()
     provider_snapshot_paths = _persist_provider_snapshots(scan_time, provider_snapshots)
     return {
@@ -3606,6 +3781,7 @@ def run_scan(
         "stale_event_filters": stale_event_filters,
         "purebet": purebet_summary,
         "custom_providers": provider_summaries,
+        "timings": timings,
     }
 def _remove_vig(odds_a: float, odds_b: float) -> Tuple[float, float, float]:
     """Return fair odds for both sides plus vig percent."""
