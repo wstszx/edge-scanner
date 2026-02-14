@@ -12,6 +12,10 @@ from .polymarket import PROVIDER_TITLE as POLYMARKET_TITLE
 from .polymarket import fetch_events as fetch_polymarket_events
 from .purebet import PROVIDER_TITLE as PUREBET_TITLE
 from .purebet import fetch_events as fetch_purebet_events
+from .dexsport_io import PROVIDER_TITLE as DEXSPORT_IO_TITLE
+from .dexsport_io import fetch_events as fetch_dexsport_io_events
+from .sportbet_one import PROVIDER_TITLE as SPORTBET_ONE_TITLE
+from .sportbet_one import fetch_events as fetch_sportbet_one_events
 from .sx_bet import PROVIDER_TITLE as SX_BET_TITLE
 from .sx_bet import fetch_events as fetch_sx_bet_events
 
@@ -27,6 +31,8 @@ PROVIDER_FETCHERS: Dict[str, ProviderFetcher] = {
     "sx_bet": fetch_sx_bet_events,
     "overtimemarkets_xyz": fetch_overtimemarkets_xyz_events,
     "polymarket": fetch_polymarket_events,
+    "dexsport_io": fetch_dexsport_io_events,
+    "sportbet_one": fetch_sportbet_one_events,
 }
 
 PROVIDER_TITLES: Dict[str, str] = {
@@ -36,6 +42,8 @@ PROVIDER_TITLES: Dict[str, str] = {
     "sx_bet": SX_BET_TITLE,
     "overtimemarkets_xyz": OVERTIMEMARKETS_XYZ_TITLE,
     "polymarket": POLYMARKET_TITLE,
+    "dexsport_io": DEXSPORT_IO_TITLE,
+    "sportbet_one": SPORTBET_ONE_TITLE,
 }
 
 PROVIDER_ALIASES: Dict[str, str] = {
@@ -53,6 +61,13 @@ PROVIDER_ALIASES: Dict[str, str] = {
     "overtimemarkets_xyz": "overtimemarkets_xyz",
     "overtimemarketsxyz": "overtimemarkets_xyz",
     "polymarket": "polymarket",
+    "dexsport_io": "dexsport_io",
+    "dexsport.io": "dexsport_io",
+    "dexsport": "dexsport_io",
+    "sportbet_one": "sportbet_one",
+    "sportbet.one": "sportbet_one",
+    "sportbetone": "sportbet_one",
+    "sportbet": "sportbet_one",
 }
 
 

@@ -88,10 +88,25 @@ BOOKMAKER_XYZ_ENABLED=0
 SX_BET_ENABLED=0
 OVERTIMEMARKETS_XYZ_ENABLED=0
 POLYMARKET_ENABLED=0
+DEXSPORT_IO_ENABLED=0
+SPORTBET_ONE_ENABLED=0
 ```
 Provider rate-limit reference: `docs/provider_rate_limits.md`
 
 `PUREBET_ENABLED` still controls Purebet default.
+
+Dexsport.io / Sportbet.one provider settings (proxy mode):
+```
+DEXSPORT_SOURCE=bookmaker_xyz
+SPORTBET_ONE_SOURCE=bookmaker_xyz
+```
+Optional file fallback for local fixtures:
+```
+DEXSPORT_SOURCE=file
+DEXSPORT_SAMPLE_PATH=data/dexsport_sample.json
+SPORTBET_ONE_SOURCE=file
+SPORTBET_ONE_SAMPLE_PATH=data/sportbet_one_sample.json
+```
 
 SX Bet provider settings (API mode):
 ```
@@ -165,7 +180,7 @@ BetDEX is treated as an exchange in scanner settings, so exchange commission app
 You can also override per request with `includeProviders`:
 ```json
 {
-  "includeProviders": ["BetDEX", "bookmaker.xyz", "SX Bet", "overtimemarkets.xyz", "polymarket"]
+  "includeProviders": ["BetDEX", "bookmaker.xyz", "Dexsport.io", "Sportbet.one", "SX Bet", "overtimemarkets.xyz", "polymarket"]
 }
 ```
 `includePurebet` remains supported and overrides Purebet on/off for that request.

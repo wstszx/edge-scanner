@@ -5,9 +5,11 @@ Last updated: 2026-02-14 (UTC)
 This document tracks public/official request-rate information for custom providers used by this project:
 - `betdex`
 - `bookmaker_xyz`
+- `dexsport_io`
 - `sx_bet`
 - `overtimemarkets_xyz`
 - `polymarket`
+- `sportbet_one`
 
 ## Summary
 
@@ -18,6 +20,8 @@ This document tracks public/official request-rate information for custom provide
 | `sx_bet` | `GET /summary/upcoming/...`, `GET /orders/odds/best` (see `providers/sx_bet.py`) | Public docs mention a baseline rate limiter, but no numeric limit published | No official numeric interval available; use conservative polling + backoff on 429 |
 | `betdex` | Monaco API endpoints `/events`, `/markets`, `/market-prices` (see `providers/betdex.py`) | Monaco public OpenAPI does not publish explicit numeric rate limits | No official numeric interval available; use conservative polling + backoff on 429 |
 | `bookmaker_xyz` | GraphQL via Azuro subgraph + site dictionary bootstrap (see `providers/bookmaker_xyz.py`) | No public numeric rate-limit doc found | No official numeric interval available; use conservative polling + backoff on 429 |
+| `dexsport_io` | Proxy mode reuses `bookmaker_xyz` fetch path (see `providers/dexsport_io.py`) | Follows upstream `bookmaker_xyz` limit profile | Same as `bookmaker_xyz` |
+| `sportbet_one` | Proxy mode reuses `bookmaker_xyz` fetch path (see `providers/sportbet_one.py`) | Follows upstream `bookmaker_xyz` limit profile | Same as `bookmaker_xyz` |
 
 ## Suggested scanner policy (safe default)
 
@@ -32,3 +36,5 @@ If you want one global interval that stays compatible with the strictest known p
 - SX Bet API docs: https://api.docs.sx.bet/
 - Monaco API OpenAPI (BetDEX backend): https://production.api.monacoprotocol.xyz/v3/api-docs
 - bookmaker.xyz: https://bookmaker.xyz/
+- Dexsport: https://dexsport.com/
+- Sportbet.one: https://sportbet.one/
