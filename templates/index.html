@@ -1030,11 +1030,8 @@
         caveat_plus_ev:
           '<strong>Understanding +EV Betting:</strong> Sharp books (Pinnacle, Betfair, Matchbook) provide near \"true\" odds. When a soft book posts a higher price than fair value, the bet has positive expected value. +EV bets still lose roughly half the time - the edge shows up over many wagers. Kelly staking helps size bets, but variance can still be high. Always confirm odds before betting; edges disappear quickly.',
         summary_title: 'Summary',
-        summary_found: 'Found {count} opportunities across {events} events in {sports} sports.',
         summary_profit: 'Total potential profit: {profit}{staked}',
         summary_profit_staked: ' on {staked} staked',
-        summary_calls: 'API calls used: {calls}{regions}',
-        summary_regions_suffix: ' | Regions: {regions}',
         summary_commission: 'Exchange commission applied: {commission}.',
         summary_roi_note: 'ROI = return on total stake. 2% ROI means $2 profit on a $100 stake.',
         filters_applied: 'Showing {shown} of {total} opportunities after filters.',
@@ -1250,11 +1247,8 @@
         caveat_plus_ev:
           '<strong>理解 +EV 投注：</strong>锐盘（Pinnacle、Betfair、Matchbook）提供接近“真实”的赔率。当软盘给出高于公平赔率的价格时，该投注为正期望。+EV 投注仍有约一半时间会输，优势来自长期。凯利法可帮助控制下注规模，但波动仍然存在。下注前务必确认赔率，优势会迅速消失。',
         summary_title: '概览',
-        summary_found: '共发现 {count} 个机会，覆盖 {events} 场赛事、{sports} 个项目。',
         summary_profit: '潜在总利润：{profit}{staked}',
         summary_profit_staked: '（总下注 {staked}）',
-        summary_calls: 'API 调用次数：{calls}{regions}',
-        summary_regions_suffix: ' | 地区：{regions}',
         summary_commission: '已计入交易所手续费：{commission}。',
         summary_roi_note: 'ROI 为总下注回报率。2% ROI 意味着下注 $100 约盈利 $2。',
         filters_applied: '筛选后显示 {shown}/{total} 个机会。',
@@ -1622,14 +1616,6 @@
       if (activeLanguage !== 'zh') return fallback;
       const map = REGION_LABELS[activeLanguage] || {};
       return map[key] || fallback;
-    }
-
-    function formatRegionList(regions) {
-      if (!Array.isArray(regions) || !regions.length) return '';
-      if (activeLanguage === 'zh') {
-        return regions.map((region) => translateRegionKey(region, region)).join(', ');
-      }
-      return regions.map((region) => String(region).toUpperCase()).join(', ');
     }
 
     function translateMarketLabel(market) {
@@ -2538,19 +2524,12 @@
         const totalProfit = filtered.reduce((sum, item) => sum + (item.profitValue || 0), 0);
         const totalStaked = filtered.reduce((sum, item) => sum + (item.calcNet?.total || 0), 0);
         const commissionPercent = formatCommissionPercent(lastCommissionRate);
-        const regionsLabel = formatRegionList(lastScanData?.regions);
         const totalCount = arbData.opportunities_count || opportunities.length;
         const filtersActive = minRoi !== 0;
-        const shownCount = filtersActive ? filtered.length : totalCount;
-        const countText = `<strong>${shownCount}</strong>`;
-        const eventsText = `<strong>${summary.events_scanned}</strong>`;
-        const sportsText = `<strong>${summary.sports_scanned}</strong>`;
         const profitText = `<strong>${formatCurrency(totalProfit)}</strong>`;
         const stakedText = totalStaked
           ? t('summary_profit_staked', { staked: `<strong>${formatCurrency(totalStaked)}</strong>` })
           : '';
-        const regionsSuffix = regionsLabel ? t('summary_regions_suffix', { regions: regionsLabel }) : '';
-        const callsText = t('summary_calls', { calls: summary.api_calls_used, regions: regionsSuffix });
         const filtersNote =
           filtersActive && totalCount !== filtered.length
             ? `<p class="helper">${t('filters_applied', { shown: filtered.length, total: totalCount })}</p>`
@@ -2558,9 +2537,7 @@
         summaryEl.classList.remove('hidden');
         summaryEl.innerHTML = `
           <h3>${t('summary_title')}</h3>
-          <p>${t('summary_found', { count: countText, events: eventsText, sports: sportsText })}</p>
           <p>${t('summary_profit', { profit: profitText, staked: stakedText })}</p>
-          <p>${callsText}</p>
           <p>${t('summary_commission', { commission: commissionPercent })}</p>
           <p class="helper">${t('summary_roi_note')}</p>
           ${filtersNote}
