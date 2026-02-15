@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.parse import quote
@@ -152,6 +153,32 @@ DICTIONARY_CACHE: Dict[str, object] = {
     "data": None,
     "source": "",
 }
+SCAN_CACHE_LOCK = threading.RLock()
+SCAN_CACHE_CONTEXT: Dict[str, object] = {
+    "active": False,
+    "dictionaries": None,
+    "dictionary_meta": {},
+    "conditions": None,
+    "conditions_meta": {},
+}
+
+
+def enable_scan_cache() -> None:
+    with SCAN_CACHE_LOCK:
+        SCAN_CACHE_CONTEXT["active"] = True
+        SCAN_CACHE_CONTEXT["dictionaries"] = None
+        SCAN_CACHE_CONTEXT["dictionary_meta"] = {}
+        SCAN_CACHE_CONTEXT["conditions"] = None
+        SCAN_CACHE_CONTEXT["conditions_meta"] = {}
+
+
+def disable_scan_cache() -> None:
+    with SCAN_CACHE_LOCK:
+        SCAN_CACHE_CONTEXT["active"] = False
+        SCAN_CACHE_CONTEXT["dictionaries"] = None
+        SCAN_CACHE_CONTEXT["dictionary_meta"] = {}
+        SCAN_CACHE_CONTEXT["conditions"] = None
+        SCAN_CACHE_CONTEXT["conditions_meta"] = {}
 
 
 class ProviderError(Exception):
@@ -1084,24 +1111,64 @@ def fetch_events(
     page_size = _int_or_default(BOOKMAKER_XYZ_PAGE_SIZE_RAW, 400, min_value=1)
     max_pages = _int_or_default(BOOKMAKER_XYZ_MAX_PAGES_RAW, 6, min_value=1)
 
-    dictionaries, dictionary_meta = _load_dictionaries(
-        retries=retries,
-        backoff_seconds=backoff,
-        timeout=timeout,
-    )
+    if bool(SCAN_CACHE_CONTEXT.get("active")):
+        with SCAN_CACHE_LOCK:
+            cached_dictionaries = SCAN_CACHE_CONTEXT.get("dictionaries")
+            cached_dictionary_meta = dict(SCAN_CACHE_CONTEXT.get("dictionary_meta") or {})
+            if isinstance(cached_dictionaries, dict):
+                dictionaries = cached_dictionaries
+                dictionary_meta = {
+                    **cached_dictionary_meta,
+                    "cache": "scan_hit",
+                }
+            else:
+                dictionaries, dictionary_meta = _load_dictionaries(
+                    retries=retries,
+                    backoff_seconds=backoff,
+                    timeout=timeout,
+                )
+                SCAN_CACHE_CONTEXT["dictionaries"] = dictionaries
+                SCAN_CACHE_CONTEXT["dictionary_meta"] = dict(dictionary_meta or {})
+    else:
+        dictionaries, dictionary_meta = _load_dictionaries(
+            retries=retries,
+            backoff_seconds=backoff,
+            timeout=timeout,
+        )
     stats["dictionary_cache"] = _normalize_text(dictionary_meta.get("cache") or "miss")
     stats["dictionary_source"] = _normalize_text(dictionary_meta.get("source"))
     stats["dictionary_error"] = _normalize_text(dictionary_meta.get("error"))
     stats["retries_used"] += int(dictionary_meta.get("retries_used", 0) or 0)
     stats["dictionary_loaded"] = isinstance(dictionaries, dict)
 
-    conditions, payload_meta = _load_conditions_snapshot(
-        retries=retries,
-        backoff_seconds=backoff,
-        timeout=timeout,
-        page_size=page_size,
-        max_pages=max_pages,
-    )
+    if bool(SCAN_CACHE_CONTEXT.get("active")):
+        with SCAN_CACHE_LOCK:
+            cached_conditions = SCAN_CACHE_CONTEXT.get("conditions")
+            cached_conditions_meta = dict(SCAN_CACHE_CONTEXT.get("conditions_meta") or {})
+            if isinstance(cached_conditions, list):
+                conditions = cached_conditions
+                payload_meta = {
+                    **cached_conditions_meta,
+                    "cache": "scan_hit",
+                }
+            else:
+                conditions, payload_meta = _load_conditions_snapshot(
+                    retries=retries,
+                    backoff_seconds=backoff,
+                    timeout=timeout,
+                    page_size=page_size,
+                    max_pages=max_pages,
+                )
+                SCAN_CACHE_CONTEXT["conditions"] = conditions
+                SCAN_CACHE_CONTEXT["conditions_meta"] = dict(payload_meta or {})
+    else:
+        conditions, payload_meta = _load_conditions_snapshot(
+            retries=retries,
+            backoff_seconds=backoff,
+            timeout=timeout,
+            page_size=page_size,
+            max_pages=max_pages,
+        )
     stats["payload_cache"] = _normalize_text(payload_meta.get("cache") or "miss")
     stats["pages_fetched"] = int(payload_meta.get("pages_fetched", 0) or 0)
     stats["retries_used"] += int(payload_meta.get("retries_used", 0) or 0)

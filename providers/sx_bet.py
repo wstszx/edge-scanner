@@ -575,6 +575,34 @@ def _moneyline_decimal_from_percentage(value) -> Optional[float]:
     return odds if odds > 1 else None
 
 
+def _moneyline_decimal_from_american(value) -> Optional[float]:
+    raw = _safe_float(value)
+    if raw is None or raw == 0:
+        return None
+    if raw > 0:
+        odds = 1.0 + (raw / 100.0)
+    else:
+        odds = 1.0 + (100.0 / abs(raw))
+    return odds if odds > 1 else None
+
+
+def _moneyline_decimal_from_outcome_payload(payload) -> Optional[float]:
+    if not isinstance(payload, dict):
+        return _moneyline_decimal_from_percentage(payload)
+
+    for key in ("percentageOdds", "probability", "prob", "impliedProbability"):
+        odds = _moneyline_decimal_from_percentage(payload.get(key))
+        if odds is not None:
+            return odds
+
+    for key in ("decimalOdds", "decimal", "price", "odds"):
+        odds = _safe_float(payload.get(key))
+        if odds is not None and odds > 1:
+            return odds
+
+    return _moneyline_decimal_from_american(payload.get("americanOdds"))
+
+
 def _event_url(event_id: object) -> str:
     raw = _normalize_text(event_id)
     if not raw:
@@ -651,7 +679,7 @@ def _load_best_odds_map(
     base_token: str,
     retries: int,
     backoff_seconds: float,
-) -> Tuple[Dict[str, Tuple[Optional[float], Optional[float]]], int]:
+) -> Tuple[Dict[str, Tuple[Optional[float], Optional[float]]], int, dict]:
     ttl = _int_or_default(SX_BET_ODDS_CACHE_TTL_RAW, 30, min_value=0)
     now = time.time()
     cache_valid = ttl > 0 and now < float(ODDS_CACHE.get("expires_at", 0.0))
@@ -666,6 +694,13 @@ def _load_best_odds_map(
             unresolved.append(market_hash)
 
     retries_used_total = 0
+    lookup_meta = {
+        "best_odds_items": 0,
+        "best_odds_with_any_odds": 0,
+        "best_odds_with_both_odds": 0,
+        "best_odds_null_count": 0,
+        "best_odds_missing_market_hash": 0,
+    }
     for chunk in _chunked(unresolved, 100):
         payload, retries_used = _request_json(
             "orders/odds/best",
@@ -681,19 +716,28 @@ def _load_best_odds_map(
         for item in best_odds:
             if not isinstance(item, dict):
                 continue
+            lookup_meta["best_odds_items"] += 1
             market_hash = _normalize_text(item.get("marketHash"))
             if not market_hash:
+                lookup_meta["best_odds_missing_market_hash"] += 1
                 continue
             out_one = item.get("outcomeOne") if isinstance(item.get("outcomeOne"), dict) else {}
             out_two = item.get("outcomeTwo") if isinstance(item.get("outcomeTwo"), dict) else {}
-            odds_one = _moneyline_decimal_from_percentage(out_one.get("percentageOdds"))
-            odds_two = _moneyline_decimal_from_percentage(out_two.get("percentageOdds"))
+            odds_one = _moneyline_decimal_from_outcome_payload(out_one)
+            odds_two = _moneyline_decimal_from_outcome_payload(out_two)
             odds_map[market_hash] = (odds_one, odds_two)
+            if odds_one is None and odds_two is None:
+                lookup_meta["best_odds_null_count"] += 1
+            elif odds_one is not None and odds_two is not None:
+                lookup_meta["best_odds_with_both_odds"] += 1
+                lookup_meta["best_odds_with_any_odds"] += 1
+            else:
+                lookup_meta["best_odds_with_any_odds"] += 1
             cache_entries[f"{base_token}:{market_hash}"] = (odds_one, odds_two)
 
     ODDS_CACHE["entries"] = cache_entries
     ODDS_CACHE["expires_at"] = now + ttl if ttl > 0 else now
-    return odds_map, retries_used_total
+    return odds_map, retries_used_total, lookup_meta
 
 
 def fetch_events(
@@ -709,10 +753,26 @@ def fetch_events(
         "sport_id": None,
         "fixtures_payload_count": 0,
         "fixtures_sport_filtered_count": 0,
+        "fixtures_filtered_out_by_league_count": 0,
+        "fixtures_missing_team_count": 0,
+        "fixtures_missing_commence_count": 0,
+        "fixtures_no_markets_count": 0,
         "fixtures_market_found_count": 0,
+        "candidates_total_count": 0,
         "events_returned_count": 0,
         "odds_lookup_requested": 0,
         "odds_lookup_resolved": 0,
+        "odds_lookup_resolved_partial": 0,
+        "odds_lookup_unresolved_after_lookup": 0,
+        "odds_lookup_response_count": 0,
+        "odds_lookup_missing_hash_entries": 0,
+        "odds_lookup_null_entries": 0,
+        "odds_lookup_sample_missing_hashes": [],
+        "odds_lookup_sample_null_hashes": [],
+        "dropped_missing_odds_count": 0,
+        "dropped_invalid_odds_count": 0,
+        "sample_dropped_market_hashes": [],
+        "sample_filtered_leagues": [],
         "pages_fetched": 0,
         "retries_used": 0,
         "payload_cache": "miss",
@@ -759,18 +819,26 @@ def fetch_events(
     unresolved_hashes: List[str] = []
     for fixture in fixtures:
         if not _fixture_matches_sport(sport_key, fixture, manual_league_map):
+            stats["fixtures_filtered_out_by_league_count"] += 1
+            league_label = _normalize_text(fixture.get("leagueLabel"))
+            if league_label and len(stats["sample_filtered_leagues"]) < 5:
+                if league_label not in stats["sample_filtered_leagues"]:
+                    stats["sample_filtered_leagues"].append(league_label)
             continue
         stats["fixtures_sport_filtered_count"] += 1
         team_one = _normalize_text(fixture.get("teamOne"))
         team_two = _normalize_text(fixture.get("teamTwo"))
         if not (team_one and team_two):
+            stats["fixtures_missing_team_count"] += 1
             continue
         commence = _normalize_commence_time(fixture.get("gameTime"))
         if not commence:
+            stats["fixtures_missing_commence_count"] += 1
             continue
 
         markets_list = fixture.get("markets")
         if not isinstance(markets_list, list):
+            stats["fixtures_no_markets_count"] += 1
             continue
         fixture_event_id = _normalize_text(fixture.get("eventId") or fixture.get("id"))
         fixture_id = _normalize_text(fixture.get("id") or fixture.get("eventId"))
@@ -784,6 +852,7 @@ def fetch_events(
             if not normalized_market:
                 continue
             stats["fixtures_market_found_count"] += 1
+            stats["candidates_total_count"] += 1
             market_hash = normalized_market.get("market_hash")
             if (
                 (normalized_market.get("odds_one") is None or normalized_market.get("odds_two") is None)
@@ -805,19 +874,39 @@ def fetch_events(
     if unresolved_hashes:
         unique_hashes = list(dict.fromkeys(unresolved_hashes))
         stats["odds_lookup_requested"] = len(unique_hashes)
-        odds_map, retries_used = _load_best_odds_map(
+        odds_map, retries_used, lookup_meta = _load_best_odds_map(
             market_hashes=unique_hashes,
             base_token=base_token,
             retries=retries,
             backoff_seconds=backoff,
         )
         stats["retries_used"] += retries_used
+        stats["odds_lookup_response_count"] = int(lookup_meta.get("best_odds_items", 0) or 0)
+        stats["odds_lookup_null_entries"] = int(lookup_meta.get("best_odds_null_count", 0) or 0)
+        resolved_partial = int(lookup_meta.get("best_odds_with_any_odds", 0) or 0) - int(
+            lookup_meta.get("best_odds_with_both_odds", 0) or 0
+        )
+        stats["odds_lookup_resolved_partial"] = max(0, resolved_partial)
+        missing_hashes = [market_hash for market_hash in unique_hashes if market_hash not in odds_map]
+        null_hashes = [
+            market_hash
+            for market_hash in unique_hashes
+            if market_hash in odds_map
+            and odds_map[market_hash][0] is None
+            and odds_map[market_hash][1] is None
+        ]
+        stats["odds_lookup_missing_hash_entries"] = len(missing_hashes)
+        stats["odds_lookup_sample_missing_hashes"] = missing_hashes[:5]
+        stats["odds_lookup_sample_null_hashes"] = null_hashes[:5]
         stats["odds_lookup_resolved"] = sum(
             1
             for market_hash in unique_hashes
             if market_hash in odds_map
             and odds_map[market_hash][0] is not None
             and odds_map[market_hash][1] is not None
+        )
+        stats["odds_lookup_unresolved_after_lookup"] = len(unique_hashes) - int(
+            stats.get("odds_lookup_resolved", 0) or 0
         )
 
     events_by_id: Dict[str, dict] = {}
@@ -831,8 +920,13 @@ def fetch_events(
                 odds_one = odds_one or mapped[0]
                 odds_two = odds_two or mapped[1]
         if odds_one is None or odds_two is None:
+            stats["dropped_missing_odds_count"] += 1
+            if market_hash and len(stats["sample_dropped_market_hashes"]) < 5:
+                if market_hash not in stats["sample_dropped_market_hashes"]:
+                    stats["sample_dropped_market_hashes"].append(market_hash)
             continue
         if odds_one <= 1 or odds_two <= 1:
+            stats["dropped_invalid_odds_count"] += 1
             continue
 
         event_id = candidate.get("event_id") or candidate.get("id")

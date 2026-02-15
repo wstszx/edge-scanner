@@ -208,6 +208,17 @@ You can also pass `saveScan=true` in the `/scan` request JSON to save per-reques
 When enabled, the scanner keeps only the newest `scan_*.json` file in `SCAN_SAVE_DIR`.
 Saved request payloads automatically redact `apiKey`/`apiKeys`.
 
+Optional: write per-scan HTTP request logs (URL, params, status, response preview, duration):
+```
+SCAN_REQUEST_LOG_ENABLED=1
+SCAN_REQUEST_LOG_DIR=data/request_logs
+SCAN_REQUEST_LOG_MAX_BODY_CHARS=2000
+```
+When enabled, each scan writes a `requests_*.jsonl` file to `SCAN_REQUEST_LOG_DIR`.
+The scan response includes:
+- `request_log.path`
+- `request_log.requests_logged`
+
 Optional: save latest custom-provider fetch results per provider (overwrites each scan):
 ```
 CUSTOM_PROVIDER_SNAPSHOT_ENABLED=1

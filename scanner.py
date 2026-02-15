@@ -10,12 +10,13 @@ import json
 import math
 import os
 import re
+import threading
 import time
 import unicodedata
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import requests
 
@@ -70,6 +71,32 @@ CUSTOM_PROVIDER_SNAPSHOT_DIR = os.getenv(
     "CUSTOM_PROVIDER_SNAPSHOT_DIR",
     str(Path("data") / "provider_snapshots"),
 ).strip()
+CROSS_PROVIDER_MATCH_REPORT_ENABLED = os.getenv(
+    "CROSS_PROVIDER_MATCH_REPORT_ENABLED", "1"
+).strip().lower() not in {"0", "false", "no", "off"}
+CROSS_PROVIDER_MATCH_REPORT_FILENAME = os.getenv(
+    "CROSS_PROVIDER_MATCH_REPORT_FILENAME",
+    "cross_provider_match_report.json",
+).strip()
+CROSS_PROVIDER_MATCH_TOLERANCE_MINUTES_RAW = os.getenv(
+    "CROSS_PROVIDER_MATCH_TOLERANCE_MINUTES",
+    "180",
+).strip()
+SCAN_REQUEST_LOG_ENABLED = os.getenv("SCAN_REQUEST_LOG_ENABLED", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+SCAN_REQUEST_LOG_DIR = os.getenv(
+    "SCAN_REQUEST_LOG_DIR",
+    str(Path("data") / "request_logs"),
+).strip()
+SCAN_REQUEST_LOG_MAX_BODY_CHARS_RAW = os.getenv("SCAN_REQUEST_LOG_MAX_BODY_CHARS", "2000").strip()
+try:
+    SCAN_REQUEST_LOG_MAX_BODY_CHARS = max(0, int(float(SCAN_REQUEST_LOG_MAX_BODY_CHARS_RAW)))
+except (TypeError, ValueError):
+    SCAN_REQUEST_LOG_MAX_BODY_CHARS = 2000
 
 COMMON_EXTRA_MARKETS = [
     "h2h_lay",
@@ -162,7 +189,6 @@ SOFT_BOOK_KEY_SET = set(SOFT_BOOK_KEYS)
 SHARP_BOOK_MAP = {book["key"]: book for book in SHARP_BOOKS}
 PUREBET_BOOK_KEY = "purebet"
 PUREBET_TITLE = "Purebet"
-PUREBET_ENV_ENABLED = os.getenv("PUREBET_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 PUREBET_SOURCE = os.getenv("PUREBET_SOURCE", "api").strip().lower()
 PUREBET_SAMPLE_PATH = os.getenv(
     "PUREBET_SAMPLE_PATH", str(Path("data") / "purebet_sample.json")
@@ -183,6 +209,10 @@ PUREBET_FUZZY_THRESHOLD_RAW = os.getenv("PUREBET_FUZZY_MATCH_THRESHOLD", "0.85")
 PUREBET_MARKET_WORKERS_RAW = os.getenv("PUREBET_MARKET_WORKERS", "8").strip()
 PUREBET_MARKET_RETRIES_RAW = os.getenv("PUREBET_MARKET_RETRIES", "2").strip()
 PUREBET_RETRY_BACKOFF_RAW = os.getenv("PUREBET_RETRY_BACKOFF", "0.4").strip()
+PROVIDER_FETCH_MAX_WORKERS_RAW = os.getenv("PROVIDER_FETCH_MAX_WORKERS", "3").strip()
+SPORT_SCAN_MAX_WORKERS_RAW = os.getenv("SPORT_SCAN_MAX_WORKERS", "2").strip()
+PROVIDER_NETWORK_RETRY_ONCE_RAW = os.getenv("PROVIDER_NETWORK_RETRY_ONCE", "1").strip()
+PROVIDER_NETWORK_RETRY_DELAY_MS_RAW = os.getenv("PROVIDER_NETWORK_RETRY_DELAY_MS", "250").strip()
 PUREBET_MARKETS_ENABLED = os.getenv("PUREBET_MARKETS_ENABLED", "1").strip().lower() not in {
     "0",
     "false",
@@ -232,6 +262,294 @@ def _provider_snapshot_filename(provider_key: object) -> str:
     return token or "provider"
 
 
+def _cross_provider_match_tolerance_minutes() -> int:
+    try:
+        return max(0, int(float(CROSS_PROVIDER_MATCH_TOLERANCE_MINUTES_RAW)))
+    except (TypeError, ValueError):
+        return 180
+
+
+def _normalize_match_team_token(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    text = re.sub(r"\b(fc|cf|afc|sc)\b", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _cross_provider_pair_norm(home_team: object, away_team: object) -> str:
+    home = _normalize_match_team_token(home_team)
+    away = _normalize_match_team_token(away_team)
+    if not home or not away:
+        return ""
+    first, second = sorted((home, away))
+    return f"{first} vs {second}"
+
+
+def _parse_commence_ts(commence_time: object) -> Optional[int]:
+    text = str(commence_time or "").strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            parsed = dt.datetime.fromisoformat(text[:-1] + "+00:00")
+        else:
+            parsed = dt.datetime.fromisoformat(text)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return int(parsed.astimezone(dt.timezone.utc).timestamp())
+    except ValueError:
+        return None
+
+
+def _event_market_count(event: dict) -> int:
+    bookmakers = event.get("bookmakers") if isinstance(event.get("bookmakers"), list) else []
+    total = 0
+    for bookmaker in bookmakers:
+        if not isinstance(bookmaker, dict):
+            continue
+        markets = bookmaker.get("markets")
+        if not isinstance(markets, list):
+            continue
+        total += sum(1 for market in markets if isinstance(market, dict))
+    return total
+
+
+def _build_cross_provider_match_report(scan_time: str, snapshots: Dict[str, dict]) -> Optional[dict]:
+    providers = [str(key) for key in snapshots.keys()]
+    provider_event_counts = {provider: 0 for provider in providers}
+    records: List[dict] = []
+    for provider_key, payload in snapshots.items():
+        provider = str(provider_key)
+        events = payload.get("events") if isinstance(payload, dict) else []
+        if not isinstance(events, list):
+            continue
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            sport_key = _normalize_line_component(event.get("sport_key"))
+            home_team = str(event.get("home_team") or "").strip()
+            away_team = str(event.get("away_team") or "").strip()
+            commence_time = str(event.get("commence_time") or "").strip()
+            event_id = str(event.get("id") or event.get("event_id") or "").strip()
+            pair_norm = _cross_provider_pair_norm(home_team, away_team)
+            record = {
+                "provider": provider,
+                "sport_key": sport_key,
+                "home_team": home_team,
+                "away_team": away_team,
+                "event_id": event_id,
+                "commence_time": commence_time,
+                "commence_ts": _parse_commence_ts(commence_time),
+                "pair_norm": pair_norm,
+                "markets_count": _event_market_count(event),
+            }
+            records.append(record)
+            provider_event_counts[provider] = provider_event_counts.get(provider, 0) + 1
+
+    if not records:
+        return {
+            "saved_at": scan_time,
+            "summary": {
+                "providers_considered": providers,
+                "provider_event_counts": provider_event_counts,
+                "total_raw_records": 0,
+                "total_match_clusters": 0,
+                "overlap_clusters": 0,
+                "clusters_by_provider_count": {},
+                "provider_cluster_presence": {},
+                "pair_overlap_clusters": {},
+                "single_provider_cluster_counts": {},
+                "tolerance_minutes": _cross_provider_match_tolerance_minutes(),
+            },
+            "clusters": [],
+            "single_provider_samples": [],
+        }
+
+    grouped: Dict[Tuple[str, str], List[dict]] = {}
+    for idx, record in enumerate(records):
+        sport_key = record.get("sport_key") or "unknown_sport"
+        pair_norm = record.get("pair_norm") or f"__single__{idx}"
+        grouped.setdefault((sport_key, pair_norm), []).append(record)
+
+    tolerance_seconds = _cross_provider_match_tolerance_minutes() * 60
+    cluster_id = 0
+    clusters: List[dict] = []
+    for (sport_key, pair_norm), items in grouped.items():
+        ordered = sorted(
+            items,
+            key=lambda item: (
+                item.get("commence_ts") is None,
+                item.get("commence_ts") or 0,
+                str(item.get("commence_time") or ""),
+                str(item.get("provider") or ""),
+            ),
+        )
+        local_clusters: List[dict] = []
+        for record in ordered:
+            ts = record.get("commence_ts")
+            placed = None
+            for candidate in local_clusters:
+                rep_ts = candidate.get("representative_ts")
+                if ts is None or rep_ts is None:
+                    if record.get("commence_time") and record.get("commence_time") == candidate.get(
+                        "representative_time_utc"
+                    ):
+                        placed = candidate
+                        break
+                    continue
+                if abs(int(ts) - int(rep_ts)) <= tolerance_seconds:
+                    placed = candidate
+                    break
+            if placed is None:
+                cluster_id += 1
+                placed = {
+                    "cluster_id": cluster_id,
+                    "sport_key": sport_key,
+                    "pair_norm": pair_norm,
+                    "representative_ts": ts,
+                    "representative_time_utc": record.get("commence_time") or "",
+                    "events": [],
+                }
+                local_clusters.append(placed)
+            if placed.get("representative_ts") is None and ts is not None:
+                placed["representative_ts"] = ts
+                placed["representative_time_utc"] = record.get("commence_time") or ""
+            placed["events"].append(
+                {
+                    "provider": record.get("provider"),
+                    "event_id": record.get("event_id"),
+                    "commence_time": record.get("commence_time"),
+                    "home_team": record.get("home_team"),
+                    "away_team": record.get("away_team"),
+                    "markets_count": record.get("markets_count"),
+                }
+            )
+        clusters.extend(local_clusters)
+
+    clusters_by_provider_count: Dict[str, int] = {}
+    provider_cluster_presence: Dict[str, int] = {}
+    pair_overlap_clusters: Dict[str, int] = {}
+    single_provider_cluster_counts: Dict[str, int] = {}
+
+    for cluster in clusters:
+        events = cluster.get("events") if isinstance(cluster.get("events"), list) else []
+        providers_in_cluster = sorted(
+            {
+                str(item.get("provider"))
+                for item in events
+                if isinstance(item, dict) and str(item.get("provider") or "").strip()
+            }
+        )
+        provider_count = len(providers_in_cluster)
+        cluster["providers"] = providers_in_cluster
+        cluster["provider_count"] = provider_count
+        if "representative_ts" in cluster:
+            cluster.pop("representative_ts", None)
+        events.sort(key=lambda item: (str(item.get("provider") or ""), str(item.get("commence_time") or "")))
+        key = str(provider_count)
+        clusters_by_provider_count[key] = clusters_by_provider_count.get(key, 0) + 1
+        for provider in providers_in_cluster:
+            provider_cluster_presence[provider] = provider_cluster_presence.get(provider, 0) + 1
+        if provider_count == 1:
+            only_provider = providers_in_cluster[0]
+            single_provider_cluster_counts[only_provider] = (
+                single_provider_cluster_counts.get(only_provider, 0) + 1
+            )
+        if provider_count >= 2:
+            for left, right in itertools.combinations(providers_in_cluster, 2):
+                pair_key = f"{left}__{right}"
+                pair_overlap_clusters[pair_key] = pair_overlap_clusters.get(pair_key, 0) + 1
+
+    overlap_clusters = [cluster for cluster in clusters if int(cluster.get("provider_count", 0) or 0) >= 2]
+    overlap_clusters.sort(
+        key=lambda cluster: (
+            -int(cluster.get("provider_count", 0) or 0),
+            str(cluster.get("sport_key") or ""),
+            str(cluster.get("representative_time_utc") or ""),
+            str(cluster.get("pair_norm") or ""),
+        )
+    )
+
+    single_provider_samples: List[dict] = []
+    for cluster in clusters:
+        if int(cluster.get("provider_count", 0) or 0) != 1:
+            continue
+        events = cluster.get("events") if isinstance(cluster.get("events"), list) else []
+        if not events:
+            continue
+        first = events[0] if isinstance(events[0], dict) else {}
+        single_provider_samples.append(
+            {
+                "cluster_id": cluster.get("cluster_id"),
+                "sport_key": cluster.get("sport_key"),
+                "pair_norm": cluster.get("pair_norm"),
+                "provider": first.get("provider"),
+                "event_id": first.get("event_id"),
+                "commence_time": first.get("commence_time"),
+                "markets_count": first.get("markets_count"),
+            }
+        )
+        if len(single_provider_samples) >= 120:
+            break
+
+    return {
+        "saved_at": scan_time,
+        "summary": {
+            "providers_considered": providers,
+            "provider_event_counts": provider_event_counts,
+            "total_raw_records": len(records),
+            "total_match_clusters": len(clusters),
+            "overlap_clusters": len(overlap_clusters),
+            "clusters_by_provider_count": clusters_by_provider_count,
+            "provider_cluster_presence": provider_cluster_presence,
+            "pair_overlap_clusters": pair_overlap_clusters,
+            "single_provider_cluster_counts": single_provider_cluster_counts,
+            "tolerance_minutes": _cross_provider_match_tolerance_minutes(),
+        },
+        "clusters": overlap_clusters,
+        "single_provider_samples": single_provider_samples,
+    }
+
+
+def _persist_cross_provider_match_report(scan_time: str, snapshots: Dict[str, dict]) -> str:
+    if not CROSS_PROVIDER_MATCH_REPORT_ENABLED:
+        return ""
+    if not CUSTOM_PROVIDER_SNAPSHOT_ENABLED:
+        return ""
+    if not CUSTOM_PROVIDER_SNAPSHOT_DIR:
+        return ""
+    if not snapshots:
+        return ""
+    report = _build_cross_provider_match_report(scan_time, snapshots)
+    if not isinstance(report, dict):
+        return ""
+    filename = re.sub(
+        r"[^a-z0-9._-]+",
+        "_",
+        str(CROSS_PROVIDER_MATCH_REPORT_FILENAME or "").strip().lower(),
+    )
+    if not filename:
+        filename = "cross_provider_match_report.json"
+    if not filename.endswith(".json"):
+        filename = f"{filename}.json"
+    try:
+        target_dir = Path(CUSTOM_PROVIDER_SNAPSHOT_DIR)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        path = target_dir / filename
+        tmp_path = path.with_suffix(".json.tmp")
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            json.dump(report, handle, ensure_ascii=False, indent=2)
+        tmp_path.replace(path)
+        return str(path)
+    except OSError:
+        return ""
+
+
 def _persist_provider_snapshots(scan_time: str, snapshots: Dict[str, dict]) -> Dict[str, str]:
     saved_paths: Dict[str, str] = {}
     if not CUSTOM_PROVIDER_SNAPSHOT_ENABLED:
@@ -274,18 +592,345 @@ def _persist_provider_snapshots(scan_time: str, snapshots: Dict[str, dict]) -> D
     return saved_paths
 
 
-def _resolve_purebet_enabled(value: Optional[bool]) -> bool:
-    if value is None:
-        return PUREBET_ENV_ENABLED
-    return bool(value)
+_REQUEST_LOG_SENSITIVE_KEYS = {
+    "apikey",
+    "api_key",
+    "authorization",
+    "token",
+    "secret",
+    "password",
+    "cookie",
+    "xapikey",
+    "x_api_key",
+    "session",
+}
+_REQUEST_TRACE_LOCK = threading.RLock()
+_REQUEST_TRACE_ACTIVE: List["_ScanRequestLogger"] = []
+_REQUEST_TRACE_PATCHED = False
+_REQUESTS_SESSION_REQUEST_ORIGINAL = requests.sessions.Session.request
 
 
-def _provider_env_enabled(provider_key: str, default: bool = False) -> bool:
-    env_key = f"{re.sub(r'[^A-Za-z0-9]', '_', provider_key).upper()}_ENABLED"
-    raw = os.getenv(env_key)
-    if raw is None or not str(raw).strip():
-        return default
-    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+def _is_sensitive_log_key(key: object) -> bool:
+    token = re.sub(r"[^a-z0-9]+", "", str(key or "").strip().lower())
+    if not token:
+        return False
+    if token in _REQUEST_LOG_SENSITIVE_KEYS:
+        return True
+    return any(part in token for part in ("apikey", "authorization", "token", "secret", "password"))
+
+
+def _sanitize_for_request_log(value: object, key_hint: Optional[str] = None) -> object:
+    if key_hint and _is_sensitive_log_key(key_hint):
+        return "***redacted***"
+    if isinstance(value, dict):
+        return {str(key): _sanitize_for_request_log(item, key_hint=str(key)) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_for_request_log(item, key_hint=key_hint) for item in value]
+    if isinstance(value, bytes):
+        return _truncate_request_log_text(value.decode("utf-8", errors="replace"))
+    if isinstance(value, str):
+        return _truncate_request_log_text(value)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return _truncate_request_log_text(str(value))
+
+
+def _truncate_request_log_text(text: str, limit: Optional[int] = None) -> str:
+    capped = SCAN_REQUEST_LOG_MAX_BODY_CHARS if limit is None else max(0, int(limit))
+    value = str(text or "")
+    if capped <= 0:
+        return ""
+    if len(value) <= capped:
+        return value
+    return f"{value[:capped]}...<truncated {len(value) - capped} chars>"
+
+
+def _sanitize_request_log_url(url: object) -> str:
+    raw_url = str(url or "")
+    try:
+        parsed = urlsplit(raw_url)
+    except ValueError:
+        return raw_url
+    if not parsed.query:
+        return raw_url
+    redacted_params = []
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if _is_sensitive_log_key(key):
+            redacted_params.append((key, "***redacted***"))
+        else:
+            redacted_params.append((key, value))
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(redacted_params, doseq=True),
+            parsed.fragment,
+        )
+    )
+
+
+def _response_preview_for_request_log(response: requests.Response) -> dict:
+    content_type = str(response.headers.get("Content-Type", ""))
+    body_preview = ""
+    size_bytes: Optional[int] = None
+    if SCAN_REQUEST_LOG_MAX_BODY_CHARS > 0:
+        body_bytes = b""
+        try:
+            body_bytes = response.content or b""
+        except Exception:
+            body_bytes = b""
+        size_bytes = len(body_bytes)
+        lower_ct = content_type.lower()
+        if "json" in lower_ct:
+            try:
+                payload = response.json()
+                encoded = json.dumps(
+                    _sanitize_for_request_log(payload),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                body_preview = _truncate_request_log_text(encoded)
+            except ValueError:
+                body_preview = _truncate_request_log_text(response.text)
+        elif lower_ct.startswith("text/") or "xml" in lower_ct or "javascript" in lower_ct:
+            body_preview = _truncate_request_log_text(response.text)
+        else:
+            body_preview = f"<binary:{size_bytes or 0} bytes>"
+    return {
+        "status_code": response.status_code,
+        "ok": bool(response.ok),
+        "headers": _sanitize_for_request_log(dict(response.headers)),
+        "content_type": content_type,
+        "size_bytes": size_bytes,
+        "body_preview": body_preview,
+    }
+
+
+def _build_request_log_entry(
+    method: object,
+    url: object,
+    kwargs: dict,
+    elapsed_ms: float,
+    response: Optional[requests.Response] = None,
+    error: Optional[str] = None,
+) -> dict:
+    headers = kwargs.get("headers")
+    request_payload = {
+        "method": str(method or "").upper() or "GET",
+        "url": _sanitize_request_log_url(url),
+        "params": _sanitize_for_request_log(kwargs.get("params")),
+        "headers": _sanitize_for_request_log(dict(headers)) if isinstance(headers, dict) else _sanitize_for_request_log(headers),
+        "json": _sanitize_for_request_log(kwargs.get("json")),
+        "data": _sanitize_for_request_log(kwargs.get("data")),
+        "timeout": _sanitize_for_request_log(kwargs.get("timeout")),
+    }
+    entry = {
+        "type": "request",
+        "time": _iso_now(),
+        "elapsed_ms": round(float(elapsed_ms or 0.0), 2),
+        "request": request_payload,
+    }
+    if response is not None:
+        entry["response"] = _response_preview_for_request_log(response)
+    if error:
+        entry["error"] = _truncate_request_log_text(str(error), limit=max(512, SCAN_REQUEST_LOG_MAX_BODY_CHARS))
+    return entry
+
+
+class _ScanRequestLogger:
+    def __init__(self, scan_time: str) -> None:
+        self.scan_time = scan_time
+        self.path = ""
+        self.error = ""
+        self.requests_logged = 0
+        self.owner_thread_id = threading.get_ident()
+        self.enabled = SCAN_REQUEST_LOG_ENABLED and bool(SCAN_REQUEST_LOG_DIR)
+        self._lock = threading.Lock()
+        self._handle = None
+
+    def start(self) -> None:
+        if not self.enabled:
+            return
+        try:
+            target_dir = Path(SCAN_REQUEST_LOG_DIR)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            stamp = dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            path = target_dir / f"requests_{stamp}_{uuid.uuid4().hex[:6]}.jsonl"
+            self._handle = path.open("w", encoding="utf-8")
+            self.path = str(path)
+            self._write(
+                {
+                    "type": "meta",
+                    "scan_time": self.scan_time,
+                    "created_at": _iso_now(),
+                    "max_body_chars": SCAN_REQUEST_LOG_MAX_BODY_CHARS,
+                }
+            )
+        except OSError as exc:
+            self.enabled = False
+            self.error = f"Failed to create request log file: {exc}"
+            self._handle = None
+            self.path = ""
+
+    def _write(self, payload: dict) -> None:
+        if not self._handle:
+            return
+        with self._lock:
+            self._handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            self._handle.flush()
+
+    def log_request(self, payload: dict) -> None:
+        if not self._handle:
+            return
+        with self._lock:
+            self.requests_logged += 1
+            enriched = dict(payload)
+            enriched["seq"] = self.requests_logged
+            self._handle.write(json.dumps(enriched, ensure_ascii=False) + "\n")
+            self._handle.flush()
+
+    def log_meta(self, payload: dict) -> None:
+        if not self._handle:
+            return
+        self._write(payload)
+
+    def close(self) -> None:
+        if not self._handle:
+            return
+        with self._lock:
+            try:
+                self._handle.write(
+                    json.dumps(
+                        {
+                            "type": "summary",
+                            "closed_at": _iso_now(),
+                            "requests_logged": self.requests_logged,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+                self._handle.flush()
+            finally:
+                try:
+                    self._handle.close()
+                finally:
+                    self._handle = None
+
+
+def _active_request_loggers() -> List["_ScanRequestLogger"]:
+    with _REQUEST_TRACE_LOCK:
+        return list(_REQUEST_TRACE_ACTIVE)
+
+
+def _instrumented_session_request(self, method, url, **kwargs):  # type: ignore[no-untyped-def]
+    started_at = time.perf_counter()
+    response = None
+    error = None
+    try:
+        response = _REQUESTS_SESSION_REQUEST_ORIGINAL(self, method, url, **kwargs)
+        return response
+    except Exception as exc:
+        error = str(exc)
+        raise
+    finally:
+        active = _active_request_loggers()
+        if not active:
+            return
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        try:
+            entry = _build_request_log_entry(
+                method=method,
+                url=url,
+                kwargs=kwargs,
+                elapsed_ms=elapsed_ms,
+                response=response,
+                error=error,
+            )
+        except Exception:
+            return
+        for logger in active:
+            try:
+                logger.log_request(entry)
+            except Exception:
+                continue
+
+
+def _ensure_request_logging_patch() -> None:
+    global _REQUEST_TRACE_PATCHED
+    with _REQUEST_TRACE_LOCK:
+        if _REQUEST_TRACE_PATCHED:
+            return
+        requests.sessions.Session.request = _instrumented_session_request
+        _REQUEST_TRACE_PATCHED = True
+
+
+def _activate_request_logger(logger: _ScanRequestLogger) -> None:
+    if not logger.enabled:
+        return
+    _ensure_request_logging_patch()
+    with _REQUEST_TRACE_LOCK:
+        for idx in range(len(_REQUEST_TRACE_ACTIVE) - 1, -1, -1):
+            stale = _REQUEST_TRACE_ACTIVE[idx]
+            if stale.owner_thread_id != logger.owner_thread_id:
+                continue
+            _REQUEST_TRACE_ACTIVE.pop(idx)
+            try:
+                stale.close()
+            except Exception:
+                pass
+        _REQUEST_TRACE_ACTIVE.append(logger)
+
+
+def _deactivate_request_logger(logger: _ScanRequestLogger) -> None:
+    with _REQUEST_TRACE_LOCK:
+        for idx in range(len(_REQUEST_TRACE_ACTIVE) - 1, -1, -1):
+            if _REQUEST_TRACE_ACTIVE[idx] is logger:
+                _REQUEST_TRACE_ACTIVE.pop(idx)
+                break
+
+
+def _attach_request_log_info(result: dict, logger: _ScanRequestLogger) -> dict:
+    if not isinstance(result, dict):
+        return result
+    if logger.path:
+        result["request_log"] = {
+            "enabled": True,
+            "path": logger.path,
+            "requests_logged": logger.requests_logged,
+        }
+        if logger.error:
+            result["request_log"]["error"] = logger.error
+    elif SCAN_REQUEST_LOG_ENABLED:
+        result["request_log"] = {"enabled": False}
+        if logger.error:
+            result["request_log"]["error"] = logger.error
+    return result
+
+
+def _activate_provider_scan_caches(enabled_provider_keys: Sequence[str]) -> List[object]:
+    active_cache_modules: List[object] = []
+    provider_set = set(enabled_provider_keys or [])
+    if "bookmaker_xyz" in provider_set:
+        try:
+            from providers import bookmaker_xyz
+
+            bookmaker_xyz.enable_scan_cache()
+            active_cache_modules.append(bookmaker_xyz)
+        except Exception:
+            pass
+    return active_cache_modules
+
+
+def _deactivate_provider_scan_caches(active_cache_modules: Sequence[object]) -> None:
+    for module in active_cache_modules or []:
+        try:
+            disable = getattr(module, "disable_scan_cache", None)
+            if callable(disable):
+                disable()
+        except Exception:
+            continue
 
 
 def _normalize_provider_keys(provider_keys: Optional[Sequence[str]]) -> Optional[List[str]]:
@@ -307,17 +952,12 @@ def _resolve_enabled_provider_keys(
     include_providers: Optional[Sequence[str]],
 ) -> List[str]:
     enabled_by_key = {
-        key: _provider_env_enabled(
-            key,
-            default=PUREBET_ENV_ENABLED if key == PUREBET_BOOK_KEY else False,
-        )
+        key: False
         for key in PROVIDER_FETCHERS
     }
-    explicit_providers = _normalize_provider_keys(include_providers)
-    if explicit_providers is not None:
-        enabled_by_key = {key: False for key in PROVIDER_FETCHERS}
-        for key in explicit_providers:
-            enabled_by_key[key] = True
+    explicit_providers = _normalize_provider_keys(include_providers) or []
+    for key in explicit_providers:
+        enabled_by_key[key] = True
     if include_purebet is not None and PUREBET_BOOK_KEY in enabled_by_key:
         enabled_by_key[PUREBET_BOOK_KEY] = bool(include_purebet)
     return [key for key in PROVIDER_FETCHERS if enabled_by_key.get(key)]
@@ -735,6 +1375,52 @@ def _purebet_retry_backoff() -> float:
         return max(0.0, float(PUREBET_RETRY_BACKOFF_RAW))
     except (TypeError, ValueError):
         return 0.4
+
+
+def _provider_fetch_max_workers() -> int:
+    try:
+        return max(1, int(float(PROVIDER_FETCH_MAX_WORKERS_RAW)))
+    except (TypeError, ValueError):
+        return 3
+
+
+def _sport_scan_max_workers() -> int:
+    try:
+        return max(1, int(float(SPORT_SCAN_MAX_WORKERS_RAW)))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _provider_network_retry_once_enabled() -> bool:
+    return str(PROVIDER_NETWORK_RETRY_ONCE_RAW or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _provider_network_retry_delay_seconds() -> float:
+    try:
+        return max(0.0, float(PROVIDER_NETWORK_RETRY_DELAY_MS_RAW) / 1000.0)
+    except (TypeError, ValueError):
+        return 0.25
+
+
+def _is_transient_provider_network_error(message: object) -> bool:
+    text = str(message or "").strip().lower()
+    if not text:
+        return False
+    indicators = (
+        "connection reset",
+        "connectionreseterror",
+        "connection aborted",
+        "remote host",
+        "read timed out",
+        "timed out",
+        "temporarily unavailable",
+    )
+    return any(token in text for token in indicators)
 
 
 def _purebet_league_sync_ttl() -> int:
@@ -2201,14 +2887,16 @@ class ApiKeyPool:
         self._keys = normalized
         self._cycle = itertools.cycle(self._keys)
         self.calls_made = 0
+        self._lock = threading.Lock()
 
     def request(self, url: str, params: Dict[str, str]) -> requests.Response:
         if not self._keys:
             raise ScannerError("API key is required", status_code=401)
         last_error: Optional[ScannerError] = None
         for _ in range(len(self._keys)):
-            key = next(self._cycle)
-            self.calls_made += 1
+            with self._lock:
+                key = next(self._cycle)
+                self.calls_made += 1
             try:
                 return _request(url, {**params, "apiKey": key})
             except ScannerError as exc:
@@ -3232,6 +3920,486 @@ def _build_scan_timings(
     }
 
 
+def _fetch_provider_events_for_sport(
+    provider_key: str,
+    sport_key: str,
+    provider_markets: Sequence[str],
+    regions: Sequence[str],
+    bookmakers: Optional[Sequence[str]],
+) -> dict:
+    provider_title = PROVIDER_TITLES.get(provider_key, provider_key)
+    fetch_provider_events = PROVIDER_FETCHERS.get(provider_key)
+    provider_fetch_started_at = time.perf_counter()
+    provider_events: List[dict] = []
+    provider_stats: dict = {}
+    provider_error: Optional[str] = None
+    if not callable(fetch_provider_events):
+        provider_error = "Provider fetcher is not callable"
+    else:
+        try:
+            provider_events = fetch_provider_events(
+                sport_key,
+                provider_markets,
+                regions,
+                bookmakers=bookmakers,
+            )
+            if not isinstance(provider_events, list):
+                provider_events = []
+            provider_stats = getattr(fetch_provider_events, "last_stats", {}) or {}
+        except Exception as exc:
+            provider_error = str(exc)
+    return {
+        "key": provider_key,
+        "name": provider_title,
+        "events": provider_events,
+        "stats": provider_stats,
+        "error": provider_error,
+        "ms": _elapsed_ms(provider_fetch_started_at),
+    }
+
+
+def _scan_single_sport(
+    sport: dict,
+    all_markets: bool,
+    should_fetch_api: bool,
+    api_pool: ApiKeyPool,
+    normalized_regions: Sequence[str],
+    api_bookmakers: Sequence[str],
+    provider_target_sport_keys: Sequence[str],
+    enabled_provider_keys: Sequence[str],
+    normalized_bookmakers: Sequence[str],
+    stake_amount: float,
+    commission_rate: float,
+    sharp_priority: Sequence[dict],
+    min_edge_percent: float,
+    bankroll: float,
+    kelly_fraction: float,
+) -> dict:
+    sport_started_at = time.perf_counter()
+    sport_key = sport.get("key")
+    if not sport_key:
+        return {
+            "skipped": True,
+            "sport_key": "",
+            "sport_timing": None,
+            "timing_steps": [],
+            "api_market_skips": [],
+            "sport_errors": [],
+            "provider_updates": {},
+            "provider_snapshot_updates": {},
+            "purebet_update": {
+                "events_merged": 0,
+                "sports": [],
+                "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
+                "league_sync": {
+                    "live_updates": 0,
+                    "cache_hits": 0,
+                    "stale_cache_uses": 0,
+                    "dynamic_added": 0,
+                    "unresolved": 0,
+                },
+            },
+            "events_scanned": 0,
+            "total_profit": 0.0,
+            "arb_opportunities": [],
+            "middle_opportunities": [],
+            "plus_ev_opportunities": [],
+            "stale_event_filters": [],
+            "successful": 0,
+        }
+
+    sport_name = sport.get("title") or SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
+    sport_timing = {
+        "sport_key": sport_key,
+        "sport": sport_name,
+        "api_fetch_ms": 0.0,
+        "provider_fetch_ms": 0.0,
+        "analysis_ms": 0.0,
+        "events_scanned": 0,
+        "providers": [],
+        "total_ms": 0.0,
+    }
+    timing_steps: List[dict] = []
+    api_market_skips: List[dict] = []
+    sport_errors: List[dict] = []
+    provider_updates: Dict[str, dict] = {}
+    provider_snapshot_updates: Dict[str, dict] = {}
+    purebet_update = {
+        "events_merged": 0,
+        "sports": [],
+        "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
+        "league_sync": {
+            "live_updates": 0,
+            "cache_hits": 0,
+            "stale_cache_uses": 0,
+            "dynamic_added": 0,
+            "unresolved": 0,
+        },
+    }
+
+    base_markets = markets_for_sport(sport_key)
+    requested_markets = _requested_api_markets(
+        sport_key,
+        base_markets,
+        all_markets=all_markets,
+    )
+    provider_markets = _provider_requested_markets(
+        sport_key,
+        requested_markets,
+        all_markets=all_markets,
+    )
+    events: List[dict] = []
+    if should_fetch_api:
+        api_fetch_started_at = time.perf_counter()
+        api_error = None
+        try:
+            events, invalid_markets = fetch_odds_for_sport_multi_market(
+                api_pool,
+                sport_key,
+                requested_markets,
+                normalized_regions,
+                bookmakers=api_bookmakers or None,
+            )
+            if invalid_markets:
+                api_market_skips.append(
+                    {
+                        "sport_key": sport_key,
+                        "markets": sorted(set(invalid_markets)),
+                    }
+                )
+        except ScannerError as exc:
+            api_error = str(exc)
+            sport_errors.append(
+                {
+                    "sport_key": sport_key,
+                    "sport": sport.get("title")
+                    or SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
+                    "error": str(exc),
+                }
+            )
+        api_fetch_ms = _elapsed_ms(api_fetch_started_at)
+        sport_timing["api_fetch_ms"] = api_fetch_ms
+        api_step = {
+            "name": "api_fetch",
+            "label": f"[{sport_key}] API odds fetch",
+            "sport_key": sport_key,
+            "ms": api_fetch_ms,
+            "events_returned": len(events),
+        }
+        if api_error:
+            api_step["error"] = api_error
+        timing_steps.append(api_step)
+
+    if sport_key not in set(provider_target_sport_keys):
+        provider_markets = []
+
+    provider_results: Dict[str, dict] = {}
+    provider_keys_to_fetch = [
+        key for key in enabled_provider_keys if callable(PROVIDER_FETCHERS.get(key))
+    ]
+    if provider_markets and provider_keys_to_fetch:
+        max_workers = min(_provider_fetch_max_workers(), len(provider_keys_to_fetch))
+        if max_workers <= 1:
+            for provider_key in provider_keys_to_fetch:
+                provider_results[provider_key] = _fetch_provider_events_for_sport(
+                    provider_key=provider_key,
+                    sport_key=sport_key,
+                    provider_markets=provider_markets,
+                    regions=normalized_regions,
+                    bookmakers=normalized_bookmakers,
+                )
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(
+                        _fetch_provider_events_for_sport,
+                        provider_key,
+                        sport_key,
+                        provider_markets,
+                        normalized_regions,
+                        normalized_bookmakers,
+                    ): provider_key
+                    for provider_key in provider_keys_to_fetch
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    provider_key = futures[future]
+                    try:
+                        provider_results[provider_key] = future.result()
+                    except Exception as exc:  # pragma: no cover - defensive
+                        provider_results[provider_key] = {
+                            "key": provider_key,
+                            "name": PROVIDER_TITLES.get(provider_key, provider_key),
+                            "events": [],
+                            "stats": {},
+                            "error": str(exc),
+                            "ms": 0.0,
+                        }
+    for provider_key in enabled_provider_keys:
+        if not provider_markets:
+            break
+        provider_result = provider_results.get(provider_key)
+        if not provider_result:
+            continue
+        provider_title = str(provider_result.get("name") or PROVIDER_TITLES.get(provider_key, provider_key))
+        provider_events = provider_result.get("events")
+        if not isinstance(provider_events, list):
+            provider_events = []
+        stats = provider_result.get("stats")
+        if not isinstance(stats, dict):
+            stats = {}
+        provider_error = _normalize_text(provider_result.get("error")) or None
+        provider_fetch_ms = float(provider_result.get("ms") or 0.0)
+        if (
+            provider_error
+            and _provider_network_retry_once_enabled()
+            and _is_transient_provider_network_error(provider_error)
+        ):
+            retry_delay = _provider_network_retry_delay_seconds()
+            if retry_delay > 0:
+                time.sleep(retry_delay)
+            retry_result = _fetch_provider_events_for_sport(
+                provider_key=provider_key,
+                sport_key=sport_key,
+                provider_markets=provider_markets,
+                regions=normalized_regions,
+                bookmakers=normalized_bookmakers,
+            )
+            provider_fetch_ms += float(retry_result.get("ms") or 0.0)
+            retry_events = retry_result.get("events")
+            if isinstance(retry_events, list):
+                provider_events = retry_events
+            else:
+                provider_events = []
+            retry_stats = retry_result.get("stats")
+            stats = retry_stats if isinstance(retry_stats, dict) else {}
+            retry_error = _normalize_text(retry_result.get("error")) or None
+            if retry_error:
+                provider_error = f"{provider_error}; retry failed: {retry_error}"
+            else:
+                provider_error = None
+                if isinstance(stats, dict):
+                    stats["network_retry_recovered"] = True
+
+        provider_update = provider_updates.setdefault(
+            provider_key,
+            {"events_merged": 0, "sports": []},
+        )
+        provider_snapshot_update = provider_snapshot_updates.setdefault(
+            provider_key,
+            {"provider_name": provider_title, "sports": [], "events": []},
+        )
+        sport_snapshot = {
+            "sport_key": sport_key,
+            "requested_markets": list(provider_markets),
+            "regions": list(normalized_regions),
+        }
+        if provider_error:
+            provider_update["sports"].append(
+                {
+                    "sport_key": sport_key,
+                    "error": provider_error,
+                }
+            )
+            sport_snapshot["error"] = provider_error
+            provider_snapshot_update["sports"].append(sport_snapshot)
+            if provider_key == PUREBET_BOOK_KEY:
+                purebet_update["sports"].append(
+                    {
+                        "sport_key": sport_key,
+                        "error": provider_error,
+                    }
+                )
+            sport_errors.append(
+                {
+                    "sport_key": sport_key,
+                    "sport": sport.get("title")
+                    or SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
+                    "error": f"{provider_title}: {provider_error}",
+                }
+            )
+        else:
+            provider_update["sports"].append(
+                {
+                    "sport_key": sport_key,
+                    "events_returned": len(provider_events),
+                    "stats": stats,
+                }
+            )
+            sport_snapshot.update(
+                {
+                    "events_returned": len(provider_events),
+                    "stats": stats,
+                }
+            )
+            provider_snapshot_update["sports"].append(sport_snapshot)
+            if provider_events:
+                provider_snapshot_update["events"].extend(provider_events)
+            if provider_key == PUREBET_BOOK_KEY:
+                purebet_update["sports"].append(
+                    {
+                        "sport_key": sport_key,
+                        "events_payload": stats.get("events_payload_count", 0),
+                        "events_normalized": stats.get("events_normalized_count", 0),
+                        "events_returned": stats.get("events_returned_count", 0),
+                        "details_enabled": stats.get("details_enabled", False),
+                        "details_requested": stats.get("details_requested", 0),
+                        "details_success": stats.get("details_success", 0),
+                        "details_failed": stats.get("details_failed", 0),
+                        "details_empty": stats.get("details_empty", 0),
+                        "details_retries": stats.get("details_retries", 0),
+                        "details_workers": stats.get("details_workers", 0),
+                        "league_sync_source": stats.get("league_sync_source"),
+                        "league_sync_total_leagues": stats.get("league_sync_total_leagues", 0),
+                        "league_sync_dynamic_added": stats.get("league_sync_dynamic_added", 0),
+                        "league_sync_unresolved": stats.get("league_sync_unresolved", 0),
+                        "league_sync_unresolved_samples": stats.get("league_sync_unresolved_samples", []),
+                        "errors": stats.get("details_error_samples", []),
+                    }
+                )
+                purebet_update["details"]["requested"] += int(
+                    stats.get("details_requested", 0) or 0
+                )
+                purebet_update["details"]["success"] += int(
+                    stats.get("details_success", 0) or 0
+                )
+                purebet_update["details"]["failed"] += int(
+                    stats.get("details_failed", 0) or 0
+                )
+                purebet_update["details"]["empty"] += int(
+                    stats.get("details_empty", 0) or 0
+                )
+                purebet_update["details"]["retries"] += int(
+                    stats.get("details_retries", 0) or 0
+                )
+                league_source = stats.get("league_sync_source")
+                if league_source == "live":
+                    purebet_update["league_sync"]["live_updates"] += 1
+                elif league_source == "cache":
+                    purebet_update["league_sync"]["cache_hits"] += 1
+                elif league_source == "stale_cache":
+                    purebet_update["league_sync"]["stale_cache_uses"] += 1
+                purebet_update["league_sync"]["dynamic_added"] += int(
+                    stats.get("league_sync_dynamic_added", 0) or 0
+                )
+                purebet_update["league_sync"]["unresolved"] += int(
+                    stats.get("league_sync_unresolved", 0) or 0
+                )
+            if provider_events:
+                provider_update["events_merged"] += len(provider_events)
+                if provider_key == PUREBET_BOOK_KEY:
+                    purebet_update["events_merged"] += len(provider_events)
+                events = _merge_events(events, provider_events)
+
+        sport_timing["provider_fetch_ms"] += provider_fetch_ms
+        provider_timing = {
+            "key": provider_key,
+            "name": provider_title,
+            "ms": provider_fetch_ms,
+            "events_returned": len(provider_events),
+        }
+        if provider_error:
+            provider_timing["error"] = provider_error
+        sport_timing["providers"].append(provider_timing)
+        provider_step = {
+            "name": "provider_fetch",
+            "label": f"[{sport_key}] Provider {provider_title}",
+            "sport_key": sport_key,
+            "provider_key": provider_key,
+            "provider": provider_title,
+            "ms": provider_fetch_ms,
+            "events_returned": len(provider_events),
+        }
+        if provider_error:
+            provider_step["error"] = provider_error
+        timing_steps.append(provider_step)
+
+    stale_event_filters: List[dict] = []
+    events, time_filter_stats = _filter_events_for_scan(events)
+    dropped_past = int(time_filter_stats.get("dropped_past", 0) or 0)
+    dropped_missing = int(time_filter_stats.get("dropped_missing_time", 0) or 0)
+    if dropped_past or dropped_missing:
+        stale_event_filters.append(
+            {
+                "sport_key": sport_key,
+                "dropped_past": dropped_past,
+                "dropped_missing_time": dropped_missing,
+            }
+        )
+
+    arb_opportunities: List[dict] = []
+    middle_opportunities: List[dict] = []
+    plus_ev_opportunities: List[dict] = []
+    total_profit = 0.0
+    analysis_started_at = time.perf_counter()
+    for game in events:
+        game["sport_key"] = sport_key
+        game["sport_title"] = sport.get("title")
+        game["sport_display"] = SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
+        arb_markets = _available_markets(game) if all_markets else base_markets
+        for market_key in arb_markets:
+            new_entries = _collect_market_entries(
+                game, market_key, stake_amount, commission_rate
+            )
+            for entry in new_entries:
+                total_profit += entry["stakes"].get("guaranteed_profit", 0.0)
+            arb_opportunities.extend(new_entries)
+            if market_key in MIDDLE_MARKETS:
+                middle_entries = _collect_middle_opportunities(
+                    game, market_key, stake_amount, commission_rate
+                )
+                middle_opportunities.extend(middle_entries)
+        plus_entries = _collect_plus_ev_opportunities(
+            game,
+            arb_markets,
+            sharp_priority,
+            commission_rate,
+            min_edge_percent,
+            bankroll,
+            kelly_fraction,
+        )
+        plus_ev_opportunities.extend(plus_entries)
+    analysis_ms = _elapsed_ms(analysis_started_at)
+    sport_timing["analysis_ms"] = analysis_ms
+    sport_timing["events_scanned"] = len(events)
+    timing_steps.append(
+        {
+            "name": "analyze_events",
+            "label": f"[{sport_key}] Analyze events",
+            "sport_key": sport_key,
+            "ms": analysis_ms,
+            "events_processed": len(events),
+        }
+    )
+    sport_timing["total_ms"] = _elapsed_ms(sport_started_at)
+    timing_steps.append(
+        {
+            "name": "sport_total",
+            "label": f"[{sport_key}] Total",
+            "sport_key": sport_key,
+            "ms": sport_timing["total_ms"],
+            "events_scanned": len(events),
+        }
+    )
+    return {
+        "skipped": False,
+        "sport_key": sport_key,
+        "sport_timing": sport_timing,
+        "timing_steps": timing_steps,
+        "api_market_skips": api_market_skips,
+        "sport_errors": sport_errors,
+        "provider_updates": provider_updates,
+        "provider_snapshot_updates": provider_snapshot_updates,
+        "purebet_update": purebet_update,
+        "events_scanned": len(events),
+        "total_profit": total_profit,
+        "arb_opportunities": arb_opportunities,
+        "middle_opportunities": middle_opportunities,
+        "plus_ev_opportunities": plus_ev_opportunities,
+        "stale_event_filters": stale_event_filters,
+        "successful": 1,
+    }
+
+
 def run_scan(
     api_key: str | Sequence[str],
     sports: Optional[List[str]] = None,
@@ -3251,6 +4419,17 @@ def run_scan(
     scan_started_at = time.perf_counter()
     timing_steps: List[dict] = []
     sport_timings: List[dict] = []
+    request_logger = _ScanRequestLogger(scan_time=_iso_now())
+    request_logger.start()
+    _activate_request_logger(request_logger)
+    active_provider_scan_caches: List[object] = []
+
+    def _finish(result: dict) -> dict:
+        _deactivate_provider_scan_caches(active_provider_scan_caches)
+        _deactivate_request_logger(request_logger)
+        request_logger.close()
+        return _attach_request_log_info(result, request_logger)
+
     setup_started_at = time.perf_counter()
     api_keys = _normalize_api_keys(api_key)
     if stake_amount is None or stake_amount <= 0:
@@ -3269,12 +4448,23 @@ def run_scan(
     if provider_bookmaker_keys:
         enabled_provider_set.update(provider_bookmaker_keys)
         enabled_provider_keys = [key for key in PROVIDER_FETCHERS if key in enabled_provider_set]
+    active_provider_scan_caches = _activate_provider_scan_caches(enabled_provider_keys)
     provider_target_sport_keys = set(requested_sport_keys) if enabled_provider_keys else set()
     explicit_provider_only = include_providers is not None and not api_bookmakers
     should_fetch_api = not explicit_provider_only and not (
         normalized_bookmakers and not api_bookmakers
     )
     include_purebet = PUREBET_BOOK_KEY in enabled_provider_set
+    request_logger.log_meta(
+        {
+            "type": "scan_config",
+            "time": _iso_now(),
+            "requested_sports": list(requested_sport_keys),
+            "bookmakers": list(normalized_bookmakers),
+            "enabled_provider_keys": list(enabled_provider_keys),
+            "should_fetch_api": bool(should_fetch_api),
+        }
+    )
     timing_steps.append(
         {
             "name": "prepare_inputs",
@@ -3285,26 +4475,26 @@ def run_scan(
         }
     )
     if not normalized_regions:
-        return {
+        return _finish({
             "success": False,
             "error": "At least one region must be selected",
             "error_code": 400,
             "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
-        }
+        })
     if should_fetch_api and not api_keys:
-        return {
+        return _finish({
             "success": False,
             "error": "API key is required",
             "error_code": 400,
             "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
-        }
+        })
     if not should_fetch_api and not enabled_provider_keys:
-        return {
+        return _finish({
             "success": False,
             "error": "No enabled providers selected",
             "error_code": 400,
             "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
-        }
+        })
     commission_rate = _clamp_commission(commission_rate)
     api_pool = ApiKeyPool(api_keys)
     filtered_api_sports: List[dict] = []
@@ -3341,12 +4531,12 @@ def run_scan(
                 }
             )
             if not enabled_provider_keys:
-                return {
+                return _finish({
                     "success": False,
                     "error": str(exc),
                     "error_code": 500,
                     "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
-                }
+                })
             api_sports_fetch_error = str(exc)
             should_fetch_api = False
 
@@ -3372,11 +4562,12 @@ def run_scan(
     if not filtered:
         arb_summary = _summaries([], 0, 0, 0.0, api_pool.calls_made)
         middle_summary = _middle_summary([])
-        return {
+        return _finish({
             "success": True,
             "scan_time": _iso_now(),
             "api_market_skips": [],
             "provider_snapshot_paths": {},
+            "cross_provider_match_report_path": "",
             "arbitrage": {
                 "opportunities": [],
                 "opportunities_count": 0,
@@ -3401,7 +4592,7 @@ def run_scan(
             "purebet": purebet_summary,
             "custom_providers": provider_summaries,
             "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
-        }
+        })
 
     arb_opportunities: List[dict] = []
     middle_opportunities: List[dict] = []
@@ -3423,87 +4614,100 @@ def run_scan(
     sharp_priority = _sharp_priority(sharp_book or DEFAULT_SHARP_BOOK)
     stale_event_filters: List[dict] = []
 
-    for sport in filtered:
-        sport_started_at = time.perf_counter()
-        sport_key = sport.get("key")
-        if not sport_key:
-            continue
-        sport_name = sport.get("title") or SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
-        sport_timing = {
-            "sport_key": sport_key,
-            "sport": sport_name,
-            "api_fetch_ms": 0.0,
-            "provider_fetch_ms": 0.0,
-            "analysis_ms": 0.0,
-            "events_scanned": 0,
-            "providers": [],
-            "total_ms": 0.0,
-        }
-        base_markets = markets_for_sport(sport_key)
-        requested_markets = _requested_api_markets(
-            sport_key,
-            base_markets,
-            all_markets=all_markets,
-        )
-        provider_markets = _provider_requested_markets(
-            sport_key,
-            requested_markets,
-            all_markets=all_markets,
-        )
-        events: List[dict] = []
-        if should_fetch_api:
-            api_fetch_started_at = time.perf_counter()
-            api_error = None
-            try:
-                events, invalid_markets = fetch_odds_for_sport_multi_market(
+    sport_results_by_index: Dict[int, dict] = {}
+    sport_workers = min(_sport_scan_max_workers(), len(filtered)) if filtered else 1
+    if sport_workers <= 1:
+        for idx, sport in enumerate(filtered):
+            sport_results_by_index[idx] = _scan_single_sport(
+                sport=sport,
+                all_markets=all_markets,
+                should_fetch_api=should_fetch_api,
+                api_pool=api_pool,
+                normalized_regions=normalized_regions,
+                api_bookmakers=api_bookmakers,
+                provider_target_sport_keys=provider_target_sport_keys,
+                enabled_provider_keys=enabled_provider_keys,
+                normalized_bookmakers=normalized_bookmakers,
+                stake_amount=stake_amount,
+                commission_rate=commission_rate,
+                sharp_priority=sharp_priority,
+                min_edge_percent=min_edge_percent,
+                bankroll=bankroll,
+                kelly_fraction=kelly_fraction,
+            )
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=sport_workers) as executor:
+            futures = {
+                executor.submit(
+                    _scan_single_sport,
+                    sport,
+                    all_markets,
+                    should_fetch_api,
                     api_pool,
-                    sport_key,
-                    requested_markets,
                     normalized_regions,
-                    bookmakers=api_bookmakers or None,
-                )
-                if invalid_markets:
-                    api_market_skips.append(
+                    api_bookmakers,
+                    provider_target_sport_keys,
+                    enabled_provider_keys,
+                    normalized_bookmakers,
+                    stake_amount,
+                    commission_rate,
+                    sharp_priority,
+                    min_edge_percent,
+                    bankroll,
+                    kelly_fraction,
+                ): idx
+                for idx, sport in enumerate(filtered)
+            }
+            for future in concurrent.futures.as_completed(futures):
+                idx = futures[future]
+                sport = filtered[idx]
+                try:
+                    sport_results_by_index[idx] = future.result()
+                except Exception as exc:  # pragma: no cover - defensive
+                    sport_key = _normalize_line_component(sport.get("key"))
+                    sport_name = sport.get("title") or SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
+                    sport_errors.append(
                         {
                             "sport_key": sport_key,
-                            "markets": sorted(set(invalid_markets)),
+                            "sport": sport_name,
+                            "error": f"Sport worker failed: {exc}",
                         }
                     )
-            except ScannerError as exc:
-                api_error = str(exc)
-                sport_errors.append(
-                    {
-                        "sport_key": sport_key,
-                        "sport": sport.get("title")
-                        or SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
-                        "error": str(exc),
-                    }
-                )
-            api_fetch_ms = _elapsed_ms(api_fetch_started_at)
-            sport_timing["api_fetch_ms"] = api_fetch_ms
-            api_step = {
-                "name": "api_fetch",
-                "label": f"[{sport_key}] API odds fetch",
-                "sport_key": sport_key,
-                "ms": api_fetch_ms,
-                "events_returned": len(events),
-            }
-            if api_error:
-                api_step["error"] = api_error
-            timing_steps.append(api_step)
-        if sport_key not in provider_target_sport_keys:
-            provider_markets = []
-        for provider_key in enabled_provider_keys:
-            if not provider_markets:
-                break
-            fetch_provider_events = PROVIDER_FETCHERS.get(provider_key)
-            if not callable(fetch_provider_events):
+
+    for idx in range(len(filtered)):
+        result = sport_results_by_index.get(idx)
+        if not isinstance(result, dict) or result.get("skipped"):
+            continue
+        successful_sports += int(result.get("successful", 0) or 0)
+        events_scanned += int(result.get("events_scanned", 0) or 0)
+        total_profit += float(result.get("total_profit", 0.0) or 0.0)
+        arb_opportunities.extend(result.get("arb_opportunities") or [])
+        middle_opportunities.extend(result.get("middle_opportunities") or [])
+        plus_ev_opportunities.extend(result.get("plus_ev_opportunities") or [])
+        api_market_skips.extend(result.get("api_market_skips") or [])
+        stale_event_filters.extend(result.get("stale_event_filters") or [])
+        sport_errors.extend(result.get("sport_errors") or [])
+        sport_timing = result.get("sport_timing")
+        if isinstance(sport_timing, dict):
+            sport_timings.append(sport_timing)
+        timing_steps.extend(result.get("timing_steps") or [])
+
+        provider_updates = result.get("provider_updates") or {}
+        for provider_key, update in provider_updates.items():
+            if not isinstance(update, dict):
                 continue
             provider_summary = provider_summaries.setdefault(
                 provider_key,
                 _empty_provider_summary(provider_key, True),
             )
-            provider_title = provider_summary.get("name") or PROVIDER_TITLES.get(
+            provider_summary["events_merged"] += int(update.get("events_merged", 0) or 0)
+            provider_summary["sports"].extend(update.get("sports") or [])
+
+        snapshot_updates = result.get("provider_snapshot_updates") or {}
+        for provider_key, update in snapshot_updates.items():
+            if not isinstance(update, dict):
+                continue
+            provider_title = _normalize_text(update.get("provider_name")) or PROVIDER_TITLES.get(
                 provider_key, provider_key
             )
             provider_snapshot = provider_snapshots.setdefault(
@@ -3514,207 +4718,35 @@ def run_scan(
                     "events": [],
                 },
             )
-            sport_snapshot = {
-                "sport_key": sport_key,
-                "requested_markets": list(provider_markets),
-                "regions": list(normalized_regions),
-            }
-            provider_fetch_started_at = time.perf_counter()
-            provider_error = None
-            provider_events: List[dict] = []
-            try:
-                provider_events = fetch_provider_events(
-                    sport_key,
-                    provider_markets,
-                    normalized_regions,
-                    bookmakers=normalized_bookmakers,
-                )
-                if not isinstance(provider_events, list):
-                    provider_events = []
-                stats = getattr(fetch_provider_events, "last_stats", {}) or {}
-                provider_summary["sports"].append(
-                    {
-                        "sport_key": sport_key,
-                        "events_returned": len(provider_events),
-                        "stats": stats,
-                    }
-                )
-                sport_snapshot.update(
-                    {
-                        "events_returned": len(provider_events),
-                        "stats": stats,
-                    }
-                )
-                provider_snapshot["sports"].append(sport_snapshot)
-                if provider_events:
-                    provider_snapshot["events"].extend(provider_events)
-                if provider_key == PUREBET_BOOK_KEY:
-                    purebet_summary["sports"].append(
-                        {
-                            "sport_key": sport_key,
-                            "events_payload": stats.get("events_payload_count", 0),
-                            "events_normalized": stats.get("events_normalized_count", 0),
-                            "events_returned": stats.get("events_returned_count", 0),
-                            "details_enabled": stats.get("details_enabled", False),
-                            "details_requested": stats.get("details_requested", 0),
-                            "details_success": stats.get("details_success", 0),
-                            "details_failed": stats.get("details_failed", 0),
-                            "details_empty": stats.get("details_empty", 0),
-                            "details_retries": stats.get("details_retries", 0),
-                            "details_workers": stats.get("details_workers", 0),
-                            "league_sync_source": stats.get("league_sync_source"),
-                            "league_sync_total_leagues": stats.get("league_sync_total_leagues", 0),
-                            "league_sync_dynamic_added": stats.get("league_sync_dynamic_added", 0),
-                            "league_sync_unresolved": stats.get("league_sync_unresolved", 0),
-                            "league_sync_unresolved_samples": stats.get("league_sync_unresolved_samples", []),
-                            "errors": stats.get("details_error_samples", []),
-                        }
-                    )
-                    purebet_summary["details"]["requested"] += int(
-                        stats.get("details_requested", 0) or 0
-                    )
-                    purebet_summary["details"]["success"] += int(
-                        stats.get("details_success", 0) or 0
-                    )
-                    purebet_summary["details"]["failed"] += int(
-                        stats.get("details_failed", 0) or 0
-                    )
-                    purebet_summary["details"]["empty"] += int(
-                        stats.get("details_empty", 0) or 0
-                    )
-                    purebet_summary["details"]["retries"] += int(
-                        stats.get("details_retries", 0) or 0
-                    )
-                    league_source = stats.get("league_sync_source")
-                    if league_source == "live":
-                        purebet_summary["league_sync"]["live_updates"] += 1
-                    elif league_source == "cache":
-                        purebet_summary["league_sync"]["cache_hits"] += 1
-                    elif league_source == "stale_cache":
-                        purebet_summary["league_sync"]["stale_cache_uses"] += 1
-                    purebet_summary["league_sync"]["dynamic_added"] += int(
-                        stats.get("league_sync_dynamic_added", 0) or 0
-                    )
-                    purebet_summary["league_sync"]["unresolved"] += int(
-                        stats.get("league_sync_unresolved", 0) or 0
-                    )
-                if provider_events:
-                    provider_summary["events_merged"] += len(provider_events)
-                    if provider_key == PUREBET_BOOK_KEY:
-                        purebet_summary["events_merged"] += len(provider_events)
-                    events = _merge_events(events, provider_events)
-            except Exception as exc:
-                provider_error = str(exc)
-                provider_summary["sports"].append(
-                    {
-                        "sport_key": sport_key,
-                        "error": str(exc),
-                    }
-                )
-                sport_snapshot["error"] = str(exc)
-                provider_snapshot["sports"].append(sport_snapshot)
-                if provider_key == PUREBET_BOOK_KEY:
-                    purebet_summary["sports"].append(
-                        {
-                            "sport_key": sport_key,
-                            "error": str(exc),
-                        }
-                    )
-                sport_errors.append(
-                    {
-                        "sport_key": sport_key,
-                        "sport": sport.get("title")
-                        or SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
-                        "error": f"{provider_title}: {exc}",
-                    }
-                )
-            provider_fetch_ms = _elapsed_ms(provider_fetch_started_at)
-            sport_timing["provider_fetch_ms"] += provider_fetch_ms
-            provider_timing = {
-                "key": provider_key,
-                "name": provider_title,
-                "ms": provider_fetch_ms,
-                "events_returned": len(provider_events),
-            }
-            if provider_error:
-                provider_timing["error"] = provider_error
-            sport_timing["providers"].append(provider_timing)
-            provider_step = {
-                "name": "provider_fetch",
-                "label": f"[{sport_key}] Provider {provider_title}",
-                "sport_key": sport_key,
-                "provider_key": provider_key,
-                "provider": provider_title,
-                "ms": provider_fetch_ms,
-                "events_returned": len(provider_events),
-            }
-            if provider_error:
-                provider_step["error"] = provider_error
-            timing_steps.append(provider_step)
-        events, time_filter_stats = _filter_events_for_scan(events)
-        dropped_past = int(time_filter_stats.get("dropped_past", 0) or 0)
-        dropped_missing = int(time_filter_stats.get("dropped_missing_time", 0) or 0)
-        if dropped_past or dropped_missing:
-            stale_event_filters.append(
-                {
-                    "sport_key": sport_key,
-                    "dropped_past": dropped_past,
-                    "dropped_missing_time": dropped_missing,
-                }
+            provider_snapshot["sports"].extend(update.get("sports") or [])
+            provider_snapshot["events"].extend(update.get("events") or [])
+
+        purebet_update = result.get("purebet_update") or {}
+        if isinstance(purebet_update, dict):
+            purebet_summary["events_merged"] += int(purebet_update.get("events_merged", 0) or 0)
+            purebet_summary["sports"].extend(purebet_update.get("sports") or [])
+            details_update = purebet_update.get("details") or {}
+            purebet_summary["details"]["requested"] += int(details_update.get("requested", 0) or 0)
+            purebet_summary["details"]["success"] += int(details_update.get("success", 0) or 0)
+            purebet_summary["details"]["failed"] += int(details_update.get("failed", 0) or 0)
+            purebet_summary["details"]["empty"] += int(details_update.get("empty", 0) or 0)
+            purebet_summary["details"]["retries"] += int(details_update.get("retries", 0) or 0)
+            league_update = purebet_update.get("league_sync") or {}
+            purebet_summary["league_sync"]["live_updates"] += int(
+                league_update.get("live_updates", 0) or 0
             )
-        successful_sports += 1
-        events_scanned += len(events)
-        analysis_started_at = time.perf_counter()
-        for game in events:
-            game["sport_key"] = sport_key
-            game["sport_title"] = sport.get("title")
-            game["sport_display"] = SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
-            arb_markets = _available_markets(game) if all_markets else base_markets
-            for market_key in arb_markets:
-                new_entries = _collect_market_entries(
-                    game, market_key, stake_amount, commission_rate
-                )
-                for entry in new_entries:
-                    total_profit += entry["stakes"].get("guaranteed_profit", 0.0)
-                arb_opportunities.extend(new_entries)
-                if market_key in MIDDLE_MARKETS:
-                    middle_entries = _collect_middle_opportunities(
-                        game, market_key, stake_amount, commission_rate
-                    )
-                    middle_opportunities.extend(middle_entries)
-            plus_entries = _collect_plus_ev_opportunities(
-                game,
-                arb_markets,
-                sharp_priority,
-                commission_rate,
-                min_edge_percent,
-                bankroll,
-                kelly_fraction,
+            purebet_summary["league_sync"]["cache_hits"] += int(
+                league_update.get("cache_hits", 0) or 0
             )
-            plus_ev_opportunities.extend(plus_entries)
-        analysis_ms = _elapsed_ms(analysis_started_at)
-        sport_timing["analysis_ms"] = analysis_ms
-        sport_timing["events_scanned"] = len(events)
-        timing_steps.append(
-            {
-                "name": "analyze_events",
-                "label": f"[{sport_key}] Analyze events",
-                "sport_key": sport_key,
-                "ms": analysis_ms,
-                "events_processed": len(events),
-            }
-        )
-        sport_timing["total_ms"] = _elapsed_ms(sport_started_at)
-        sport_timings.append(sport_timing)
-        timing_steps.append(
-            {
-                "name": "sport_total",
-                "label": f"[{sport_key}] Total",
-                "sport_key": sport_key,
-                "ms": sport_timing["total_ms"],
-                "events_scanned": len(events),
-            }
-        )
+            purebet_summary["league_sync"]["stale_cache_uses"] += int(
+                league_update.get("stale_cache_uses", 0) or 0
+            )
+            purebet_summary["league_sync"]["dynamic_added"] += int(
+                league_update.get("dynamic_added", 0) or 0
+            )
+            purebet_summary["league_sync"]["unresolved"] += int(
+                league_update.get("unresolved", 0) or 0
+            )
 
     finalize_started_at = time.perf_counter()
     api_calls_used = api_pool.calls_made
@@ -3741,11 +4773,16 @@ def run_scan(
     timings = _build_scan_timings(scan_started_at, timing_steps, sport_timings)
     scan_time = _iso_now()
     provider_snapshot_paths = _persist_provider_snapshots(scan_time, provider_snapshots)
-    return {
+    cross_provider_match_report_path = _persist_cross_provider_match_report(
+        scan_time,
+        provider_snapshots,
+    )
+    return _finish({
         "success": True,
         "scan_time": scan_time,
         "api_market_skips": api_market_skips,
         "provider_snapshot_paths": provider_snapshot_paths,
+        "cross_provider_match_report_path": cross_provider_match_report_path,
         "arbitrage": {
             "opportunities": arb_opportunities,
             "opportunities_count": len(arb_opportunities),
@@ -3782,7 +4819,7 @@ def run_scan(
         "purebet": purebet_summary,
         "custom_providers": provider_summaries,
         "timings": timings,
-    }
+    })
 def _remove_vig(odds_a: float, odds_b: float) -> Tuple[float, float, float]:
     """Return fair odds for both sides plus vig percent."""
     if odds_a <= 1 or odds_b <= 1:

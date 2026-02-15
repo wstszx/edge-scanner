@@ -661,6 +661,7 @@
     data-default-all-markets="{{ 'true' if default_all_markets else 'false' }}"
     data-kelly-options='{{ kelly_options | tojson }}'
     data-bookmaker-links='{{ bookmaker_links | tojson }}'
+    data-custom-provider-keys='{{ custom_provider_keys | tojson }}'
     hidden
   ></div>
 
@@ -688,7 +689,8 @@
           defaultLanguage: configEl.dataset.defaultLanguage || '',
           defaultAllMarkets: configEl.dataset.defaultAllMarkets === 'true',
           kellyOptions: parseConfigJson(configEl.dataset.kellyOptions, []),
-          bookmakerLinks: parseConfigJson(configEl.dataset.bookmakerLinks, {})
+          bookmakerLinks: parseConfigJson(configEl.dataset.bookmakerLinks, {}),
+          customProviderKeys: parseConfigJson(configEl.dataset.customProviderKeys, []),
         }
       : {};
     let bookmakerLinks = { ...(appConfig.bookmakerLinks || {}) };
@@ -2040,6 +2042,24 @@
       return Array.from(form?.querySelectorAll('input[name="regions"]:checked') || []).map((el) => el.value);
     }
 
+    function selectedBookmakers(useAllBookmakers) {
+      if (useAllBookmakers) {
+        return Array.from(form?.querySelectorAll('input[name="bookmakers"]') || []).map((el) => el.value);
+      }
+      return Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
+    }
+
+    function selectedIncludeProviders(useAllBookmakers, bookmakers) {
+      if (useAllBookmakers) return Array.from(appConfig.customProviderKeys || []);
+      const providerSet = new Set(appConfig.customProviderKeys || []);
+      const picked = [];
+      for (const key of bookmakers || []) {
+        if (!providerSet.has(key)) continue;
+        if (!picked.includes(key)) picked.push(key);
+      }
+      return picked;
+    }
+
     function triggerAutoScan() {
       if (isScanning) return;
       if (!hasEnvKey && !apiKeyInput?.value.trim()) return;
@@ -2049,9 +2069,8 @@
       const regions = selectedRegions();
       if (!regions.length) return;
       const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
-      const bookmakers = useAllBookmakers
-        ? []
-        : Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
+      const bookmakers = selectedBookmakers(useAllBookmakers);
+      const includeProviders = selectedIncludeProviders(useAllBookmakers, bookmakers);
       if (!useAllBookmakers && !bookmakers.length) return;
       const stakeValue = parseFloat(stakeInput?.value) || 100;
       const commissionValue = commissionInput && Number.isFinite(parseFloat(commissionInput.value))
@@ -2061,6 +2080,7 @@
         apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
         sports,
         bookmakers,
+        includeProviders,
         regions,
         commission: commissionValue,
         allSports: useAllSports,
@@ -2230,9 +2250,8 @@
         return;
       }
       const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
-      const bookmakers = useAllBookmakers
-        ? []
-        : Array.from(form.querySelectorAll('input[name="bookmakers"]:checked')).map((el) => el.value);
+      const bookmakers = selectedBookmakers(useAllBookmakers);
+      const includeProviders = selectedIncludeProviders(useAllBookmakers, bookmakers);
       if (!useAllBookmakers && !bookmakers.length) {
         showStatusKey('select_bookmakers', 'error');
         return;
@@ -2246,6 +2265,7 @@
         sports,
         regions,
         bookmakers,
+        includeProviders,
         commission: commissionValue,
         allSports: allSportsToggle.checked,
         allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
@@ -2318,6 +2338,7 @@
             stake: payload.stake,
             regions: payload.regions,
             bookmakers: payload.bookmakers,
+            includeProviders: payload.includeProviders,
             commission: payload.commission,
             sharpBook: payload.sharpBook,
             minEdgePercent: payload.minEdgePercent,

@@ -51,6 +51,7 @@ from config import (  # noqa: E402
     SHARP_BOOKS,
     SHOW_POSITIVE_EV_ONLY,
 )
+from providers import PROVIDER_FETCHERS, resolve_provider_key  # noqa: E402
 from scanner import run_scan  # noqa: E402
 
 app = Flask(__name__)
@@ -211,6 +212,7 @@ def index() -> str:
         default_all_markets=ENV_ALL_MARKETS,
         kelly_options=KELLY_OPTIONS,
         bookmaker_links=BOOKMAKER_URLS,
+        custom_provider_keys=list(PROVIDER_FETCHERS.keys()),
     )
 
 
@@ -275,6 +277,15 @@ def scan() -> tuple:
         ]
     else:
         include_providers_value = None
+    if include_providers_value is None and bookmakers_value:
+        derived = []
+        seen = set()
+        for book in bookmakers_value:
+            provider_key = resolve_provider_key(book)
+            if provider_key and provider_key not in seen:
+                derived.append(provider_key)
+                seen.add(provider_key)
+        include_providers_value = derived
     try:
         commission_percent = float(commission) if commission is not None else None
     except (TypeError, ValueError):
