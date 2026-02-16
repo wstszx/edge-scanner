@@ -2094,3 +2094,91 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* Priority layout: data views first, manual scan controls as secondary workspace. */
+.layout {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.78rem;
+}
+
+.content {
+  min-width: 0;
+}
+
+.sidebar {
+  position: fixed !important;
+  left: -10000px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+}
+
+.sidebar .card {
+  margin-top: 0;
+}
+
+.header-settings-btn {
+  min-height: 36px;
+  white-space: nowrap;
+}
+
+.header-summary {
+  max-width: 280px;
+}
+
+.arbitrage-workspace {
+  grid-template-columns: minmax(0, 1fr) minmax(350px, 420px);
+  gap: 0.78rem;
+}
+
+.arb-calculator-card {
+  position: sticky;
+  top: 0.86rem;
+  max-width: 420px;
+}
+
+#results-table {
+  min-width: 840px;
+}
+
+#middles-table {
+  min-width: 960px;
+}
+
+#plus-ev-table {
+  min-width: 920px;
+}
+
+@media (max-width: 1420px) {
+  .arbitrage-workspace {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 390px);
+  }
+
+  .arb-calculator-card {
+    position: sticky;
+    top: 0.86rem;
+    max-width: 390px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .arbitrage-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .arb-calculator-card {
+    position: static;
+    max-width: none;
+  }
+}
+
+@media (max-width: 1240px) {
+  #middles-table {
+    min-width: 920px;
+  }
+
+  .header-summary {
+    display: none;
+  }
+}

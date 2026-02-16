@@ -31,6 +31,8 @@
         <span data-density="compact" data-i18n="density_compact">Compact</span>
       </div>
       <button class="icon-btn" id="theme-toggle" title="Toggle theme">Theme</button>
+      <button type="button" id="open-advanced" class="secondary-btn header-settings-btn" data-i18n="advanced_settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="advanced-modal">Advanced settings</button>
+      <span id="advanced-summary" class="summary-chip header-summary"></span>
     </div>
   </header>
 
@@ -56,8 +58,8 @@
           </div>
         </div>
         <div class="advanced-trigger">
-          <button type="button" id="open-advanced" class="secondary-btn" data-i18n="advanced_settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="advanced-modal">Advanced settings</button>
-          <span id="advanced-summary" class="summary-chip"></span>
+          <button type="button" id="open-advanced-hidden" class="secondary-btn" tabindex="-1" aria-hidden="true">Advanced settings</button>
+          <span id="advanced-summary-hidden" class="summary-chip" aria-hidden="true"></span>
         </div>
         <div class="modal hidden" id="advanced-modal" role="dialog" aria-modal="true" aria-labelledby="advanced-title" aria-hidden="true">
           <div class="modal-backdrop" data-close="modal"></div>
