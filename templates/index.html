@@ -1,15 +1,19 @@
 <!doctype html>
 <html lang="en" data-theme="{{ default_theme }}">
+
 <head>
   <meta charset="utf-8" />
   <title>Edge Scanner</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@500&display=swap"
+    rel="stylesheet" />
   <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
+
 <body>
   <header class="app-header">
     <div class="brand-block">
@@ -31,7 +35,8 @@
         <span data-density="compact" data-i18n="density_compact">Compact</span>
       </div>
       <button class="icon-btn" id="theme-toggle" title="Toggle theme">Theme</button>
-      <button type="button" id="open-advanced" class="secondary-btn header-settings-btn" data-i18n="advanced_settings" aria-haspopup="dialog" aria-expanded="false" aria-controls="advanced-modal">Advanced settings</button>
+      <button type="button" id="open-advanced" class="secondary-btn header-settings-btn" data-i18n="advanced_settings"
+        aria-haspopup="dialog" aria-expanded="false" aria-controls="advanced-modal">Advanced settings</button>
       <span id="advanced-summary" class="summary-chip header-summary"></span>
     </div>
   </header>
@@ -39,667 +44,712 @@
   <main>
     <div class="layout">
       <aside class="sidebar">
-    <section class="card config-card">
-      <form id="scan-form">
-        <div class="config-grid">
-          {% if not has_env_key %}
-          <div class="field">
-            <label class="field-label" data-i18n="api_key_label">API Key</label>
-            <div class="input-wrap">
-              <input type="password" id="api-key" placeholder="sk_xxx" required />
-              <button type="button" id="toggle-key" class="icon-btn" aria-label="Show API key">Show</button>
+        <section class="card config-card">
+          <form id="scan-form">
+            <div class="config-grid">
+              {% if not has_env_key %}
+              <div class="field">
+                <label class="field-label" data-i18n="api_key_label">API Key</label>
+                <div class="input-wrap">
+                  <input type="password" id="api-key" placeholder="sk_xxx" required />
+                  <button type="button" id="toggle-key" class="icon-btn" aria-label="Show API key">Show</button>
+                </div>
+              </div>
+              {% endif %}
+              <div class="field">
+                <label class="field-label" data-i18n="total_stake_label">Total Stake ($)</label>
+                <input type="number" id="stake-input" min="1" step="1" value="{{ default_stake_amount }}" />
+                <p class="helper" data-i18n="stake_helper">Used for arbitrage + middles stake splits.</p>
+              </div>
             </div>
-          </div>
-          {% endif %}
-          <div class="field">
-            <label class="field-label" data-i18n="total_stake_label">Total Stake ($)</label>
-            <input type="number" id="stake-input" min="1" step="1" value="{{ default_stake_amount }}" />
-            <p class="helper" data-i18n="stake_helper">Used for arbitrage + middles stake splits.</p>
-          </div>
-        </div>
-        <div class="advanced-trigger">
-          <button type="button" id="open-advanced-hidden" class="secondary-btn" tabindex="-1" aria-hidden="true">Advanced settings</button>
-          <span id="advanced-summary-hidden" class="summary-chip" aria-hidden="true"></span>
-        </div>
-        <div class="modal hidden" id="advanced-modal" role="dialog" aria-modal="true" aria-labelledby="advanced-title" aria-hidden="true">
-          <div class="modal-backdrop" data-close="modal"></div>
-          <div class="modal-panel">
-            <div class="modal-head">
-              <h3 id="advanced-title" data-i18n="advanced_settings">Advanced settings</h3>
+            <div class="advanced-trigger">
+              <button type="button" id="open-advanced-hidden" class="secondary-btn" tabindex="-1"
+                aria-hidden="true">Advanced settings</button>
+              <span id="advanced-summary-hidden" class="summary-chip" aria-hidden="true"></span>
             </div>
-            <p class="helper" data-i18n="advanced_hint">Less frequently adjusted options live here.</p>
-            <div class="advanced-layout">
-              <section class="advanced-panel">
-                <div class="panel-head">
-                  <div class="panel-title">
-                    <span class="field-label" data-i18n="regions_label">Regions</span>
-                    <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included for sharp reference.</p>
-                  </div>
-                  <div class="panel-actions">
-                    <button type="button" class="chip-btn" data-quick-action="select" data-quick-target="regions" data-i18n="select_all">Select all</button>
-                    <button type="button" class="chip-btn" data-quick-action="clear" data-quick-target="regions" data-i18n="clear_all">Clear</button>
-                  </div>
+            <div class="modal hidden" id="advanced-modal" role="dialog" aria-modal="true"
+              aria-labelledby="advanced-title" aria-hidden="true">
+              <div class="modal-backdrop" data-close="modal"></div>
+              <div class="modal-panel">
+                <div class="modal-head">
+                  <h3 id="advanced-title" data-i18n="advanced_settings">Advanced settings</h3>
                 </div>
-                <div class="panel-body">
-                  <div class="regions-grid">
-                    {% for region in region_options %}
-                    <label class="checkbox">
-                      <input type="checkbox" name="regions" value="{{ region.key }}" {% if region.default %}checked{% endif %} />
-                      <span data-region-key="{{ region.key }}">{{ region.label }}</span>
-                    </label>
-                    {% endfor %}
-                  </div>
-                </div>
-              </section>
-              <section class="advanced-panel">
-                <div class="panel-head">
-                  <div class="panel-title">
-                    <span class="field-label" data-i18n="sports_label">Sports</span>
-                    <p class="helper" data-i18n="sports_helper">Each selected sport consumes one API request.</p>
-                  </div>
-                  <div class="panel-actions">
-                    <button type="button" class="chip-btn" data-quick-action="select" data-quick-target="sports" data-i18n="select_all">Select all</button>
-                    <button type="button" class="chip-btn" data-quick-action="clear" data-quick-target="sports" data-i18n="clear_all">Clear</button>
-                  </div>
-                </div>
-                <div class="panel-body">
-                  <div id="sports-list" class="sports-grid">
-                    {% for sport in default_sports %}
-                    <label class="checkbox">
-                      <input type="checkbox" name="sports" value="{{ sport.key }}" checked />
-                      <span data-sport-key="{{ sport.key }}">{{ sport.label }}</span>
-                    </label>
-                    {% endfor %}
-                  </div>
-                </div>
-                <div class="panel-foot">
-                  <label class="checkbox all-toggle">
-                    <input type="checkbox" id="all-sports" {% if default_all_sports %}checked{% endif %} />
-                    <span data-i18n="all_sports_label">Scan all active sports (uses more API credits)</span>
-                  </label>
-                  <label class="checkbox all-toggle">
-                    <input type="checkbox" id="all-markets" {% if default_all_markets %}checked{% endif %} />
-                    <span data-i18n="all_markets_label">Scan extended markets (can use more API credits)</span>
-                  </label>
-                  <p class="helper" data-i18n="all_markets_helper">Attempts to include extra market types and player props for arbitrage/+EV.</p>
-                </div>
-              </section>
-              <section class="advanced-panel">
-                <div class="panel-head">
-                  <div class="panel-title">
-                    <span class="field-label" data-i18n="bookmakers_label">Bookmakers</span>
-                    <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected bookmakers.</p>
-                  </div>
-                  <div class="panel-actions">
-                    <button type="button" class="chip-btn" data-quick-action="select" data-quick-target="bookmakers" data-i18n="select_all">Select all</button>
-                    <button type="button" class="chip-btn" data-quick-action="clear" data-quick-target="bookmakers" data-i18n="clear_all">Clear</button>
-                  </div>
-                </div>
-                <div class="panel-body">
-                  <div id="bookmakers-list" class="bookmakers-grid">
-                    {% for book in bookmaker_options %}
-                    <div class="bookmaker-row">
-                      <label class="checkbox">
-                        <input type="checkbox" name="bookmakers" value="{{ book.key }}" {% if book.key in default_bookmaker_keys %}checked{% endif %} />
-                        <span data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
+                <p class="helper" data-i18n="advanced_hint">Less frequently adjusted options live here.</p>
+                <div class="advanced-layout">
+                  <section class="advanced-panel">
+                    <div class="panel-head">
+                      <div class="panel-title">
+                        <span class="field-label" data-i18n="regions_label">Regions</span>
+                        <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included
+                          for sharp reference.</p>
+                      </div>
+                      <div class="panel-actions">
+                        <button type="button" class="chip-btn" data-quick-action="select" data-quick-target="regions"
+                          data-i18n="select_all">Select all</button>
+                        <button type="button" class="chip-btn" data-quick-action="clear" data-quick-target="regions"
+                          data-i18n="clear_all">Clear</button>
+                      </div>
+                    </div>
+                    <div class="panel-body">
+                      <div class="regions-grid">
+                        {% for region in region_options %}
+                        <label class="checkbox">
+                          <input type="checkbox" name="regions" value="{{ region.key }}" {% if region.default
+                            %}checked{% endif %} />
+                          <span data-region-key="{{ region.key }}">{{ region.label }}</span>
+                        </label>
+                        {% endfor %}
+                      </div>
+                    </div>
+                  </section>
+                  <section class="advanced-panel">
+                    <div class="panel-head">
+                      <div class="panel-title">
+                        <span class="field-label" data-i18n="sports_label">Sports</span>
+                        <p class="helper" data-i18n="sports_helper">Each selected sport consumes one API request.</p>
+                      </div>
+                      <div class="panel-actions">
+                        <button type="button" class="chip-btn" data-quick-action="select" data-quick-target="sports"
+                          data-i18n="select_all">Select all</button>
+                        <button type="button" class="chip-btn" data-quick-action="clear" data-quick-target="sports"
+                          data-i18n="clear_all">Clear</button>
+                      </div>
+                    </div>
+                    <div class="panel-body">
+                      <div id="sports-list" class="sports-grid">
+                        {% for sport in default_sports %}
+                        <label class="checkbox">
+                          <input type="checkbox" name="sports" value="{{ sport.key }}" checked />
+                          <span data-sport-key="{{ sport.key }}">{{ sport.label }}</span>
+                        </label>
+                        {% endfor %}
+                      </div>
+                    </div>
+                    <div class="panel-foot">
+                      <label class="checkbox all-toggle">
+                        <input type="checkbox" id="all-sports" {% if default_all_sports %}checked{% endif %} />
+                        <span data-i18n="all_sports_label">Scan all active sports (uses more API credits)</span>
                       </label>
-                      <input
-                        type="url"
-                        inputmode="url"
-                        class="bookmaker-url"
-                        data-bookmaker-key="{{ book.key }}"
-                        value="{{ bookmaker_links.get(book.key, '') }}"
-                        placeholder="https://..."
-                      />
+                      <label class="checkbox all-toggle">
+                        <input type="checkbox" id="all-markets" {% if default_all_markets %}checked{% endif %} />
+                        <span data-i18n="all_markets_label">Scan extended markets (can use more API credits)</span>
+                      </label>
+                      <p class="helper" data-i18n="all_markets_helper">Attempts to include extra market types and player
+                        props for arbitrage/+EV.</p>
                     </div>
-                    {% endfor %}
-                  </div>
-                </div>
-                <div class="panel-foot">
-                  <p class="helper" data-i18n="bookmaker_links_helper">Customize base URLs used when opening books.</p>
-                  <label class="checkbox all-toggle">
-                    <input type="checkbox" id="all-bookmakers" {% if not default_bookmaker_keys %}checked{% endif %} />
-                    <span data-i18n="all_bookmakers_label">Use all available bookmakers</span>
-                  </label>
-                </div>
-              </section>
-              <section class="advanced-panel advanced-panel-wide">
-                <div class="panel-head">
-                  <div class="panel-title">
-                    <span class="field-label" data-i18n="commission_label">Exchange Commission (%)</span>
-                    <p class="helper" data-i18n="commission_helper">Applied to Betfair, Matchbook, Sportsbet Exchange, etc.</p>
-                  </div>
-                </div>
-                <div class="panel-body">
-                  <input type="number" id="commission-input" min="0" max="20" step="0.1" value="{{ default_commission_percent }}" />
-                  <p class="helper" data-i18n="commission_note">Net ROI/EV already reflects this commission.</p>
-                </div>
-              </section>
-              <section class="advanced-panel advanced-panel-wide">
-                <div class="panel-head">
-                  <div class="panel-title">
-                    <span class="field-label" data-i18n="notify_label">Notifications</span>
-                    <p class="helper" data-i18n="notify_helper">Browser permission is required for popup notifications.</p>
-                  </div>
-                </div>
-                <div class="panel-body">
-                  <label class="checkbox">
-                    <input type="checkbox" id="notify-sound-toggle" {% if default_notify_sound_enabled %}checked{% endif %} />
-                    <span data-i18n="notify_sound">Sound alert</span>
-                  </label>
-                  <label class="checkbox">
-                    <input type="checkbox" id="notify-popup-toggle" {% if default_notify_popup_enabled %}checked{% endif %} />
-                    <span data-i18n="notify_popup">Popup notification</span>
-                  </label>
-                </div>
-              </section>
-              <section class="advanced-panel advanced-panel-wide">
-                <div class="panel-head">
-                  <div class="panel-title">
-                    <span class="field-label" data-i18n="auto_scan_label">Auto Scan</span>
-                    <p class="helper" data-i18n="auto_scan_helper">Runs a scan on a timer using your current filters.</p>
-                  </div>
-                </div>
-                <div class="panel-body">
-                  <div class="auto-scan-controls">
-                    <label class="checkbox">
-                      <input type="checkbox" id="auto-scan-toggle" {% if default_auto_scan_enabled %}checked{% endif %} />
-                      <span data-i18n="auto_scan_enable">Enable auto scan</span>
-                    </label>
-                    <div class="auto-scan-interval">
-                      <span class="auto-scan-label" data-i18n="auto_scan_interval_label">Interval (min)</span>
-                      <input type="number" id="auto-scan-interval" min="1" step="1" value="{{ default_auto_scan_minutes }}" />
+                  </section>
+                  <section class="advanced-panel">
+                    <div class="panel-head">
+                      <div class="panel-title">
+                        <span class="field-label" data-i18n="bookmakers_label">Bookmakers</span>
+                        <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected
+                          bookmakers.</p>
+                      </div>
+                      <div class="panel-actions">
+                        <button type="button" class="chip-btn" data-quick-action="select" data-quick-target="bookmakers"
+                          data-i18n="select_all">Select all</button>
+                        <button type="button" class="chip-btn" data-quick-action="clear" data-quick-target="bookmakers"
+                          data-i18n="clear_all">Clear</button>
+                      </div>
                     </div>
-                  </div>
+                    <div class="panel-body">
+                      <div id="bookmakers-list" class="bookmakers-grid">
+                        {% for book in bookmaker_options %}
+                        <div class="bookmaker-row">
+                          <label class="checkbox">
+                            <input type="checkbox" name="bookmakers" value="{{ book.key }}" {% if book.key in
+                              default_bookmaker_keys %}checked{% endif %} />
+                            <span data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
+                          </label>
+                          <input type="url" inputmode="url" class="bookmaker-url" data-bookmaker-key="{{ book.key }}"
+                            value="{{ bookmaker_links.get(book.key, '') }}" placeholder="https://..." />
+                        </div>
+                        {% endfor %}
+                      </div>
+                    </div>
+                    <div class="panel-foot">
+                      <p class="helper" data-i18n="bookmaker_links_helper">Customize base URLs used when opening books.
+                      </p>
+                      <label class="checkbox all-toggle">
+                        <input type="checkbox" id="all-bookmakers" {% if not default_bookmaker_keys %}checked{% endif
+                          %} />
+                        <span data-i18n="all_bookmakers_label">Use all available bookmakers</span>
+                      </label>
+                    </div>
+                  </section>
+                  <section class="advanced-panel advanced-panel-wide">
+                    <div class="panel-head">
+                      <div class="panel-title">
+                        <span class="field-label" data-i18n="commission_label">Exchange Commission (%)</span>
+                        <p class="helper" data-i18n="commission_helper">Applied to Betfair, Matchbook, Sportsbet
+                          Exchange, etc.</p>
+                      </div>
+                    </div>
+                    <div class="panel-body">
+                      <input type="number" id="commission-input" min="0" max="20" step="0.1"
+                        value="{{ default_commission_percent }}" />
+                      <p class="helper" data-i18n="commission_note">Net ROI/EV already reflects this commission.</p>
+                    </div>
+                  </section>
+                  <section class="advanced-panel advanced-panel-wide">
+                    <div class="panel-head">
+                      <div class="panel-title">
+                        <span class="field-label" data-i18n="notify_label">Notifications</span>
+                        <p class="helper" data-i18n="notify_helper">Browser permission is required for popup
+                          notifications.</p>
+                      </div>
+                    </div>
+                    <div class="panel-body">
+                      <label class="checkbox">
+                        <input type="checkbox" id="notify-sound-toggle" {% if default_notify_sound_enabled %}checked{%
+                          endif %} />
+                        <span data-i18n="notify_sound">Sound alert</span>
+                      </label>
+                      <label class="checkbox">
+                        <input type="checkbox" id="notify-popup-toggle" {% if default_notify_popup_enabled %}checked{%
+                          endif %} />
+                        <span data-i18n="notify_popup">Popup notification</span>
+                      </label>
+                    </div>
+                  </section>
+                  <section class="advanced-panel advanced-panel-wide">
+                    <div class="panel-head">
+                      <div class="panel-title">
+                        <span class="field-label" data-i18n="auto_scan_label">Auto Scan</span>
+                        <p class="helper" data-i18n="auto_scan_helper">Runs a scan on a timer using your current
+                          filters.</p>
+                      </div>
+                    </div>
+                    <div class="panel-body">
+                      <div class="auto-scan-controls">
+                        <label class="checkbox">
+                          <input type="checkbox" id="auto-scan-toggle" {% if default_auto_scan_enabled %}checked{% endif
+                            %} />
+                          <span data-i18n="auto_scan_enable">Enable auto scan</span>
+                        </label>
+                        <div class="auto-scan-interval">
+                          <span class="auto-scan-label" data-i18n="auto_scan_interval_label">Interval (min)</span>
+                          <input type="number" id="auto-scan-interval" min="1" step="1"
+                            value="{{ default_auto_scan_minutes }}" />
+                        </div>
+                      </div>
+                    </div>
+                  </section>
                 </div>
-              </section>
+                <div class="advanced-actions">
+                  <button type="button" id="close-advanced" class="secondary-btn" aria-label="Close"
+                    data-i18n="close">Close</button>
+                  <button type="button" id="save-settings" class="secondary-btn" data-i18n="save_settings">Save
+                    Settings</button>
+                </div>
+              </div>
             </div>
-            <div class="advanced-actions">
-              <button type="button" id="close-advanced" class="secondary-btn" aria-label="Close" data-i18n="close">Close</button>
-              <button type="button" id="save-settings" class="secondary-btn" data-i18n="save_settings">Save Settings</button>
+
+            <div class="actions">
+              <div class="action-buttons">
+                <button type="submit" id="scan-btn" data-i18n="scan_now">Scan Now</button>
+              </div>
+              <div id="status" class="status"></div>
             </div>
-          </div>
-        </div>
-
-        <div class="actions">
-          <div class="action-buttons">
-            <button type="submit" id="scan-btn" data-i18n="scan_now">Scan Now</button>
-          </div>
-          <div id="status" class="status"></div>
-        </div>
-      </form>
-    </section>
-
-    <section class="card scan-status" id="scan-status">
-      <div class="scan-status-head">
-        <h3 data-i18n="scan_status_title">Scan Status</h3>
-      </div>
-      <div class="scan-status-grid">
-        <div class="status-chip" id="scan-status-chip" data-status="idle">
-          <span class="status-label" data-i18n="scan_status_label">Status</span>
-          <span id="scan-status-text">Idle</span>
-        </div>
-        <div class="status-chip">
-          <span class="status-label" data-i18n="stat_opportunities">Opportunities</span>
-          <span id="scan-opportunities">0</span>
-        </div>
-        <div class="status-chip">
-          <span class="status-label" data-i18n="scan_last_scan">Last Scan</span>
-          <span id="scan-last-time">-</span>
-        </div>
-        <div class="status-chip">
-          <span class="status-label" data-i18n="scan_api_calls">API Calls</span>
-          <span id="scan-api-calls">-</span>
-        </div>
-        <div class="status-chip">
-          <span class="status-label" data-i18n="scan_duration">Duration</span>
-          <span id="scan-duration">-</span>
-        </div>
-        <div class="status-chip">
-          <span class="status-label" data-i18n="scan_bottleneck">Bottleneck</span>
-          <span id="scan-slowest">-</span>
-        </div>
-        <div class="status-chip">
-          <span class="status-label" data-i18n="scan_events">Events</span>
-          <span id="scan-events">-</span>
-        </div>
-        <div class="status-chip">
-          <span class="status-label" data-i18n="scan_sports">Sports</span>
-          <span id="scan-sports">-</span>
-        </div>
-      </div>
-      <section id="summary-info" class="summary-info hidden"></section>
-      <div id="scan-live" class="scan-live hidden" aria-live="polite">
-        <p id="scan-live-elapsed" class="scan-live-line">Elapsed: -</p>
-        <p id="scan-live-scope" class="scan-live-line">Scope: -</p>
-      </div>
-      <div id="scan-errors" class="scan-errors hidden"></div>
-    </section>
-      </aside>
-      <section class="content">
-    <nav class="tabs">
-      <button type="button" class="tab-btn active" data-tab="arbitrage" data-i18n="tab_arbitrage">Arbitrage</button>
-      <button type="button" class="tab-btn" data-tab="middles" data-i18n="tab_middles">Middles</button>
-      <button type="button" class="tab-btn" data-tab="plus-ev" data-i18n="tab_plus_ev">+EV</button>
-      <button type="button" class="tab-btn" data-tab="history" data-i18n="tab_history">History</button>
-    </nav>
-
-    <section class="card arbitrage-config" id="arbitrage-config">
-      <div class="arbitrage-config-grid">
-        <div class="field">
-          <label class="field-label" data-i18n="arb_min_roi">Minimum Net ROI (%)</label>
-          <input type="number" id="min-roi-input" min="-100" max="10" step="0.1" value="{{ default_min_roi }}" />
-          <p class="helper" data-i18n="arb_min_roi_helper">Hide opportunities below this net ROI.</p>
-        </div>
-        <div class="field">
-          <label class="field-label" data-i18n="sort_by">Sort By</label>
-          <select id="arbitrage-sort">
-            <option value="roi" data-i18n="sort_roi" {% if default_arbitrage_sort == 'roi' %}selected{% endif %}>Net ROI</option>
-            <option value="profit" data-i18n="sort_profit" {% if default_arbitrage_sort == 'profit' %}selected{% endif %}>Profit</option>
-            <option value="time" data-i18n="sort_time" {% if default_arbitrage_sort == 'time' %}selected{% endif %}>Event time</option>
-          </select>
-        </div>
-      </div>
-    </section>
-
-    <section class="card middle-config hidden" id="middles-config">
-      <div class="middle-config-grid">
-        <div class="field">
-          <label class="field-label" data-i18n="middle_min_gap">Minimum Gap (points)</label>
-          <input type="number" id="min-gap-input" min="0" max="10" step="0.5" value="{{ default_min_gap }}" />
-          <p class="helper" data-i18n="middle_min_gap_helper">Only show middles with at least this many points between the lines.</p>
-        </div>
-        <div class="field toggle-field">
-          <label class="field-label" data-i18n="filters_label">Filters</label>
-          <label class="checkbox">
-            <input type="checkbox" id="positive-ev-toggle" {% if default_positive_ev_only %}checked{% endif %} />
-            <span data-i18n="positive_ev_only">Show only positive EV middles</span>
-          </label>
-        </div>
-        <div class="field">
-          <label class="field-label" data-i18n="sort_by">Sort By</label>
-          <select id="middle-sort">
-            <option value="ev" data-i18n="sort_ev" {% if default_middle_sort == 'ev' %}selected{% endif %}>Estimated EV</option>
-            <option value="probability" data-i18n="sort_probability" {% if default_middle_sort == 'probability' %}selected{% endif %}>Probability</option>
-            <option value="gap" data-i18n="sort_gap" {% if default_middle_sort == 'gap' %}selected{% endif %}>Gap size</option>
-            <option value="time" data-i18n="sort_time" {% if default_middle_sort == 'time' %}selected{% endif %}>Event time</option>
-          </select>
-        </div>
-      </div>
-    </section>
-
-    <section class="card plus-config hidden" id="plus-ev-config">
-      <div class="plus-config-grid">
-        <div class="field">
-          <label class="field-label" data-i18n="sharp_reference_book">Sharp Reference Book</label>
-          <select id="sharp-book-select">
-            {% for book in sharp_books %}
-            <option value="{{ book.key }}" {% if book.key == default_sharp_book %}selected{% endif %}>{{ book.name }}</option>
-            {% endfor %}
-          </select>
-          <p class="helper" data-i18n="sharp_book_helper">Used as the "true" odds source. Pinnacle recommended.</p>
-        </div>
-        <div class="field">
-          <label class="field-label" data-i18n="min_edge_label">Minimum Edge (%)</label>
-          <input type="number" id="min-edge-input" min="0" max="20" step="0.5" value="{{ default_min_edge_percent }}" />
-          <p class="helper" data-i18n="min_edge_helper">Filter +EV bets below this edge.</p>
-        </div>
-        <div class="field">
-          <label class="field-label" data-i18n="kelly_staking">Kelly Staking</label>
-          <div class="kelly-grid">
-            <input type="number" id="bankroll-input" min="0" step="50" value="{{ default_bankroll }}" />
-            <select id="kelly-select">
-              {% for opt in kelly_options %}
-              <option value="{{ opt.value }}" data-kelly-value="{{ opt.value }}" {% if opt.value == default_kelly_fraction %}selected{% endif %}>{{ opt.label }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <p class="helper" data-i18n="kelly_helper">Bankroll + Kelly fraction are not persisted between scans.</p>
-        </div>
-        <div class="field">
-          <label class="field-label" data-i18n="sort_by">Sort By</label>
-          <select id="plus-ev-sort">
-            <option value="edge" data-i18n="sort_edge" {% if default_plus_ev_sort == 'edge' %}selected{% endif %}>Edge %</option>
-            <option value="ev" data-i18n="sort_ev_value" {% if default_plus_ev_sort == 'ev' %}selected{% endif %}>EV ($)</option>
-            <option value="kelly" data-i18n="sort_kelly" {% if default_plus_ev_sort == 'kelly' %}selected{% endif %}>Kelly stake</option>
-            <option value="time" data-i18n="sort_time" {% if default_plus_ev_sort == 'time' %}selected{% endif %}>Event time</option>
-          </select>
-        </div>
-      </div>
-    </section>
-
-    <section id="arbitrage-panel">
-      <div id="partial-warning" class="alert warning hidden"></div>
-
-      <div class="arbitrage-workspace">
-        <section class="card results-card">
-          <div class="card-head">
-            <h3 data-i18n="opportunities_title">Opportunities</h3>
-            <div class="table-meta">
-              <span id="table-count">0 results</span>
-              <span class="muted" id="arb-sort-label" data-i18n="sorted_by_roi">Sorted by ROI</span>
-            </div>
-          </div>
-          <div class="table-scroll">
-            <table id="results-table">
-              <thead>
-                <tr>
-                  <th data-i18n="table_net_roi">Net ROI</th>
-                  <th data-i18n="table_gross_roi">Gross ROI</th>
-                  <th data-i18n="table_profit">Profit</th>
-                  <th data-i18n="table_exchange">Exchange</th>
-                  <th data-i18n="table_sport">Sport</th>
-                  <th data-i18n="table_event">Event</th>
-                  <th data-i18n="table_time">Time</th>
-                  <th data-i18n="table_market">Market</th>
-                  <th data-i18n="table_outcome_1">Outcome 1</th>
-                  <th data-i18n="table_outcome_2">Outcome 2</th>
-                  <th data-i18n="table_outcome_3">Outcome 3</th>
-                  <th data-i18n="table_open">Open</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
-          </div>
-          <div id="table-empty" class="empty" data-i18n="empty_arbitrage">No arbitrage opportunities yet.</div>
+          </form>
         </section>
 
-        <aside class="card arb-calculator-card" id="arb-calculator">
-          <div class="card-head">
-            <h3 data-i18n="arb_calc_title">Arbitrage Calculator</h3>
+        <section class="card scan-status" id="scan-status">
+          <div class="scan-status-head">
+            <h3 data-i18n="scan_status_title">Scan Status</h3>
           </div>
-          <div id="arb-calc-empty" class="empty" data-i18n="arb_calc_empty">Select an opportunity to open the calculator.</div>
-          <div id="arb-calc-body" class="arb-calc-body hidden">
-            <div class="arb-calc-context">
-              <p id="arb-calc-event" class="arb-calc-event"></p>
-              <p id="arb-calc-market" class="helper"></p>
+          <div class="scan-status-grid">
+            <div class="status-chip" id="scan-status-chip" data-status="idle">
+              <span class="status-label" data-i18n="scan_status_label">Status</span>
+              <span id="scan-status-text">Idle</span>
             </div>
+            <div class="status-chip">
+              <span class="status-label" data-i18n="stat_opportunities">Opportunities</span>
+              <span id="scan-opportunities">0</span>
+            </div>
+            <div class="status-chip">
+              <span class="status-label" data-i18n="scan_last_scan">Last Scan</span>
+              <span id="scan-last-time">-</span>
+            </div>
+            <div class="status-chip">
+              <span class="status-label" data-i18n="scan_api_calls">API Calls</span>
+              <span id="scan-api-calls">-</span>
+            </div>
+            <div class="status-chip">
+              <span class="status-label" data-i18n="scan_duration">Duration</span>
+              <span id="scan-duration">-</span>
+            </div>
+            <div class="status-chip">
+              <span class="status-label" data-i18n="scan_bottleneck">Bottleneck</span>
+              <span id="scan-slowest">-</span>
+            </div>
+            <div class="status-chip">
+              <span class="status-label" data-i18n="scan_events">Events</span>
+              <span id="scan-events">-</span>
+            </div>
+            <div class="status-chip">
+              <span class="status-label" data-i18n="scan_sports">Sports</span>
+              <span id="scan-sports">-</span>
+            </div>
+          </div>
+          <section id="summary-info" class="summary-info hidden"></section>
+          <div id="scan-live" class="scan-live hidden" aria-live="polite">
+            <p id="scan-live-elapsed" class="scan-live-line">Elapsed: -</p>
+            <p id="scan-live-scope" class="scan-live-line">Scope: -</p>
+          </div>
+          <div id="scan-errors" class="scan-errors hidden"></div>
+        </section>
+      </aside>
+      <section class="content">
+        <nav class="tabs">
+          <button type="button" class="tab-btn active" data-tab="arbitrage" data-i18n="tab_arbitrage">Arbitrage</button>
+          <button type="button" class="tab-btn" data-tab="middles" data-i18n="tab_middles">Middles</button>
+          <button type="button" class="tab-btn" data-tab="plus-ev" data-i18n="tab_plus_ev">+EV</button>
+          <button type="button" class="tab-btn" data-tab="history" data-i18n="tab_history">History</button>
+        </nav>
 
-            <div class="arb-calc-total">
-              <label class="field-label" for="arb-calc-total-input" data-i18n="arb_calc_total_stake">Total Stake ($)</label>
-              <div class="arb-calc-total-row">
-                <input type="number" id="arb-calc-total-input" min="0" step="0.01" />
-                <button type="button" class="secondary-btn" id="arb-calc-auto-split" data-i18n="arb_calc_apply_total">Auto Split</button>
+        <section class="card arbitrage-config" id="arbitrage-config">
+          <div class="arbitrage-config-grid">
+            <div class="field">
+              <label class="field-label" data-i18n="arb_min_roi">Minimum Net ROI (%)</label>
+              <input type="number" id="min-roi-input" min="-100" max="10" step="0.1" value="{{ default_min_roi }}" />
+              <p class="helper" data-i18n="arb_min_roi_helper">Hide opportunities below this net ROI.</p>
+            </div>
+            <div class="field">
+              <label class="field-label" data-i18n="sort_by">Sort By</label>
+              <select id="arbitrage-sort">
+                <option value="roi" data-i18n="sort_roi" {% if default_arbitrage_sort=='roi' %}selected{% endif %}>Net
+                  ROI</option>
+                <option value="profit" data-i18n="sort_profit" {% if default_arbitrage_sort=='profit' %}selected{% endif
+                  %}>Profit</option>
+                <option value="time" data-i18n="sort_time" {% if default_arbitrage_sort=='time' %}selected{% endif %}>
+                  Event time</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section class="card middle-config hidden" id="middles-config">
+          <div class="middle-config-grid">
+            <div class="field">
+              <label class="field-label" data-i18n="middle_min_gap">Minimum Gap (points)</label>
+              <input type="number" id="min-gap-input" min="0" max="10" step="0.5" value="{{ default_min_gap }}" />
+              <p class="helper" data-i18n="middle_min_gap_helper">Only show middles with at least this many points
+                between the lines.</p>
+            </div>
+            <div class="field toggle-field">
+              <label class="field-label" data-i18n="filters_label">Filters</label>
+              <label class="checkbox">
+                <input type="checkbox" id="positive-ev-toggle" {% if default_positive_ev_only %}checked{% endif %} />
+                <span data-i18n="positive_ev_only">Show only positive EV middles</span>
+              </label>
+            </div>
+            <div class="field">
+              <label class="field-label" data-i18n="sort_by">Sort By</label>
+              <select id="middle-sort">
+                <option value="ev" data-i18n="sort_ev" {% if default_middle_sort=='ev' %}selected{% endif %}>Estimated
+                  EV</option>
+                <option value="probability" data-i18n="sort_probability" {% if default_middle_sort=='probability'
+                  %}selected{% endif %}>Probability</option>
+                <option value="gap" data-i18n="sort_gap" {% if default_middle_sort=='gap' %}selected{% endif %}>Gap size
+                </option>
+                <option value="time" data-i18n="sort_time" {% if default_middle_sort=='time' %}selected{% endif %}>Event
+                  time</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section class="card plus-config hidden" id="plus-ev-config">
+          <div class="plus-config-grid">
+            <div class="field">
+              <label class="field-label" data-i18n="sharp_reference_book">Sharp Reference Book</label>
+              <select id="sharp-book-select">
+                {% for book in sharp_books %}
+                <option value="{{ book.key }}" {% if book.key==default_sharp_book %}selected{% endif %}>{{ book.name }}
+                </option>
+                {% endfor %}
+              </select>
+              <p class="helper" data-i18n="sharp_book_helper">Used as the "true" odds source. Pinnacle recommended.</p>
+            </div>
+            <div class="field">
+              <label class="field-label" data-i18n="min_edge_label">Minimum Edge (%)</label>
+              <input type="number" id="min-edge-input" min="0" max="20" step="0.5"
+                value="{{ default_min_edge_percent }}" />
+              <p class="helper" data-i18n="min_edge_helper">Filter +EV bets below this edge.</p>
+            </div>
+            <div class="field">
+              <label class="field-label" data-i18n="kelly_staking">Kelly Staking</label>
+              <div class="kelly-grid">
+                <input type="number" id="bankroll-input" min="0" step="50" value="{{ default_bankroll }}" />
+                <select id="kelly-select">
+                  {% for opt in kelly_options %}
+                  <option value="{{ opt.value }}" data-kelly-value="{{ opt.value }}" {% if
+                    opt.value==default_kelly_fraction %}selected{% endif %}>{{ opt.label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <p class="helper" data-i18n="kelly_helper">Bankroll + Kelly fraction are not persisted between scans.</p>
+            </div>
+            <div class="field">
+              <label class="field-label" data-i18n="sort_by">Sort By</label>
+              <select id="plus-ev-sort">
+                <option value="edge" data-i18n="sort_edge" {% if default_plus_ev_sort=='edge' %}selected{% endif %}>Edge
+                  %</option>
+                <option value="ev" data-i18n="sort_ev_value" {% if default_plus_ev_sort=='ev' %}selected{% endif %}>EV
+                  ($)</option>
+                <option value="kelly" data-i18n="sort_kelly" {% if default_plus_ev_sort=='kelly' %}selected{% endif %}>
+                  Kelly stake</option>
+                <option value="time" data-i18n="sort_time" {% if default_plus_ev_sort=='time' %}selected{% endif %}>
+                  Event time</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section id="arbitrage-panel">
+          <div id="partial-warning" class="alert warning hidden"></div>
+
+          <div class="arbitrage-workspace">
+            <section class="card results-card">
+              <div class="card-head">
+                <h3 data-i18n="opportunities_title">Opportunities</h3>
+                <div class="table-meta">
+                  <span id="table-count">0 results</span>
+                  <span class="muted" id="arb-sort-label" data-i18n="sorted_by_roi">Sorted by ROI</span>
+                </div>
+              </div>
+              <div class="table-scroll">
+                <table id="results-table">
+                  <thead>
+                    <tr>
+                      <th data-i18n="table_net_roi">Net ROI</th>
+                      <th data-i18n="table_gross_roi">Gross ROI</th>
+                      <th data-i18n="table_profit">Profit</th>
+                      <th data-i18n="table_exchange">Exchange</th>
+                      <th data-i18n="table_sport">Sport</th>
+                      <th data-i18n="table_event">Event</th>
+                      <th data-i18n="table_time">Time</th>
+                      <th data-i18n="table_market">Market</th>
+                      <th data-i18n="table_outcome_1">Outcome 1</th>
+                      <th data-i18n="table_outcome_2">Outcome 2</th>
+                      <th data-i18n="table_outcome_3">Outcome 3</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <div id="table-empty" class="empty" data-i18n="empty_arbitrage">No arbitrage opportunities yet.</div>
+            </section>
+
+            <aside class="card arb-calculator-card" id="arb-calculator">
+              <div class="card-head">
+                <h3 data-i18n="arb_calc_title">Arbitrage Calculator</h3>
+              </div>
+              <div id="arb-calc-empty" class="empty" data-i18n="arb_calc_empty">Select an opportunity to open the
+                calculator.</div>
+              <div id="arb-calc-body" class="arb-calc-body hidden">
+                <div class="arb-calc-context"
+                  style="display: flex; justify-content: space-between; align-items: flex-start;">
+                  <div>
+                    <p id="arb-calc-event" class="arb-calc-event"></p>
+                    <p id="arb-calc-market" class="helper"></p>
+                  </div>
+                  <button type="button" class="secondary-btn" id="arb-calc-open-btn"
+                    data-i18n="table_open">Open</button>
+                </div>
+
+                <div class="arb-calc-total">
+                  <label class="field-label" for="arb-calc-total-input" data-i18n="arb_calc_total_stake">Total Stake
+                    ($)</label>
+                  <div class="arb-calc-total-row">
+                    <input type="number" id="arb-calc-total-input" min="0" step="0.01" />
+                    <button type="button" class="secondary-btn" id="arb-calc-auto-split"
+                      data-i18n="arb_calc_apply_total">Auto Split</button>
+                  </div>
+                </div>
+
+                <div class="arb-calc-legs">
+                  <section class="arb-calc-leg" id="arb-calc-leg-a">
+                    <h4 id="arb-calc-leg-a-title"></h4>
+                    <p class="helper" id="arb-calc-leg-a-book"></p>
+                    <div class="arb-calc-inputs">
+                      <label>
+                        <span data-i18n="arb_calc_odds">Odds</span>
+                        <input type="number" id="arb-calc-odds-a" min="1.01" step="0.01" />
+                      </label>
+                      <label>
+                        <span data-i18n="arb_calc_stake">Stake ($)</span>
+                        <input type="number" id="arb-calc-stake-a" min="0" step="0.01" />
+                      </label>
+                    </div>
+                    <div class="arb-calc-leg-actions">
+                      <button type="button" class="secondary-btn" id="arb-calc-base-a"
+                        data-i18n="arb_calc_use_this_stake">Use This Stake</button>
+                      <span class="mono" id="arb-calc-payout-a">-</span>
+                    </div>
+                  </section>
+
+                  <section class="arb-calc-leg" id="arb-calc-leg-b">
+                    <h4 id="arb-calc-leg-b-title"></h4>
+                    <p class="helper" id="arb-calc-leg-b-book"></p>
+                    <div class="arb-calc-inputs">
+                      <label>
+                        <span data-i18n="arb_calc_odds">Odds</span>
+                        <input type="number" id="arb-calc-odds-b" min="1.01" step="0.01" />
+                      </label>
+                      <label>
+                        <span data-i18n="arb_calc_stake">Stake ($)</span>
+                        <input type="number" id="arb-calc-stake-b" min="0" step="0.01" />
+                      </label>
+                    </div>
+                    <div class="arb-calc-leg-actions">
+                      <button type="button" class="secondary-btn" id="arb-calc-base-b"
+                        data-i18n="arb_calc_use_this_stake">Use This Stake</button>
+                      <span class="mono" id="arb-calc-payout-b">-</span>
+                    </div>
+                  </section>
+
+                  <section class="arb-calc-leg hidden" id="arb-calc-leg-c">
+                    <h4 id="arb-calc-leg-c-title"></h4>
+                    <p class="helper" id="arb-calc-leg-c-book"></p>
+                    <div class="arb-calc-inputs">
+                      <label>
+                        <span data-i18n="arb_calc_odds">Odds</span>
+                        <input type="number" id="arb-calc-odds-c" min="1.01" step="0.01" />
+                      </label>
+                      <label>
+                        <span data-i18n="arb_calc_stake">Stake ($)</span>
+                        <input type="number" id="arb-calc-stake-c" min="0" step="0.01" />
+                      </label>
+                    </div>
+                    <div class="arb-calc-leg-actions">
+                      <button type="button" class="secondary-btn" id="arb-calc-base-c"
+                        data-i18n="arb_calc_use_this_stake">Use This Stake</button>
+                      <span class="mono" id="arb-calc-payout-c">-</span>
+                    </div>
+                  </section>
+                </div>
+
+                <div class="arb-calc-summary">
+                  <div class="arb-calc-metric">
+                    <span class="stat-label" data-i18n="arb_calc_min_payout">Min Payout</span>
+                    <strong class="mono" id="arb-calc-min-payout">-</strong>
+                  </div>
+                  <div class="arb-calc-metric">
+                    <span class="stat-label" data-i18n="arb_calc_profit">Guaranteed Profit</span>
+                    <strong class="mono" id="arb-calc-profit">-</strong>
+                  </div>
+                  <div class="arb-calc-metric">
+                    <span class="stat-label" data-i18n="arb_calc_roi">ROI</span>
+                    <strong class="mono" id="arb-calc-roi">-</strong>
+                  </div>
+                </div>
+                <p class="helper arb-calc-warning hidden" id="arb-calc-warning"></p>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section id="middles-panel" class="hidden">
+          <section class="stats-row">
+            <div class="stat-card">
+              <span class="stat-label" data-i18n="stat_middles_found">Middles Found</span>
+              <span class="stat-value" id="middle-stat-count">0</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label" data-i18n="stat_positive_middles">+EV Middles</span>
+              <span class="stat-value" id="middle-stat-positive">0</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label" data-i18n="stat_avg_ev">Avg EV</span>
+              <span class="stat-value" id="middle-stat-avg">0%</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label" data-i18n="stat_best_ev">Best EV</span>
+              <span class="stat-value" id="middle-stat-best">0%</span>
+            </div>
+          </section>
+
+          <section id="middles-summary-info" class="card summary-info hidden"></section>
+
+          <section class="summary-grid">
+            <div class="card summary-card">
+              <div class="card-head">
+                <h3 data-i18n="by_sport">By Sport</h3>
+              </div>
+              <div id="middles-sport-bars" class="bar-list"></div>
+            </div>
+            <div class="card summary-card" id="middles-key-card">
+              <div class="card-head">
+                <h3 data-i18n="key_numbers_label">Key Numbers</h3>
+              </div>
+              <div id="middles-key-bars" class="bar-list"></div>
+            </div>
+          </section>
+
+          <section class="card results-card">
+            <div class="card-head">
+              <h3 data-i18n="middles_title">Middles</h3>
+              <div class="table-meta">
+                <span id="middles-table-count">0 results</span>
+                <span class="muted" id="middles-sort-label" data-i18n="sorted_by_ev">Sorted by EV</span>
               </div>
             </div>
-
-            <div class="arb-calc-legs">
-              <section class="arb-calc-leg" id="arb-calc-leg-a">
-                <h4 id="arb-calc-leg-a-title"></h4>
-                <p class="helper" id="arb-calc-leg-a-book"></p>
-                <div class="arb-calc-inputs">
-                  <label>
-                    <span data-i18n="arb_calc_odds">Odds</span>
-                    <input type="number" id="arb-calc-odds-a" min="1.01" step="0.01" />
-                  </label>
-                  <label>
-                    <span data-i18n="arb_calc_stake">Stake ($)</span>
-                    <input type="number" id="arb-calc-stake-a" min="0" step="0.01" />
-                  </label>
-                </div>
-                <div class="arb-calc-leg-actions">
-                  <button type="button" class="secondary-btn" id="arb-calc-base-a" data-i18n="arb_calc_use_this_stake">Use This Stake</button>
-                  <span class="mono" id="arb-calc-payout-a">-</span>
-                </div>
-              </section>
-
-              <section class="arb-calc-leg" id="arb-calc-leg-b">
-                <h4 id="arb-calc-leg-b-title"></h4>
-                <p class="helper" id="arb-calc-leg-b-book"></p>
-                <div class="arb-calc-inputs">
-                  <label>
-                    <span data-i18n="arb_calc_odds">Odds</span>
-                    <input type="number" id="arb-calc-odds-b" min="1.01" step="0.01" />
-                  </label>
-                  <label>
-                    <span data-i18n="arb_calc_stake">Stake ($)</span>
-                    <input type="number" id="arb-calc-stake-b" min="0" step="0.01" />
-                  </label>
-                </div>
-                <div class="arb-calc-leg-actions">
-                  <button type="button" class="secondary-btn" id="arb-calc-base-b" data-i18n="arb_calc_use_this_stake">Use This Stake</button>
-                  <span class="mono" id="arb-calc-payout-b">-</span>
-                </div>
-              </section>
-
-              <section class="arb-calc-leg hidden" id="arb-calc-leg-c">
-                <h4 id="arb-calc-leg-c-title"></h4>
-                <p class="helper" id="arb-calc-leg-c-book"></p>
-                <div class="arb-calc-inputs">
-                  <label>
-                    <span data-i18n="arb_calc_odds">Odds</span>
-                    <input type="number" id="arb-calc-odds-c" min="1.01" step="0.01" />
-                  </label>
-                  <label>
-                    <span data-i18n="arb_calc_stake">Stake ($)</span>
-                    <input type="number" id="arb-calc-stake-c" min="0" step="0.01" />
-                  </label>
-                </div>
-                <div class="arb-calc-leg-actions">
-                  <button type="button" class="secondary-btn" id="arb-calc-base-c" data-i18n="arb_calc_use_this_stake">Use This Stake</button>
-                  <span class="mono" id="arb-calc-payout-c">-</span>
-                </div>
-              </section>
+            <div class="table-scroll">
+              <table id="middles-table">
+                <thead>
+                  <tr>
+                    <th data-i18n="table_ev">EV</th>
+                    <th data-i18n="table_prob">Prob</th>
+                    <th data-i18n="table_gap">Gap</th>
+                    <th data-i18n="table_sport">Sport</th>
+                    <th data-i18n="table_event">Event</th>
+                    <th data-i18n="table_time">Time</th>
+                    <th data-i18n="table_market">Market</th>
+                    <th data-i18n="table_side_a">Side A</th>
+                    <th data-i18n="table_side_b">Side B</th>
+                    <th data-i18n="table_middle">Middle</th>
+                    <th data-i18n="table_win_both">Win Both</th>
+                    <th data-i18n="table_miss">Miss</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
             </div>
+            <div id="middles-empty" class="empty" data-i18n="empty_middles">No middle opportunities meet your filters.
+            </div>
+          </section>
 
-            <div class="arb-calc-summary">
-              <div class="arb-calc-metric">
-                <span class="stat-label" data-i18n="arb_calc_min_payout">Min Payout</span>
-                <strong class="mono" id="arb-calc-min-payout">-</strong>
+          <section class="card middle-caveat">
+            <p data-i18n-html="caveat_middles"><strong>Understanding Middles:</strong> Middles are high-variance plays.
+              They typically lose small amounts and win big when the final score lands inside the gap. Probabilities are
+              estimates based on historical scoring distributions (NFL key numbers like 3 &amp; 7 dramatically boost
+              EV). Treat the EV as guidance, not a guarantee, and stake responsibly.</p>
+          </section>
+        </section>
+
+        <section id="plus-ev-panel" class="hidden">
+          <section class="stats-row">
+            <div class="stat-card">
+              <span class="stat-label" data-i18n="stat_plus_ev_bets">+EV Bets</span>
+              <span class="stat-value" id="plus-ev-count">0</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label" data-i18n="stat_avg_edge">Avg Edge</span>
+              <span class="stat-value" id="plus-ev-avg">0%</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label" data-i18n="stat_best_edge">Best Edge</span>
+              <span class="stat-value" id="plus-ev-best">0%</span>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label" data-i18n="stat_total_ev">Total EV ($100)</span>
+              <span class="stat-value" id="plus-ev-total">$0</span>
+            </div>
+          </section>
+
+          <section id="plus-ev-summary-info" class="card summary-info hidden"></section>
+
+          <section class="summary-grid">
+            <div class="card summary-card">
+              <div class="card-head">
+                <h3 data-i18n="by_sport">By Sport</h3>
               </div>
-              <div class="arb-calc-metric">
-                <span class="stat-label" data-i18n="arb_calc_profit">Guaranteed Profit</span>
-                <strong class="mono" id="arb-calc-profit">-</strong>
+              <div id="plus-ev-sport-bars" class="bar-list"></div>
+            </div>
+            <div class="card summary-card">
+              <div class="card-head">
+                <h3 data-i18n="by_edge_band">By Edge Band</h3>
               </div>
-              <div class="arb-calc-metric">
-                <span class="stat-label" data-i18n="arb_calc_roi">ROI</span>
-                <strong class="mono" id="arb-calc-roi">-</strong>
+              <div id="plus-ev-edge-bars" class="bar-list"></div>
+            </div>
+          </section>
+
+          <section class="card results-card">
+            <div class="card-head">
+              <h3 data-i18n="plus_ev_title">+EV Opportunities</h3>
+              <div class="table-meta">
+                <span id="plus-ev-table-count">0 results</span>
+                <span class="muted" id="plus-ev-sort-label" data-i18n="sorted_by_edge">Sorted by Edge</span>
               </div>
             </div>
-            <p class="helper arb-calc-warning hidden" id="arb-calc-warning"></p>
-          </div>
-        </aside>
-      </div>
-    </section>
+            <div class="table-scroll">
+              <table id="plus-ev-table">
+                <thead>
+                  <tr>
+                    <th data-i18n="table_edge">Edge</th>
+                    <th data-i18n="table_ev_100">EV ($100)</th>
+                    <th data-i18n="table_kelly">Kelly</th>
+                    <th data-i18n="table_sport">Sport</th>
+                    <th data-i18n="table_event">Event</th>
+                    <th data-i18n="table_time">Time</th>
+                    <th data-i18n="table_market">Market</th>
+                    <th data-i18n="table_bet">Bet</th>
+                    <th data-i18n="table_soft_odds">Soft Odds</th>
+                    <th data-i18n="table_fair_odds">Fair Odds</th>
+                    <th data-i18n="table_true_prob">True Prob</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div id="plus-ev-empty" class="empty" data-i18n="empty_plus_ev">No +EV bets at the current thresholds.</div>
+          </section>
 
-    <section id="middles-panel" class="hidden">
-      <section class="stats-row">
-        <div class="stat-card">
-          <span class="stat-label" data-i18n="stat_middles_found">Middles Found</span>
-          <span class="stat-value" id="middle-stat-count">0</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label" data-i18n="stat_positive_middles">+EV Middles</span>
-          <span class="stat-value" id="middle-stat-positive">0</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label" data-i18n="stat_avg_ev">Avg EV</span>
-          <span class="stat-value" id="middle-stat-avg">0%</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label" data-i18n="stat_best_ev">Best EV</span>
-          <span class="stat-value" id="middle-stat-best">0%</span>
-        </div>
+          <section class="card middle-caveat">
+            <p data-i18n-html="caveat_plus_ev"><strong>Understanding +EV Betting:</strong> Sharp books (Pinnacle,
+              Betfair, Matchbook) provide near "true" odds. When a soft book posts a higher price than fair value, the
+              bet has positive expected value. +EV bets still lose roughly half the time—the edge shows up over many
+              wagers. Kelly staking helps size bets, but variance can still be high. Always confirm odds before betting;
+              edges disappear quickly.</p>
+          </section>
+        </section>
+
+
+        <section id="history-panel" class="hidden">
+          <section class="card results-card">
+            <div class="card-head">
+              <h3 data-i18n="history_log_open">History Log</h3>
+              <div class="table-meta">
+                <span id="history-table-count">0 records</span>
+                <button type="button" id="refresh-history-btn" class="secondary-btn"
+                  data-i18n="refresh_btn">Refresh</button>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table id="history-table">
+                <thead>
+                  <tr>
+                    <th data-i18n="table_time">Scan Time</th>
+                    <th data-i18n="table_mode">Mode</th>
+                    <th data-i18n="table_metric">Metric (ROI/EV/Edge)</th>
+                    <th data-i18n="table_sport">Sport</th>
+                    <th data-i18n="table_event">Event</th>
+                    <th data-i18n="table_market">Market</th>
+                    <th data-i18n="table_match">Match</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div id="history-empty" class="empty" data-i18n="empty_history">No history recorded yet. Enable history
+              tracking and run a scan.</div>
+          </section>
+        </section>
       </section>
-
-      <section id="middles-summary-info" class="card summary-info hidden"></section>
-
-      <section class="summary-grid">
-        <div class="card summary-card">
-          <div class="card-head">
-            <h3 data-i18n="by_sport">By Sport</h3>
-          </div>
-          <div id="middles-sport-bars" class="bar-list"></div>
-        </div>
-        <div class="card summary-card" id="middles-key-card">
-          <div class="card-head">
-            <h3 data-i18n="key_numbers_label">Key Numbers</h3>
-          </div>
-          <div id="middles-key-bars" class="bar-list"></div>
-        </div>
-      </section>
-
-      <section class="card results-card">
-        <div class="card-head">
-          <h3 data-i18n="middles_title">Middles</h3>
-          <div class="table-meta">
-            <span id="middles-table-count">0 results</span>
-            <span class="muted" id="middles-sort-label" data-i18n="sorted_by_ev">Sorted by EV</span>
-          </div>
-        </div>
-        <div class="table-scroll">
-          <table id="middles-table">
-            <thead>
-              <tr>
-                <th data-i18n="table_ev">EV</th>
-                <th data-i18n="table_prob">Prob</th>
-                <th data-i18n="table_gap">Gap</th>
-                <th data-i18n="table_sport">Sport</th>
-                <th data-i18n="table_event">Event</th>
-                <th data-i18n="table_time">Time</th>
-                <th data-i18n="table_market">Market</th>
-                <th data-i18n="table_side_a">Side A</th>
-                <th data-i18n="table_side_b">Side B</th>
-                <th data-i18n="table_middle">Middle</th>
-                <th data-i18n="table_win_both">Win Both</th>
-                <th data-i18n="table_miss">Miss</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <div id="middles-empty" class="empty" data-i18n="empty_middles">No middle opportunities meet your filters.</div>
-      </section>
-
-      <section class="card middle-caveat">
-        <p data-i18n-html="caveat_middles"><strong>Understanding Middles:</strong> Middles are high-variance plays. They typically lose small amounts and win big when the final score lands inside the gap. Probabilities are estimates based on historical scoring distributions (NFL key numbers like 3 &amp; 7 dramatically boost EV). Treat the EV as guidance, not a guarantee, and stake responsibly.</p>
-      </section>
-    </section>
-
-    <section id="plus-ev-panel" class="hidden">
-      <section class="stats-row">
-        <div class="stat-card">
-          <span class="stat-label" data-i18n="stat_plus_ev_bets">+EV Bets</span>
-          <span class="stat-value" id="plus-ev-count">0</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label" data-i18n="stat_avg_edge">Avg Edge</span>
-          <span class="stat-value" id="plus-ev-avg">0%</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label" data-i18n="stat_best_edge">Best Edge</span>
-          <span class="stat-value" id="plus-ev-best">0%</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-label" data-i18n="stat_total_ev">Total EV ($100)</span>
-          <span class="stat-value" id="plus-ev-total">$0</span>
-        </div>
-      </section>
-
-      <section id="plus-ev-summary-info" class="card summary-info hidden"></section>
-
-      <section class="summary-grid">
-        <div class="card summary-card">
-          <div class="card-head">
-            <h3 data-i18n="by_sport">By Sport</h3>
-          </div>
-          <div id="plus-ev-sport-bars" class="bar-list"></div>
-        </div>
-        <div class="card summary-card">
-          <div class="card-head">
-            <h3 data-i18n="by_edge_band">By Edge Band</h3>
-          </div>
-          <div id="plus-ev-edge-bars" class="bar-list"></div>
-        </div>
-      </section>
-
-      <section class="card results-card">
-        <div class="card-head">
-          <h3 data-i18n="plus_ev_title">+EV Opportunities</h3>
-          <div class="table-meta">
-            <span id="plus-ev-table-count">0 results</span>
-            <span class="muted" id="plus-ev-sort-label" data-i18n="sorted_by_edge">Sorted by Edge</span>
-          </div>
-        </div>
-        <div class="table-scroll">
-          <table id="plus-ev-table">
-            <thead>
-              <tr>
-                <th data-i18n="table_edge">Edge</th>
-                <th data-i18n="table_ev_100">EV ($100)</th>
-                <th data-i18n="table_kelly">Kelly</th>
-                <th data-i18n="table_sport">Sport</th>
-                <th data-i18n="table_event">Event</th>
-                <th data-i18n="table_time">Time</th>
-                <th data-i18n="table_market">Market</th>
-                <th data-i18n="table_bet">Bet</th>
-                <th data-i18n="table_soft_odds">Soft Odds</th>
-                <th data-i18n="table_fair_odds">Fair Odds</th>
-                <th data-i18n="table_true_prob">True Prob</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <div id="plus-ev-empty" class="empty" data-i18n="empty_plus_ev">No +EV bets at the current thresholds.</div>
-      </section>
-
-      <section class="card middle-caveat">
-        <p data-i18n-html="caveat_plus_ev"><strong>Understanding +EV Betting:</strong> Sharp books (Pinnacle, Betfair, Matchbook) provide near "true" odds. When a soft book posts a higher price than fair value, the bet has positive expected value. +EV bets still lose roughly half the time—the edge shows up over many wagers. Kelly staking helps size bets, but variance can still be high. Always confirm odds before betting; edges disappear quickly.</p>
-      </section>
-    </section>
-  
-      
-    <section id="history-panel" class="hidden">
-      <section class="card results-card">
-        <div class="card-head">
-          <h3 data-i18n="history_log_open">History Log</h3>
-          <div class="table-meta">
-            <span id="history-table-count">0 records</span>
-            <button type="button" id="refresh-history-btn" class="secondary-btn" data-i18n="refresh_btn">Refresh</button>
-          </div>
-        </div>
-        <div class="table-scroll">
-          <table id="history-table">
-            <thead>
-              <tr>
-                <th data-i18n="table_time">Scan Time</th>
-                <th data-i18n="table_mode">Mode</th>
-                <th data-i18n="table_metric">Metric (ROI/EV/Edge)</th>
-                <th data-i18n="table_sport">Sport</th>
-                <th data-i18n="table_event">Event</th>
-                <th data-i18n="table_market">Market</th>
-                <th data-i18n="table_match">Match</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <div id="history-empty" class="empty" data-i18n="empty_history">No history recorded yet. Enable history tracking and run a scan.</div>
-      </section>
-    </section>
-</section>
     </div>
-</main>
+  </main>
 
-  <div
-    id="edge-scanner-config"
-    data-has-env-key="{{ 'true' if has_env_key else 'false' }}"
-    data-sharp-books='{{ sharp_books | tojson }}'
-    data-default-sharp-book="{{ default_sharp_book }}"
-    data-default-min-edge-percent="{{ default_min_edge_percent }}"
-    data-default-bankroll="{{ default_bankroll }}"
-    data-default-kelly-fraction="{{ default_kelly_fraction }}"
-    data-default-odds-format="{{ default_odds_format }}"
-    data-default-density="{{ default_density }}"
-    data-default-theme="{{ default_theme }}"
+  <div id="edge-scanner-config" data-has-env-key="{{ 'true' if has_env_key else 'false' }}"
+    data-sharp-books='{{ sharp_books | tojson }}' data-default-sharp-book="{{ default_sharp_book }}"
+    data-default-min-edge-percent="{{ default_min_edge_percent }}" data-default-bankroll="{{ default_bankroll }}"
+    data-default-kelly-fraction="{{ default_kelly_fraction }}" data-default-odds-format="{{ default_odds_format }}"
+    data-default-density="{{ default_density }}" data-default-theme="{{ default_theme }}"
     data-default-language="{{ default_language }}"
     data-default-all-markets="{{ 'true' if default_all_markets else 'false' }}"
-    data-kelly-options='{{ kelly_options | tojson }}'
-    data-bookmaker-links='{{ bookmaker_links | tojson }}'
-    data-custom-provider-keys='{{ custom_provider_keys | tojson }}'
-    hidden
-  ></div>
+    data-kelly-options='{{ kelly_options | tojson }}' data-bookmaker-links='{{ bookmaker_links | tojson }}'
+    data-custom-provider-keys='{{ custom_provider_keys | tojson }}' hidden></div>
 
   <script>
     const configEl = document.getElementById('edge-scanner-config');
@@ -713,21 +763,21 @@
     };
     const appConfig = configEl
       ? {
-          hasEnvKey: configEl.dataset.hasEnvKey === 'true',
-          sharpBooks: parseConfigJson(configEl.dataset.sharpBooks, []),
-          defaultSharpBook: configEl.dataset.defaultSharpBook || '',
-          defaultMinEdgePercent: parseFloat(configEl.dataset.defaultMinEdgePercent || '0'),
-          defaultBankroll: parseFloat(configEl.dataset.defaultBankroll || '0'),
-          defaultKellyFraction: parseFloat(configEl.dataset.defaultKellyFraction || '0'),
-          defaultOddsFormat: configEl.dataset.defaultOddsFormat || '',
-          defaultDensity: configEl.dataset.defaultDensity || '',
-          defaultTheme: configEl.dataset.defaultTheme || '',
-          defaultLanguage: configEl.dataset.defaultLanguage || '',
-          defaultAllMarkets: configEl.dataset.defaultAllMarkets === 'true',
-          kellyOptions: parseConfigJson(configEl.dataset.kellyOptions, []),
-          bookmakerLinks: parseConfigJson(configEl.dataset.bookmakerLinks, {}),
-          customProviderKeys: parseConfigJson(configEl.dataset.customProviderKeys, []),
-        }
+        hasEnvKey: configEl.dataset.hasEnvKey === 'true',
+        sharpBooks: parseConfigJson(configEl.dataset.sharpBooks, []),
+        defaultSharpBook: configEl.dataset.defaultSharpBook || '',
+        defaultMinEdgePercent: parseFloat(configEl.dataset.defaultMinEdgePercent || '0'),
+        defaultBankroll: parseFloat(configEl.dataset.defaultBankroll || '0'),
+        defaultKellyFraction: parseFloat(configEl.dataset.defaultKellyFraction || '0'),
+        defaultOddsFormat: configEl.dataset.defaultOddsFormat || '',
+        defaultDensity: configEl.dataset.defaultDensity || '',
+        defaultTheme: configEl.dataset.defaultTheme || '',
+        defaultLanguage: configEl.dataset.defaultLanguage || '',
+        defaultAllMarkets: configEl.dataset.defaultAllMarkets === 'true',
+        kellyOptions: parseConfigJson(configEl.dataset.kellyOptions, []),
+        bookmakerLinks: parseConfigJson(configEl.dataset.bookmakerLinks, {}),
+        customProviderKeys: parseConfigJson(configEl.dataset.customProviderKeys, []),
+      }
       : {};
     let bookmakerLinks = { ...(appConfig.bookmakerLinks || {}) };
     const hasEnvKey = appConfig.hasEnvKey === true || appConfig.hasEnvKey === 'true';
@@ -744,6 +794,7 @@
     const arbCalcBody = document.getElementById('arb-calc-body');
     const arbCalcEvent = document.getElementById('arb-calc-event');
     const arbCalcMarket = document.getElementById('arb-calc-market');
+    const arbCalcOpenBtn = document.getElementById('arb-calc-open-btn');
     const arbCalcTotalInput = document.getElementById('arb-calc-total-input');
     const arbCalcAutoSplitBtn = document.getElementById('arb-calc-auto-split');
     const arbCalcLegA = document.getElementById('arb-calc-leg-a');
@@ -806,11 +857,11 @@
     const bookmakersList = document.getElementById('bookmakers-list');
     const bookmakerLinksList = bookmakersList;
     const saveSettingsBtn = document.getElementById('save-settings');
-      const advancedSummary = document.getElementById('advanced-summary');
-      const advancedModal = document.getElementById('advanced-modal');
-      const openAdvancedBtn = document.getElementById('open-advanced');
-      const closeAdvancedBtn = document.getElementById('close-advanced');
-      const quickActionButtons = document.querySelectorAll('[data-quick-action][data-quick-target]');
+    const advancedSummary = document.getElementById('advanced-summary');
+    const advancedModal = document.getElementById('advanced-modal');
+    const openAdvancedBtn = document.getElementById('open-advanced');
+    const closeAdvancedBtn = document.getElementById('close-advanced');
+    const quickActionButtons = document.querySelectorAll('[data-quick-action][data-quick-target]');
     const tableCount = document.getElementById('table-count');
     const arbSortLabel = document.getElementById('arb-sort-label');
     const scanOpportunities = document.getElementById('scan-opportunities');
@@ -885,20 +936,20 @@
     let oddsFormat = localStorage.getItem('edge-odds-format') || appConfig.defaultOddsFormat || 'decimal';
     let densityMode = localStorage.getItem('edge-density') || appConfig.defaultDensity || 'comfort';
     let isScanning = false;
-      let lastStatus = null;
-      let lastFocusedElement = null;
-      let autoScanTimer = null;
-      let scanFeedbackTimer = null;
-      let scanStartedAtMs = 0;
-      let scanLastStatusKey = '';
-      let scanLastElapsedSecond = -1;
-      let activeScanContext = null;
-      let scanLockedControls = [];
-      const scanControlDisabledState = new WeakMap();
-      let notificationAudioContext = null;
-      let selectedArbKey = null;
-      let selectedArbOpp = null;
-      let arbCalculatorState = null;
+    let lastStatus = null;
+    let lastFocusedElement = null;
+    let autoScanTimer = null;
+    let scanFeedbackTimer = null;
+    let scanStartedAtMs = 0;
+    let scanLastStatusKey = '';
+    let scanLastElapsedSecond = -1;
+    let activeScanContext = null;
+    let scanLockedControls = [];
+    const scanControlDisabledState = new WeakMap();
+    let notificationAudioContext = null;
+    let selectedArbKey = null;
+    let selectedArbOpp = null;
+    let arbCalculatorState = null;
 
     const TRANSLATIONS = {
       en: {
@@ -911,9 +962,9 @@
         lang_en: 'EN',
         lang_zh: '\u4e2d\u6587',
         api_key_label: 'API Key',
-                env_key_notice: 'Using API key from .env',
+        env_key_notice: 'Using API key from .env',
         api_key_show: 'Show API key',
-                api_key_hide: 'Hide API key',
+        api_key_hide: 'Hide API key',
         show_short: 'Show',
         hide_short: 'Hide',
         theme_light: 'Light',
@@ -934,18 +985,18 @@
         auto_scan_enable: 'Enable auto scan',
         auto_scan_interval_label: 'Interval (min)',
         auto_scan_helper: 'Runs a scan on a timer using your current filters.',
-          advanced_settings: 'Advanced settings',
-          advanced_hint: 'Less frequently adjusted options live here.',
-          advanced_summary: 'Sports {sports} | Books {books} | Regions {regions}',
-          summary_all: 'All',
-          notify_label: 'Notifications',
-          notify_sound: 'Sound alert',
-          notify_popup: 'Popup notification',
-          notify_helper: 'Browser permission is required for popup notifications.',
-          notify_body: 'Arb {arb} | Middles {middle} | +EV {plus}',
-          select_all: 'Select all',
-          clear_all: 'Clear',
-          close: 'Close',
+        advanced_settings: 'Advanced settings',
+        advanced_hint: 'Less frequently adjusted options live here.',
+        advanced_summary: 'Sports {sports} | Books {books} | Regions {regions}',
+        summary_all: 'All',
+        notify_label: 'Notifications',
+        notify_sound: 'Sound alert',
+        notify_popup: 'Popup notification',
+        notify_helper: 'Browser permission is required for popup notifications.',
+        notify_body: 'Arb {arb} | Middles {middle} | +EV {plus}',
+        select_all: 'Select all',
+        clear_all: 'Clear',
+        close: 'Close',
         regions_label: 'Regions',
         regions_helper: 'Select at least one region. EU is always included for sharp reference.',
         commission_label: 'Exchange Commission (%)',
@@ -1158,13 +1209,13 @@
         lang_en: 'EN',
         lang_zh: '\u4e2d\u6587',
         api_key_label: 'API 密钥',
-                        env_key_notice: '使用 .env 中的 API 密钥',
+        env_key_notice: '使用 .env 中的 API 密钥',
         api_key_show: '显示 API 密钥',
-                        api_key_hide: '隐藏 API 密钥',
-                show_short: '显示',
-                hide_short: '隐藏',
-                theme_light: '浅色',
-                theme_dark: '深色',
+        api_key_hide: '隐藏 API 密钥',
+        show_short: '显示',
+        hide_short: '隐藏',
+        theme_light: '浅色',
+        theme_dark: '深色',
         total_stake_label: '总下注金额 ($)',
         stake_helper: '用于套利和中间盘的下注拆分计算。',
         sports_label: '体育项目',
@@ -1183,16 +1234,16 @@
         auto_scan_helper: '按当前筛选条件定时自动扫描。',
         advanced_settings: '高级设置',
         advanced_hint: '不常调整的选项放在这里。',
-                advanced_summary: '项目 {sports} | 平台 {books} | 地区 {regions}',
-          summary_all: '全部',
-          notify_label: '通知',
-          notify_sound: '铃声提示',
-          notify_popup: '弹窗通知',
-          notify_helper: '弹窗通知需要浏览器授权。',
-          notify_body: '套利 {arb} | 中盘 {middle} | +EV {plus}',
-          select_all: '全选',
-          clear_all: '清空',
-          close: '关闭',
+        advanced_summary: '项目 {sports} | 平台 {books} | 地区 {regions}',
+        summary_all: '全部',
+        notify_label: '通知',
+        notify_sound: '铃声提示',
+        notify_popup: '弹窗通知',
+        notify_helper: '弹窗通知需要浏览器授权。',
+        notify_body: '套利 {arb} | 中盘 {middle} | +EV {plus}',
+        select_all: '全选',
+        clear_all: '清空',
+        close: '关闭',
         regions_label: '地区',
         regions_helper: '至少选择一个地区。为锐盘参考将始终包含 EU。',
         commission_label: '交易所手续费 (%)',
@@ -1600,7 +1651,7 @@
       }
       const context = notificationAudioContext;
       if (context.state === 'suspended') {
-        context.resume().catch(() => {});
+        context.resume().catch(() => { });
       }
       const oscillator = context.createOscillator();
       const gain = context.createGain();
@@ -2503,6 +2554,17 @@
     if (arbCalcAutoSplitBtn) {
       arbCalcAutoSplitBtn.addEventListener('click', () => rebalanceArbCalculator('total'));
     }
+    if (arbCalcOpenBtn) {
+      arbCalcOpenBtn.addEventListener('click', () => {
+        if (!selectedArbOpp) return;
+        const hasOpenTargets = collectBookTargets(selectedArbOpp).length > 0;
+        if (!hasOpenTargets) {
+          showStatusKey('open_books_missing', 'error');
+          return;
+        }
+        openBookmakerTabs(selectedArbOpp);
+      });
+    }
     if (arbCalcTotalInput) {
       arbCalcTotalInput.addEventListener('change', () => rebalanceArbCalculator('total'));
     }
@@ -2753,20 +2815,7 @@
             <td>${formatMarket(opp)}</td>
             <td>${formatOutcome(breakdown[0])}</td>
             <td>${formatOutcome(breakdown[1])}</td>
-            <td>${formatOutcome(breakdown[2])}</td>
-            <td class="open-cell"><button type="button" class="secondary-btn open-books-btn" ${hasOpenTargets ? '' : 'disabled'}>${openLabel}</button></td>`;
-          const openBtn = row.querySelector('.open-books-btn');
-          if (openBtn) {
-            openBtn.addEventListener('click', (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              if (!hasOpenTargets) {
-                showStatusKey('open_books_missing', 'error');
-                return;
-              }
-              openBookmakerTabs(opp);
-            });
-          }
+            <td>${formatOutcome(breakdown[2])}</td>`;
           row.addEventListener('click', () => {
             const wasSame = selectedArbKey === oppKey;
             selectedArbKey = oppKey;
@@ -2790,9 +2839,7 @@
           profit: formatCurrency(runningProfit),
         });
       }
-      if (selectedArbKey && !selectedVisible) {
-        clearArbCalculatorSelection();
-      } else if (selectedVisible) {
+      if (selectedArbKey) {
         renderArbCalculator();
       }
       if (scanOpportunities) scanOpportunities.textContent = String(filtered.length);
@@ -3038,6 +3085,11 @@
         market: formatMarket(selectedArbOpp),
         time: formatDateTime(selectedArbOpp.commence_time),
       });
+
+      if (arbCalcOpenBtn) {
+        const hasOpenTargets = collectBookTargets(selectedArbOpp).length > 0;
+        arbCalcOpenBtn.disabled = !hasOpenTargets;
+      }
 
       if (arbCalcTotalInput) arbCalcTotalInput.value = totalStake.toFixed(2);
 
@@ -3376,8 +3428,8 @@
       const point = item.point !== undefined && item.point !== null ? ` (${item.point})` : '';
       const availableValue =
         item.max_stake !== undefined &&
-        item.max_stake !== null &&
-        !Number.isNaN(Number(item.max_stake))
+          item.max_stake !== null &&
+          !Number.isNaN(Number(item.max_stake))
           ? formatCurrency(Number(item.max_stake))
           : '-';
       const available = t('available_label', { amount: availableValue });
@@ -3705,17 +3757,17 @@
     function renderPartialWarning(data) {
       const errorDetails = data && data.partial && Array.isArray(data.sport_errors)
         ? data.sport_errors
-            .map((err) => `${err.sport || err.sport_key || t('unknown')} (${err.error || t('unknown_error')})`)
-            .join(', ')
+          .map((err) => `${err.sport || err.sport_key || t('unknown')} (${err.error || t('unknown_error')})`)
+          .join(', ')
         : '';
       const skipDetails = data && Array.isArray(data.api_market_skips)
         ? data.api_market_skips
-            .filter((entry) => entry && Array.isArray(entry.markets) && entry.markets.length)
-            .map((entry) => {
-              const sportLabel = translateSportKey(entry.sport_key, entry.sport_key || t('unknown'));
-              return `${sportLabel}: ${entry.markets.join('/')}`;
-            })
-            .join(', ')
+          .filter((entry) => entry && Array.isArray(entry.markets) && entry.markets.length)
+          .map((entry) => {
+            const sportLabel = translateSportKey(entry.sport_key, entry.sport_key || t('unknown'));
+            return `${sportLabel}: ${entry.markets.join('/')}`;
+          })
+          .join(', ')
         : '';
 
       const warningBlocks = [];
@@ -3801,8 +3853,8 @@
       const odds = side.effective_price ? formatOddsDisplay(side.effective_price) : formatOddsDisplay(side.price);
       const availableValue =
         side.max_stake !== undefined &&
-        side.max_stake !== null &&
-        !Number.isNaN(Number(side.max_stake))
+          side.max_stake !== null &&
+          !Number.isNaN(Number(side.max_stake))
           ? formatCurrency(Number(side.max_stake))
           : '-';
       const available = t('available_label', { amount: availableValue });
@@ -3956,103 +4008,103 @@
     }
   </script>
 
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-    const historyPanel = document.getElementById('history-panel');
-    const refreshHistoryBtn = document.getElementById('refresh-history-btn');
-    const historyTableBody = document.querySelector('#history-table tbody');
-    const historyEmpty = document.getElementById('history-empty');
-    const historyTableCount = document.getElementById('history-table-count');
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const historyPanel = document.getElementById('history-panel');
+      const refreshHistoryBtn = document.getElementById('refresh-history-btn');
+      const historyTableBody = document.querySelector('#history-table tbody');
+      const historyEmpty = document.getElementById('history-empty');
+      const historyTableCount = document.getElementById('history-table-count');
 
-    // Override the display logic for tabs to include History
-    const allTabs = document.querySelectorAll('.tab-btn');
-    const arbPanel = document.getElementById('arbitrage-panel');
-    const arbConfig = document.getElementById('arbitrage-config');
-    const midPanel = document.getElementById('middles-panel');
-    const midConfig = document.getElementById('middles-config');
-    const evPanel = document.getElementById('plus-ev-panel');
-    const evConfig = document.getElementById('plus-ev-config');
+      // Override the display logic for tabs to include History
+      const allTabs = document.querySelectorAll('.tab-btn');
+      const arbPanel = document.getElementById('arbitrage-panel');
+      const arbConfig = document.getElementById('arbitrage-config');
+      const midPanel = document.getElementById('middles-panel');
+      const midConfig = document.getElementById('middles-config');
+      const evPanel = document.getElementById('plus-ev-panel');
+      const evConfig = document.getElementById('plus-ev-config');
 
-    allTabs.forEach(btn => {
+      allTabs.forEach(btn => {
         btn.addEventListener('click', (e) => {
-            const tabId = e.target.dataset.tab;
-            allTabs.forEach(t => t.classList.remove('active'));
-            e.target.classList.add('active');
+          const tabId = e.target.dataset.tab;
+          allTabs.forEach(t => t.classList.remove('active'));
+          e.target.classList.add('active');
 
-            arbPanel?.classList.add('hidden');
-            arbConfig?.classList.add('hidden');
-            midPanel?.classList.add('hidden');
-            midConfig?.classList.add('hidden');
-            evPanel?.classList.add('hidden');
-            evConfig?.classList.add('hidden');
-            historyPanel?.classList.add('hidden');
+          arbPanel?.classList.add('hidden');
+          arbConfig?.classList.add('hidden');
+          midPanel?.classList.add('hidden');
+          midConfig?.classList.add('hidden');
+          evPanel?.classList.add('hidden');
+          evConfig?.classList.add('hidden');
+          historyPanel?.classList.add('hidden');
 
-            if (tabId === 'arbitrage') {
-                arbPanel?.classList.remove('hidden');
-                arbConfig?.classList.remove('hidden');
-            } else if (tabId === 'middles') {
-                midPanel?.classList.remove('hidden');
-                midConfig?.classList.remove('hidden');
-            } else if (tabId === 'plus-ev') {
-                evPanel?.classList.remove('hidden');
-                evConfig?.classList.remove('hidden');
-            } else if (tabId === 'history') {
-                historyPanel?.classList.remove('hidden');
-                if (window.loadHistory) window.loadHistory();
-            }
-        });
-    });
-
-    window.loadHistory = function loadHistory() {
-      if (!refreshHistoryBtn) return;
-      refreshHistoryBtn.disabled = true;
-      refreshHistoryBtn.textContent = 'Loading...';
-      
-      fetch('/history?limit=200')
-        .then(res => res.json())
-        .then(data => {
-          refreshHistoryBtn.disabled = false;
-          refreshHistoryBtn.textContent = 'Refresh'; // Or use i18n
-          
-          if (!historyTableBody) return;
-          historyTableBody.innerHTML = '';
-          
-          if (!data.success || !data.records || data.records.length === 0) {
-            historyEmpty?.classList.remove('hidden');
-            document.querySelector('#history-table')?.parentElement.classList.add('hidden');
-            if(historyTableCount) historyTableCount.textContent = '0 records';
-            return;
+          if (tabId === 'arbitrage') {
+            arbPanel?.classList.remove('hidden');
+            arbConfig?.classList.remove('hidden');
+          } else if (tabId === 'middles') {
+            midPanel?.classList.remove('hidden');
+            midConfig?.classList.remove('hidden');
+          } else if (tabId === 'plus-ev') {
+            evPanel?.classList.remove('hidden');
+            evConfig?.classList.remove('hidden');
+          } else if (tabId === 'history') {
+            historyPanel?.classList.remove('hidden');
+            if (window.loadHistory) window.loadHistory();
           }
-          
-          historyEmpty?.classList.add('hidden');
-          document.querySelector('#history-table')?.parentElement.classList.remove('hidden');
-          if(historyTableCount) historyTableCount.textContent = data.records.length + ' records';
-          
-          data.records.forEach(rec => {
-            const tr = document.createElement('tr');
-            
-            let metricText = '';
-            let modeTitle = rec.mode;
-            let displayBooks = '';
-            
-            if (rec.mode === 'arbitrage') {
-              metricText = `<span class="gross-roi positive-roi">${(rec.roi_percent || 0).toFixed(2)}% ROI</span>`;
-              modeTitle = 'Arb';
-              if (rec.books) displayBooks = rec.books.map(b => `${b.bookmaker} (${b.price})`).join(' vs ');
-            } else if (rec.mode === 'ev') {
-              metricText = `<span class="gross-roi positive-roi">${(rec.edge_percent || 0).toFixed(2)}% Edge</span>`;
-              modeTitle = '+EV';
-              displayBooks = `${rec.soft_book || ''} (${rec.soft_odds || ''}) vs Sharp (${rec.sharp_fair || ''})`;
-            } else if (rec.mode === 'middles') {
-              metricText = `<span class="gross-roi positive-roi">$${(rec.ev_dollars || 0).toFixed(2)} EV</span>`;
-              modeTitle = 'Middle';
-              if (rec.books) displayBooks = rec.books.map(b => `${b.bookmaker} (${b.price})`).join(' vs ');
+        });
+      });
+
+      window.loadHistory = function loadHistory() {
+        if (!refreshHistoryBtn) return;
+        refreshHistoryBtn.disabled = true;
+        refreshHistoryBtn.textContent = 'Loading...';
+
+        fetch('/history?limit=200')
+          .then(res => res.json())
+          .then(data => {
+            refreshHistoryBtn.disabled = false;
+            refreshHistoryBtn.textContent = 'Refresh'; // Or use i18n
+
+            if (!historyTableBody) return;
+            historyTableBody.innerHTML = '';
+
+            if (!data.success || !data.records || data.records.length === 0) {
+              historyEmpty?.classList.remove('hidden');
+              document.querySelector('#history-table')?.parentElement.classList.add('hidden');
+              if (historyTableCount) historyTableCount.textContent = '0 records';
+              return;
             }
-            
-            const scanTime = rec.scan_time ? rec.scan_time.replace('T', ' ').slice(0, 19) : '';
-            const sport = rec.sport_display || rec.sport || '';
-            
-            tr.innerHTML = `
+
+            historyEmpty?.classList.add('hidden');
+            document.querySelector('#history-table')?.parentElement.classList.remove('hidden');
+            if (historyTableCount) historyTableCount.textContent = data.records.length + ' records';
+
+            data.records.forEach(rec => {
+              const tr = document.createElement('tr');
+
+              let metricText = '';
+              let modeTitle = rec.mode;
+              let displayBooks = '';
+
+              if (rec.mode === 'arbitrage') {
+                metricText = `<span class="gross-roi positive-roi">${(rec.roi_percent || 0).toFixed(2)}% ROI</span>`;
+                modeTitle = 'Arb';
+                if (rec.books) displayBooks = rec.books.map(b => `${b.bookmaker} (${b.price})`).join(' vs ');
+              } else if (rec.mode === 'ev') {
+                metricText = `<span class="gross-roi positive-roi">${(rec.edge_percent || 0).toFixed(2)}% Edge</span>`;
+                modeTitle = '+EV';
+                displayBooks = `${rec.soft_book || ''} (${rec.soft_odds || ''}) vs Sharp (${rec.sharp_fair || ''})`;
+              } else if (rec.mode === 'middles') {
+                metricText = `<span class="gross-roi positive-roi">$${(rec.ev_dollars || 0).toFixed(2)} EV</span>`;
+                modeTitle = 'Middle';
+                if (rec.books) displayBooks = rec.books.map(b => `${b.bookmaker} (${b.price})`).join(' vs ');
+              }
+
+              const scanTime = rec.scan_time ? rec.scan_time.replace('T', ' ').slice(0, 19) : '';
+              const sport = rec.sport_display || rec.sport || '';
+
+              tr.innerHTML = `
               <td class="mono">${scanTime}</td>
               <td><span class="badge uppercase">${modeTitle}</span></td>
               <td>${metricText}</td>
@@ -4061,23 +4113,23 @@ document.addEventListener('DOMContentLoaded', () => {
               <td>${rec.market || ''}</td>
               <td class="event-cell muted">${displayBooks}</td>
             `;
-            historyTableBody.appendChild(tr);
-          });
-        })
-        .catch(err => {
-          console.error(err);
-          if (refreshHistoryBtn) {
+              historyTableBody.appendChild(tr);
+            });
+          })
+          .catch(err => {
+            console.error(err);
+            if (refreshHistoryBtn) {
               refreshHistoryBtn.disabled = false;
               refreshHistoryBtn.textContent = 'Error';
-          }
-        });
-    }
+            }
+          });
+      }
 
-    if (refreshHistoryBtn) {
+      if (refreshHistoryBtn) {
         refreshHistoryBtn.addEventListener('click', loadHistory);
-    }
-});
-</script>
+      }
+    });
+  </script>
 </body>
 
 </html>
