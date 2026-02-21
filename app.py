@@ -54,6 +54,8 @@ from config import (  # noqa: E402
 )
 from providers import PROVIDER_FETCHERS, resolve_provider_key  # noqa: E402
 from scanner import run_scan  # noqa: E402
+from history import get_history_manager  # noqa: E402
+from notifier import get_notifier  # noqa: E402
 
 app = Flask(__name__)
 
@@ -366,6 +368,27 @@ def scan() -> tuple:
         include_purebet=include_purebet,
         include_providers=include_providers_value,
     )
+    if result.get("success"):
+        scan_time = result.get("scan_time", "")
+        # Persist history (non-blocking)
+        try:
+            get_history_manager().save_opportunities(result, scan_time=scan_time)
+        except Exception:
+            pass
+        # Send notifications in background thread (non-blocking)
+        notifier = get_notifier()
+        if notifier.is_configured:
+            def _notify():
+                try:
+                    notifier.notify_opportunities(
+                        arb_list=result.get("opportunities") or [],
+                        middle_list=result.get("middles") or [],
+                        ev_list=result.get("plus_ev") or [],
+                        scan_time=scan_time,
+                    )
+                except Exception:
+                    pass
+            threading.Thread(target=_notify, daemon=True).start()
     if _should_save_scan(payload):
         saved_path = _save_scan_payload(payload, result)
         if saved_path:
@@ -374,6 +397,36 @@ def scan() -> tuple:
             result["scan_save_error"] = "Failed to save scan payload"
     status = 200 if result.get("success") else result.get("error_code", 500)
     return jsonify(result), status
+
+
+@app.route("/history", methods=["GET"])
+def history() -> tuple:
+    """Return recent scan history opportunities.
+
+    Query params:
+        mode    — ``arbitrage``, ``middles``, ``ev`` (default: all)
+        limit   — max records to return (default 200, max 1000)
+    """
+    mode = request.args.get("mode", "").strip().lower() or None
+    try:
+        limit = min(1000, max(1, int(request.args.get("limit", "200"))))
+    except (TypeError, ValueError):
+        limit = 200
+    try:
+        records = get_history_manager().load_recent(limit=limit, mode=mode)
+        return jsonify({"success": True, "records": records, "count": len(records)}), 200
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/history/stats", methods=["GET"])
+def history_stats() -> tuple:
+    """Return history storage statistics."""
+    try:
+        stats = get_history_manager().get_stats()
+        return jsonify({"success": True, **stats}), 200
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
 
 
 def _port_available(port: int) -> bool:

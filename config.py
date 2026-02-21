@@ -400,3 +400,34 @@ def markets_for_sport(sport_key: str) -> list[str]:
     if sport_key in SOCCER_SPORTS:
         return SOCCER_MARKETS
     return SOCCER_MARKETS.copy()
+
+# -----------------------------------------------------------------------------
+# History configuration
+# -----------------------------------------------------------------------------
+
+HISTORY_ENABLED: bool = _env_bool("HISTORY_ENABLED", True)
+HISTORY_DIR: str = _env_text("HISTORY_DIR") or "data/history"
+HISTORY_MAX_RECORDS: int = max(100, _env_int("HISTORY_MAX_RECORDS", 10000))
+
+# -----------------------------------------------------------------------------
+# Notification configuration
+# -----------------------------------------------------------------------------
+
+NOTIFY_WEBHOOK_URL: str = _env_text("NOTIFY_WEBHOOK_URL")
+NOTIFY_WEBHOOK_SECRET: str = _env_text("NOTIFY_WEBHOOK_SECRET")
+NOTIFY_TELEGRAM_TOKEN: str = _env_text("NOTIFY_TELEGRAM_TOKEN")
+NOTIFY_TELEGRAM_CHAT_ID: str = _env_text("NOTIFY_TELEGRAM_CHAT_ID")
+NOTIFY_MIN_ROI: float = _env_float("NOTIFY_MIN_ROI", 0.0)
+NOTIFY_MIN_EDGE: float = _env_float("NOTIFY_MIN_EDGE", 0.0)
+NOTIFY_MIN_EV: float = _env_float("NOTIFY_MIN_EV", 0.0)
+NOTIFY_TIMEOUT_SECONDS: int = max(1, _env_int("NOTIFY_TIMEOUT_SECONDS", 10))
+
+# -----------------------------------------------------------------------------
+# Scanner performance tuning (centralised from scanner.py)
+# -----------------------------------------------------------------------------
+
+PROVIDER_FETCH_MAX_WORKERS: int = max(1, _env_int("PROVIDER_FETCH_MAX_WORKERS", 3))
+SPORT_SCAN_MAX_WORKERS: int = max(1, _env_int("SPORT_SCAN_MAX_WORKERS", 2))
+PROVIDER_NETWORK_RETRY_ONCE: bool = _env_bool("PROVIDER_NETWORK_RETRY_ONCE", True)
+PROVIDER_NETWORK_RETRY_DELAY_MS: int = max(0, _env_int("PROVIDER_NETWORK_RETRY_DELAY_MS", 250))
+ODDS_API_MARKET_BATCH_SIZE: int = max(1, _env_int("ODDS_API_MARKET_BATCH_SIZE", 8))

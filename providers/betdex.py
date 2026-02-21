@@ -677,7 +677,7 @@ def _score_market(market: dict) -> float:
     return min(prices)
 
 
-def _event_url(event: dict, event_groups_by_id: Dict[str, dict]) -> str:
+def _event_url(event: dict, event_groups_by_id: Dict[str, dict], default_market_id: str = "") -> str:
     code = _normalize_text(event.get("code"))
     event_id = _normalize_text(event.get("id"))
     if not code and not event_id:
@@ -685,12 +685,20 @@ def _event_url(event: dict, event_groups_by_id: Dict[str, dict]) -> str:
     group_id = _doc_ref_first_id(event.get("eventGroup"))
     event_group = event_groups_by_id.get(group_id or "")
     subcategory_id = _doc_ref_first_id(event_group.get("subcategory")) if isinstance(event_group, dict) else None
-    if code and group_id and subcategory_id:
-        return (
+    
+    target_id = event_id if event_id else code
+    base_url = ""
+    if group_id and subcategory_id:
+        base_url = (
             f"{_public_base()}/events/{quote(subcategory_id.lower(), safe='')}"
-            f"/{quote(group_id.lower(), safe='')}/{quote(code.lower(), safe='')}"
+            f"/{quote(group_id.lower(), safe='')}/{quote(target_id, safe='')}"
         )
-    return f"{_public_base()}/events/{quote((code or event_id).lower(), safe='')}"
+    else:
+        base_url = f"{_public_base()}/events/{quote(target_id, safe='')}"
+        
+    if default_market_id:
+        return f"{base_url}?market={default_market_id}"
+    return base_url
 
 
 def _load_event_list(path: str) -> List[dict]:
@@ -1114,6 +1122,8 @@ def fetch_events(
         if not market_list:
             continue
 
+        first_market_id = _normalize_text(event_markets[0].get("id")) if event_markets else ""
+
         stats["events_with_market_count"] += 1
         events_out.append(
             {
@@ -1127,7 +1137,7 @@ def fetch_events(
                         "key": PROVIDER_KEY,
                         "title": PROVIDER_TITLE,
                         "event_id": event_id,
-                        "event_url": _event_url(event, event_groups_by_id),
+                        "event_url": _event_url(event, event_groups_by_id, first_market_id),
                         "markets": market_list,
                     }
                 ],

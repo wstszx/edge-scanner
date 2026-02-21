@@ -298,6 +298,85 @@ Configurable via the UI:
 - **Backend:** Python, Flask
 - **Frontend:** HTML, CSS, JavaScript
 - **Data:** The Odds API
+```
+Each provider is written to its own file, e.g.:
+- `data/provider_snapshots/polymarket.json`
+- `data/provider_snapshots/purebet.json`
+- `data/provider_snapshots/betdex.json`
+
+Optional: drop stale fixtures before opportunity calculation (applies to merged API + custom provider events):
+```
+EVENT_MAX_PAST_MINUTES=30
+```
+Events older than this threshold are excluded from arbitrage/middle/+EV detection.
+
+## Markets Scanned
+
+Default mode (`allMarkets=false`):
+
+| Sport | Default Markets |
+|-------|------------------|
+| NFL, NBA, NCAAB, MLB, NHL | `h2h`, `spreads`, `totals` |
+| Soccer (EPL, La Liga, etc.) | `spreads`, `totals` |
+
+Extended mode (`allMarkets=true` or `ARBITRAGE_ALL_MARKETS=1`):
+- Odds API requests sport-specific extra market keys in batches; unsupported keys are auto-skipped per sport.
+- Providers attempt dynamic mapping for additional two-way markets where source data includes them.
+- `polymarket` supports `h2h`, `h2h_3_way`, and BTTS (`both_teams_to_score`) when detectable from market questions.
+
+Note: arbitrage and +EV calculations still require compatible two-way pricing on both sides of the same line; not every returned market will produce opportunities.
+
+## API Usage
+
+Each scan uses one API call per sport. Free tier: 500 requests/month.
+
+Default sports use ~6-10 calls per scan depending on what's in season.
+
+## Understanding the Results
+
+### Arbitrage
+
+ROI = guaranteed return on total stake. A 2% ROI means $2 profit on $100 staked.
+
+Stakes are split so you get the same payout regardless of outcome.
+
+### Middles
+
+EV = expected value based on historical probability of landing in the gap.
+
+NFL key numbers (3, 7) significantly boost probability for spread middles — these margins occur more often due to field goals and touchdowns.
+
+Middles lose small amounts most of the time and win big occasionally — positive EV over many bets, but high variance on any single bet.
+
+### +EV
+
+Edge = how much better the soft book odds are compared to sharp book fair value.
+
+Sharp books (Pinnacle) have tight lines with minimal vig (~2%). When soft books offer better odds than the sharp-implied fair price, that's a +EV bet.
+
+Kelly staking helps size bets based on edge — quarter Kelly recommended to reduce variance.
+
+## Configuration
+
+Configurable via the UI:
+- Regions (US, US2, UK, EU, AU)
+- Sports selection
+- Exchange commission rate (for Betfair, etc.)
+- Minimum gap for middles
+- Minimum edge for +EV
+- Sharp reference book (Pinnacle, Betfair, Matchbook)
+- Kelly fraction (full, half, quarter, tenth)
+- Stake amount / bankroll
+
+## Features
+- Alerts/notifications
+- Historical tracking
+
+## Tech Stack
+
+- **Backend:** Python, Flask
+- **Frontend:** HTML, CSS, JavaScript
+- **Data:** The Odds API
 
 ## License
 
@@ -306,8 +385,6 @@ MIT
 ## Contributing
 
 PRs welcome. Ideas for future versions:
-- Alerts/notifications
-- Historical tracking
 - Three-way arbitrage (soccer moneylines)
 - Player props
 

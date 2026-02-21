@@ -1,0 +1,142 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.3, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\93037\AppData\Local\Programs\Python\Python312\python.exe
+cachedir: .pytest_cache
+rootdir: D:\pythonProject\edge-scanner
+plugins: anyio-4.8.0, Faker-37.6.0
+collecting ... collected 94 items
+
+tests/test_app_scan_inputs.py::ScanInputValidationTests::test_scan_parses_boolean_strings_from_payload PASSED [  1%]
+tests/test_app_scan_inputs.py::ScanInputValidationTests::test_scan_rejects_invalid_json_payload PASSED [  2%]
+tests/test_app_scan_inputs.py::ScanInputValidationTests::test_scan_rejects_non_object_payload PASSED [  3%]
+tests/test_app_scan_inputs.py::ScanInputValidationTests::test_scan_uses_default_sharp_book_for_non_string PASSED [  4%]
+tests/test_arbitrage.py::TestRemoveVig::test_private_alias_identical PASSED [  5%]
+tests/test_arbitrage.py::TestRemoveVig::test_sub_one_odds_returned_unchanged PASSED [  6%]
+tests/test_arbitrage.py::TestRemoveVig::test_symmetric_equal_odds_zero_vig PASSED [  7%]
+tests/test_arbitrage.py::TestRemoveVig::test_typical_pinnacle_vig FAILED [  8%]
+tests/test_arbitrage.py::TestRemoveVig::test_vig_present_raises_fair_odds PASSED [  9%]
+tests/test_arbitrage.py::TestKellyStake::test_fraction_halves_stake PASSED [ 10%]
+tests/test_arbitrage.py::TestKellyStake::test_guard_negative_edge PASSED [ 11%]
+tests/test_arbitrage.py::TestKellyStake::test_guard_odds_at_one PASSED   [ 12%]
+tests/test_arbitrage.py::TestKellyStake::test_guard_zero_bankroll PASSED [ 13%]
+tests/test_arbitrage.py::TestKellyStake::test_positive_path_returns_nonzero PASSED [ 14%]
+tests/test_arbitrage.py::TestKellyStake::test_private_alias_identical PASSED [ 15%]
+tests/test_arbitrage.py::TestCalculateEdgePercent::test_no_edge_when_equal PASSED [ 17%]
+tests/test_arbitrage.py::TestCalculateEdgePercent::test_positive_edge PASSED [ 18%]
+tests/test_arbitrage.py::TestCalculateEdgePercent::test_private_alias PASSED [ 19%]
+tests/test_arbitrage.py::TestCalculateEdgePercent::test_zero_fair_odds PASSED [ 20%]
+tests/test_arbitrage.py::TestCalculateEv::test_negative_ev PASSED        [ 21%]
+tests/test_arbitrage.py::TestCalculateEv::test_positive_ev PASSED        [ 22%]
+tests/test_arbitrage.py::TestCalculateEv::test_private_alias PASSED      [ 23%]
+tests/test_arbitrage.py::TestArbitrageRoi::test_genuine_arbitrage PASSED [ 24%]
+tests/test_arbitrage.py::TestArbitrageRoi::test_no_arbitrage PASSED      [ 25%]
+tests/test_arbitrage.py::TestArbitrageRoi::test_three_way_arbitrage PASSED [ 26%]
+tests/test_ev.py::TestApplyCommission::test_exchange_commission_reduces_price PASSED [ 27%]
+tests/test_ev.py::TestApplyCommission::test_exchange_zero_commission_unchanged PASSED [ 28%]
+tests/test_ev.py::TestApplyCommission::test_full_commission PASSED       [ 29%]
+tests/test_ev.py::TestApplyCommission::test_non_exchange_unchanged PASSED [ 30%]
+tests/test_ev.py::TestApplyCommission::test_odds_le_one_unchanged PASSED [ 31%]
+tests/test_ev.py::TestApplyCommission::test_private_alias_identical PASSED [ 32%]
+tests/test_ev.py::TestRemoveVigIntegration::test_asymmetric_market_odds PASSED [ 34%]
+tests/test_ev.py::TestRemoveVigIntegration::test_fair_odds_sum_to_one PASSED [ 35%]
+tests/test_ev.py::TestEdgeAndEv::test_edge_percent_positive PASSED       [ 36%]
+tests/test_ev.py::TestEdgeAndEv::test_ev_scales_with_stake PASSED        [ 37%]
+tests/test_history.py::TestHistoryManager::test_clear PASSED             [ 38%]
+tests/test_history.py::TestHistoryManager::test_disabled_saves_nothing PASSED [ 39%]
+tests/test_history.py::TestHistoryManager::test_get_stats PASSED         [ 40%]
+tests/test_history.py::TestHistoryManager::test_invalid_result_saves_nothing PASSED [ 41%]
+tests/test_history.py::TestHistoryManager::test_load_by_mode PASSED      [ 42%]
+tests/test_history.py::TestHistoryManager::test_load_ordered_by_scan_time_descending PASSED [ 43%]
+tests/test_history.py::TestHistoryManager::test_save_and_load PASSED     [ 44%]
+tests/test_history.py::TestHistoryManager::test_trim_respects_max_records PASSED [ 45%]
+tests/test_history.py::TestFlattenRecord::test_arbitrage_record PASSED   [ 46%]
+tests/test_history.py::TestFlattenRecord::test_ev_record PASSED          [ 47%]
+tests/test_middles.py::TestSpreadGapInfo::test_large_gap PASSED          [ 48%]
+tests/test_middles.py::TestSpreadGapInfo::test_no_gap_favorite_bigger PASSED [ 50%]
+tests/test_middles.py::TestSpreadGapInfo::test_no_gap_same_line PASSED   [ 51%]
+tests/test_middles.py::TestSpreadGapInfo::test_none_inputs PASSED        [ 52%]
+tests/test_middles.py::TestSpreadGapInfo::test_requires_negative_favorite PASSED [ 53%]
+tests/test_middles.py::TestSpreadGapInfo::test_valid_gap FAILED          [ 54%]
+tests/test_middles.py::TestTotalGapInfo::test_half_point_gap_no_integer PASSED [ 55%]
+tests/test_middles.py::TestTotalGapInfo::test_inverted_lines PASSED      [ 56%]
+tests/test_middles.py::TestTotalGapInfo::test_no_gap_equal_lines PASSED  [ 57%]
+tests/test_middles.py::TestTotalGapInfo::test_valid_gap PASSED           [ 58%]
+tests/test_middles.py::TestEstimateMiddleProbability::test_empty_integers PASSED [ 59%]
+tests/test_middles.py::TestEstimateMiddleProbability::test_nfl_key_number_3_boosted PASSED [ 60%]
+tests/test_middles.py::TestEstimateMiddleProbability::test_sport_specific_rate PASSED [ 61%]
+tests/test_middles.py::TestEstimateMiddleProbability::test_within_max_probability PASSED [ 62%]
+tests/test_middles.py::TestCalculateMiddleStakes::test_equal_odds_splits_evenly PASSED [ 63%]
+tests/test_middles.py::TestCalculateMiddleStakes::test_invalid_odds_returns_zero PASSED [ 64%]
+tests/test_middles.py::TestCalculateMiddleStakes::test_total_preserved PASSED [ 65%]
+tests/test_middles.py::TestCalculateMiddleStakes::test_zero_stake_returns_zero PASSED [ 67%]
+tests/test_middles.py::TestCalculateMiddleOutcomes::test_side_losses_negative PASSED [ 68%]
+tests/test_middles.py::TestCalculateMiddleOutcomes::test_win_both_positive_for_middle PASSED [ 69%]
+tests/test_middles.py::TestCalculateMiddleEv::test_high_probability_positive_ev PASSED [ 70%]
+tests/test_middles.py::TestCalculateMiddleEv::test_zero_probability_only_miss_ev PASSED [ 71%]
+tests/test_middles.py::TestFormatMiddleZone::test_multi_integer_total PASSED [ 72%]
+tests/test_middles.py::TestFormatMiddleZone::test_single_integer_spread PASSED [ 73%]
+tests/test_middles.py::TestFormatMiddleZone::test_total_prefix PASSED    [ 74%]
+tests/test_scanner_regressions.py::ScannerRegressionTests::test_kelly_stake_guard_paths_return_triplet 
+tests/test_scanner_regressions.py::ScannerRegressionTests::test_kelly_stake_guard_paths_return_triplet PASSED [ 75%]
+tests/test_scanner_regressions.py::ScannerRegressionTests::test_kelly_stake_positive_path_returns_triplet PASSED [ 76%]
+tests/test_scanner_regressions.py::ScannerRegressionTests::test_select_request_logger_does_not_cross_scan_when_context_mismatch PASSED [ 77%]
+tests/test_scanner_regressions.py::ScannerRegressionTests::test_select_request_logger_uses_current_thread_context PASSED [ 78%]
+tests/test_scanner_regressions.py::ScannerRegressionTests::test_submit_with_request_logger_propagates_context_to_worker PASSED [ 79%]
+tests/test_utils.py::TestNormalizeLineComponent::test_lowercase_conversion PASSED [ 80%]
+tests/test_utils.py::TestNormalizeLineComponent::test_none_returns_empty PASSED [ 81%]
+tests/test_utils.py::TestNormalizeLineComponent::test_numeric_string PASSED [ 82%]
+tests/test_utils.py::TestNormalizeLineComponent::test_strips_whitespace PASSED [ 84%]
+tests/test_utils.py::TestSafePointKey::test_half_point FAILED            [ 85%]
+tests/test_utils.py::TestSafePointKey::test_integer_point FAILED         [ 86%]
+tests/test_utils.py::TestSafePointKey::test_negative_point FAILED        [ 87%]
+tests/test_utils.py::TestSafePointKey::test_non_numeric_returns_empty FAILED [ 88%]
+tests/test_utils.py::TestSafePointKey::test_none_returns_empty FAILED    [ 89%]
+tests/test_utils.py::TestPointsMatch::test_both_none PASSED              [ 90%]
+tests/test_utils.py::TestPointsMatch::test_equal_points PASSED           [ 91%]
+tests/test_utils.py::TestPointsMatch::test_one_none PASSED               [ 92%]
+tests/test_utils.py::TestPointsMatch::test_outside_tolerance PASSED      [ 93%]
+tests/test_utils.py::TestPointsMatch::test_within_tolerance PASSED       [ 94%]
+tests/test_utils.py::TestCrossProviderPairNorm::test_empty_returns_empty PASSED [ 95%]
+tests/test_utils.py::TestCrossProviderPairNorm::test_sorted_alphabetically PASSED [ 96%]
+tests/test_utils.py::TestCrossProviderPairNorm::test_unicode_normalized PASSED [ 97%]
+tests/test_utils.py::TestApplyCommissionScanner::test_exchange_reduces_odds PASSED [ 98%]
+tests/test_utils.py::TestApplyCommissionScanner::test_non_exchange_unchanged PASSED [100%]
+
+================================== FAILURES ===================================
+___________________ TestRemoveVig.test_typical_pinnacle_vig ___________________
+tests\test_arbitrage.py:38: in test_typical_pinnacle_vig
+    self.assertAlmostEqual(vig, 2.0, delta=0.5)
+E   AssertionError: 4.766893661602922 != 2.0 within 0.5 delta (2.7668936616029223 difference)
+______________________ TestSpreadGapInfo.test_valid_gap _______________________
+tests\test_middles.py:18: in test_valid_gap
+    self.assertIsNotNone(result)
+E   AssertionError: unexpectedly None
+______________________ TestSafePointKey.test_half_point _______________________
+tests\test_utils.py:27: in test_half_point
+    self.assertEqual(scanner._safe_point_key(4.5), "4.5")
+E   AssertionError: 4.5 != '4.5'
+_____________________ TestSafePointKey.test_integer_point _____________________
+tests\test_utils.py:24: in test_integer_point
+    self.assertEqual(scanner._safe_point_key(5.0), "5")
+E   AssertionError: 5.0 != '5'
+____________________ TestSafePointKey.test_negative_point _____________________
+tests\test_utils.py:30: in test_negative_point
+    self.assertEqual(scanner._safe_point_key(-3.0), "-3")
+E   AssertionError: -3.0 != '-3'
+_______________ TestSafePointKey.test_non_numeric_returns_empty _______________
+tests\test_utils.py:36: in test_non_numeric_returns_empty
+    self.assertEqual(scanner._safe_point_key("abc"), "")
+E   AssertionError: 'abc' != ''
+E   - abc
+__________________ TestSafePointKey.test_none_returns_empty ___________________
+tests\test_utils.py:33: in test_none_returns_empty
+    self.assertEqual(scanner._safe_point_key(None), "")
+E   AssertionError: None != ''
+=========================== short test summary info ===========================
+FAILED tests/test_arbitrage.py::TestRemoveVig::test_typical_pinnacle_vig - As...
+FAILED tests/test_middles.py::TestSpreadGapInfo::test_valid_gap - AssertionEr...
+FAILED tests/test_utils.py::TestSafePointKey::test_half_point - AssertionErro...
+FAILED tests/test_utils.py::TestSafePointKey::test_integer_point - AssertionE...
+FAILED tests/test_utils.py::TestSafePointKey::test_negative_point - Assertion...
+FAILED tests/test_utils.py::TestSafePointKey::test_non_numeric_returns_empty
+FAILED tests/test_utils.py::TestSafePointKey::test_none_returns_empty - Asser...
+=============== 7 failed, 87 passed, 3 subtests passed in 0.92s ===============

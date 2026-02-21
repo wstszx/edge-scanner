@@ -1,3 +1,18 @@
-flask
-requests
-python-dotenv
+# Core dependencies (pinned for reproducibility)
+flask==3.1.1
+requests==2.32.3
+python-dotenv==1.1.1
+
+# Flask transitive dependencies
+Werkzeug==3.1.3
+Jinja2==3.1.6
+MarkupSafe==2.1.5
+click==8.1.7
+itsdangerous==2.2.0
+blinker==1.9.0
+
+# requests transitive dependencies
+certifi==2024.8.30
+charset-normalizer==3.3.2
+idna==3.10
+urllib3==2.2.2
