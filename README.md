@@ -315,9 +315,4 @@ PRs welcome. Ideas for future versions:
 
 If this tool saves you time or helps you find an edge, consider buying me a coffee:
 
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy
-## Support
-
-If this tool saves you time or helps you find an edge, consider buying me a coffee:
-
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow.svg)](https://buymeacoffee.com/deliciouspipe1326)

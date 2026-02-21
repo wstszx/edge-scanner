@@ -607,6 +607,7 @@ _REQUEST_LOG_SENSITIVE_KEYS = {
 _REQUEST_TRACE_LOCK = threading.RLock()
 _REQUEST_TRACE_ACTIVE: List["_ScanRequestLogger"] = []
 _REQUEST_TRACE_PATCHED = False
+_REQUEST_TRACE_CONTEXT = threading.local()
 _REQUESTS_SESSION_REQUEST_ORIGINAL = requests.sessions.Session.request
 
 
@@ -824,6 +825,33 @@ def _active_request_loggers() -> List["_ScanRequestLogger"]:
         return list(_REQUEST_TRACE_ACTIVE)
 
 
+def _set_current_request_logger(logger: Optional["_ScanRequestLogger"]) -> None:
+    if logger is None:
+        if hasattr(_REQUEST_TRACE_CONTEXT, "logger"):
+            delattr(_REQUEST_TRACE_CONTEXT, "logger")
+        return
+    _REQUEST_TRACE_CONTEXT.logger = logger
+
+
+def _current_request_logger() -> Optional["_ScanRequestLogger"]:
+    logger = getattr(_REQUEST_TRACE_CONTEXT, "logger", None)
+    if isinstance(logger, _ScanRequestLogger):
+        return logger
+    return None
+
+
+def _select_request_logger(active: Sequence["_ScanRequestLogger"]) -> Optional["_ScanRequestLogger"]:
+    current = _current_request_logger()
+    if current is not None:
+        for logger in active:
+            if logger is current:
+                return logger
+        return None
+    if len(active) == 1:
+        return active[0]
+    return None
+
+
 def _instrumented_session_request(self, method, url, **kwargs):  # type: ignore[no-untyped-def]
     started_at = time.perf_counter()
     response = None
@@ -836,7 +864,8 @@ def _instrumented_session_request(self, method, url, **kwargs):  # type: ignore[
         raise
     finally:
         active = _active_request_loggers()
-        if not active:
+        logger = _select_request_logger(active)
+        if logger is None:
             return
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
         try:
@@ -850,11 +879,10 @@ def _instrumented_session_request(self, method, url, **kwargs):  # type: ignore[
             )
         except Exception:
             return
-        for logger in active:
-            try:
-                logger.log_request(entry)
-            except Exception:
-                continue
+        try:
+            logger.log_request(entry)
+        except Exception:
+            return
 
 
 def _ensure_request_logging_patch() -> None:
@@ -867,6 +895,7 @@ def _ensure_request_logging_patch() -> None:
 
 
 def _activate_request_logger(logger: _ScanRequestLogger) -> None:
+    _set_current_request_logger(logger)
     if not logger.enabled:
         return
     _ensure_request_logging_patch()
@@ -889,6 +918,26 @@ def _deactivate_request_logger(logger: _ScanRequestLogger) -> None:
             if _REQUEST_TRACE_ACTIVE[idx] is logger:
                 _REQUEST_TRACE_ACTIVE.pop(idx)
                 break
+    if _current_request_logger() is logger:
+        _set_current_request_logger(None)
+
+
+def _run_with_request_logger(
+    logger: Optional["_ScanRequestLogger"],
+    func,
+    *args,
+):
+    previous = _current_request_logger()
+    _set_current_request_logger(logger)
+    try:
+        return func(*args)
+    finally:
+        _set_current_request_logger(previous)
+
+
+def _submit_with_request_logger(executor, func, *args):
+    logger = _current_request_logger()
+    return executor.submit(_run_with_request_logger, logger, func, *args)
 
 
 def _attach_request_log_info(result: dict, logger: _ScanRequestLogger) -> dict:
@@ -2478,7 +2527,8 @@ def fetch_purebet_events(
             event_map = {str(event.get("id")): event for event in events if event.get("id")}
             with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = [
-                    executor.submit(
+                    _submit_with_request_logger(
+                        executor,
                         _fetch_purebet_event_markets,
                         base_url,
                         event,
@@ -4111,7 +4161,8 @@ def _scan_single_sport(
         else:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = {
-                    executor.submit(
+                    _submit_with_request_logger(
+                        executor,
                         _fetch_provider_events_for_sport,
                         provider_key,
                         sport_key,
@@ -4638,7 +4689,8 @@ def run_scan(
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=sport_workers) as executor:
             futures = {
-                executor.submit(
+                _submit_with_request_logger(
+                    executor,
                     _scan_single_sport,
                     sport,
                     all_markets,
@@ -4855,15 +4907,15 @@ def _kelly_stake(
     true_probability: float, odds: float, bankroll: float, fraction: float
 ) -> Tuple[float, float, float]:
     if bankroll <= 0 or odds <= 1:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
     p = max(0.0, min(true_probability, 1.0))
     q = 1.0 - p
     b = odds - 1.0
     if b <= 0:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
     kelly_fraction = (b * p - q) / b
     if kelly_fraction <= 0:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
     fraction = max(0.0, min(fraction, 1.0))
     recommended_fraction = kelly_fraction * fraction
     stake = round(bankroll * recommended_fraction, 2)

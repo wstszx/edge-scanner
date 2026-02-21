@@ -269,6 +269,10 @@
         </div>
       </div>
       <section id="summary-info" class="summary-info hidden"></section>
+      <div id="scan-live" class="scan-live hidden" aria-live="polite">
+        <p id="scan-live-elapsed" class="scan-live-line">Elapsed: -</p>
+        <p id="scan-live-scope" class="scan-live-line">Scope: -</p>
+      </div>
       <div id="scan-errors" class="scan-errors hidden"></div>
     </section>
       </aside>
@@ -836,6 +840,9 @@
     const scanSlowest = document.getElementById('scan-slowest');
     const scanEvents = document.getElementById('scan-events');
     const scanSports = document.getElementById('scan-sports');
+    const scanLive = document.getElementById('scan-live');
+    const scanLiveElapsed = document.getElementById('scan-live-elapsed');
+    const scanLiveScope = document.getElementById('scan-live-scope');
     const scanErrors = document.getElementById('scan-errors');
     const autoScanToggle = document.getElementById('auto-scan-toggle');
     const autoScanIntervalInput = document.getElementById('auto-scan-interval');
@@ -851,6 +858,13 @@
       let lastStatus = null;
       let lastFocusedElement = null;
       let autoScanTimer = null;
+      let scanFeedbackTimer = null;
+      let scanStartedAtMs = 0;
+      let scanLastStatusKey = '';
+      let scanLastElapsedSecond = -1;
+      let activeScanContext = null;
+      let scanLockedControls = [];
+      const scanControlDisabledState = new WeakMap();
       let notificationAudioContext = null;
       let selectedArbKey = null;
       let selectedArbOpp = null;
@@ -911,6 +925,9 @@
         save_settings: 'Save settings',
         scanning: 'Scanning...',
         scanning_wait: 'Scanning, please wait...',
+        scanning_wait_elapsed: 'Scanning, please wait... ({elapsed})',
+        scan_wait_slow: 'Sources are responding slowly. Still scanning... ({elapsed})',
+        scan_wait_very_slow: 'Scan is taking longer than expected ({elapsed}). Try fewer sports or bookmakers if this continues.',
         density_comfort: 'Comfort',
         density_compact: 'Compact',
         tab_arbitrage: 'Arbitrage',
@@ -962,6 +979,13 @@
         scan_bottleneck: 'Bottleneck',
         scan_events: 'Events',
         scan_sports: 'Sports',
+        scan_live_elapsed: 'Elapsed: {elapsed}',
+        scan_live_scope: 'Scope: {details}',
+        scan_scope_summary: 'Sports {sports} | Regions {regions} | Books {books} | Providers {providers} | Markets {markets}',
+        scan_scope_all: 'All',
+        scan_scope_none: 'None',
+        scan_markets_core: 'Core',
+        scan_markets_extended: 'Extended',
         status_idle: 'Idle',
         status_ready: 'Ready',
         status_scanning: 'Scanning',
@@ -1128,6 +1152,9 @@
         save_settings: '保存设置',
         scanning: '扫描中...',
         scanning_wait: '正在扫描，请稍候...',
+        scanning_wait_elapsed: '正在扫描，请稍候...（已耗时 {elapsed}）',
+        scan_wait_slow: '数据源响应较慢，仍在扫描...（{elapsed}）',
+        scan_wait_very_slow: '本次扫描耗时较长（{elapsed}），若持续可尝试减少项目或平台范围。',
         density_comfort: '舒适',
         density_compact: '紧凑',
         tab_arbitrage: '套利',
@@ -1179,6 +1206,13 @@
         scan_bottleneck: '\u6700\u6162\u9636\u6bb5',
         scan_events: '赛事数',
         scan_sports: '项目数',
+        scan_live_elapsed: '已耗时：{elapsed}',
+        scan_live_scope: '本次范围：{details}',
+        scan_scope_summary: '项目 {sports} | 地区 {regions} | 平台 {books} | Provider {providers} | 盘口 {markets}',
+        scan_scope_all: '全部',
+        scan_scope_none: '无',
+        scan_markets_core: '基础',
+        scan_markets_extended: '扩展',
         status_idle: '空闲',
         status_ready: '就绪',
         status_scanning: '扫描中',
@@ -1403,6 +1437,10 @@
       setActiveTab(activeTab);
       applyScanStatus(scanStatusChip ? scanStatusChip.dataset.status : 'idle');
       updateScanMeta(lastScanData);
+      refreshScanLivePanel();
+      if (isScanning) {
+        refreshScanningFeedback(true);
+      }
       renderPartialWarning(lastScanData);
       renderArbCalculator();
     }
@@ -1657,6 +1695,130 @@
       const top = steps[0] || {};
       const label = top.label || top.name || '-';
       return `${label} (${formatDurationMs(top.ms)})`;
+    }
+
+    function buildScanContext(payload) {
+      const sports = Array.isArray(payload?.sports) ? payload.sports : [];
+      const regions = Array.isArray(payload?.regions) ? payload.regions : [];
+      const books = Array.isArray(payload?.bookmakers) ? payload.bookmakers : [];
+      const providers = Array.isArray(payload?.includeProviders) ? payload.includeProviders : [];
+      return {
+        sportsCount: sports.length,
+        regionsCount: regions.length,
+        booksCount: books.length,
+        providersCount: providers.length,
+        allSports: Boolean(payload?.allSports),
+        allBookmakers: Boolean(payload?.allBookmakers),
+        allMarkets: Boolean(payload?.allMarkets),
+      };
+    }
+
+    function scopeCountLabel(count, allSelected) {
+      if (allSelected) return t('scan_scope_all');
+      if (!Number.isFinite(count) || count <= 0) return t('scan_scope_none');
+      return String(count);
+    }
+
+    function formatScanScope(context) {
+      if (!context) return '-';
+      return t('scan_scope_summary', {
+        sports: scopeCountLabel(context.sportsCount, context.allSports),
+        regions: scopeCountLabel(context.regionsCount, false),
+        books: scopeCountLabel(context.booksCount, context.allBookmakers),
+        providers: scopeCountLabel(context.providersCount, false),
+        markets: context.allMarkets ? t('scan_markets_extended') : t('scan_markets_core'),
+      });
+    }
+
+    function refreshScanLivePanel() {
+      if (!scanLiveElapsed || !scanLiveScope) return;
+      if (!isScanning) {
+        scanLiveElapsed.textContent = t('scan_live_elapsed', { elapsed: '-' });
+        scanLiveScope.textContent = t('scan_live_scope', { details: '-' });
+        return;
+      }
+      const elapsedMs = Math.max(0, Date.now() - scanStartedAtMs);
+      const elapsedText = formatDurationMs(elapsedMs);
+      if (scanDuration) scanDuration.textContent = elapsedText;
+      scanLiveElapsed.textContent = t('scan_live_elapsed', { elapsed: elapsedText });
+      scanLiveScope.textContent = t('scan_live_scope', { details: formatScanScope(activeScanContext) });
+    }
+
+    function refreshScanningFeedback(force = false) {
+      if (!isScanning) return;
+      const elapsedMs = Math.max(0, Date.now() - scanStartedAtMs);
+      const elapsedText = formatDurationMs(elapsedMs);
+      refreshScanLivePanel();
+      let key = 'scanning_wait_elapsed';
+      let type = null;
+      if (elapsedMs >= 30000) {
+        key = 'scan_wait_very_slow';
+        type = 'warning';
+      } else if (elapsedMs >= 10000) {
+        key = 'scan_wait_slow';
+        type = 'warning';
+      }
+      const elapsedSecond = Math.floor(elapsedMs / 1000);
+      if (!force && key === scanLastStatusKey && elapsedSecond === scanLastElapsedSecond) {
+        return;
+      }
+      showStatusKey(key, type, { elapsed: elapsedText });
+      scanLastStatusKey = key;
+      scanLastElapsedSecond = elapsedSecond;
+    }
+
+    function setScanInputLock(locked) {
+      if (!scanLockedControls.length) {
+        const selectors = [
+          'input[name="sports"]',
+          'input[name="regions"]',
+          'input[name="bookmakers"]',
+          '[data-quick-action][data-quick-target="regions"]',
+          '[data-quick-action][data-quick-target="sports"]',
+          '[data-quick-action][data-quick-target="bookmakers"]',
+          '#all-sports',
+          '#all-markets',
+          '#all-bookmakers',
+          '#stake-input',
+          '#commission-input',
+          '#api-key',
+          '#auto-scan-toggle',
+          '#auto-scan-interval',
+          '#sharp-book-select',
+          '#min-edge-input',
+          '#bankroll-input',
+          '#kelly-select',
+        ];
+        const seen = new Set();
+        selectors.forEach((selector) => {
+          document.querySelectorAll(selector).forEach((element) => {
+            if (!(element instanceof HTMLElement) || element === scanBtn || seen.has(element)) {
+              return;
+            }
+            seen.add(element);
+            scanLockedControls.push(element);
+          });
+        });
+      }
+
+      scanLockedControls.forEach((element) => {
+        if (!('disabled' in element)) return;
+        if (locked) {
+          if (!scanControlDisabledState.has(element)) {
+            scanControlDisabledState.set(element, Boolean(element.disabled));
+          }
+          element.disabled = true;
+          return;
+        }
+        if (!scanControlDisabledState.has(element)) return;
+        element.disabled = scanControlDisabledState.get(element);
+        scanControlDisabledState.delete(element);
+      });
+
+      if (!locked) {
+        updateBookmakerState();
+        updateQuickActionState();
+      }
     }
 
     function refreshStatus() {
@@ -2086,6 +2248,7 @@
         regions,
         commission: commissionValue,
         allSports: useAllSports,
+        allBookmakers: useAllBookmakers,
         allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
         stake: stakeValue,
         sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
@@ -2270,6 +2433,7 @@
         includeProviders,
         commission: commissionValue,
         allSports: allSportsToggle.checked,
+        allBookmakers: useAllBookmakers,
         allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
         stake: stakeValue,
         sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
@@ -2327,7 +2491,7 @@
     plusEvSortSelect.addEventListener('change', () => renderPlusEv());
 
     async function runScan(payload) {
-      setScanning(true);
+      setScanning(true, payload);
       try {
         const response = await fetch('/scan', {
           method: 'POST',
@@ -2376,21 +2540,61 @@
       }
     }
 
-    function setScanning(nextState) {
+    function setScanning(nextState, payload = null) {
       isScanning = nextState;
       scanBtn.disabled = nextState;
       updateScanButtonText();
-      statusEl.textContent = nextState ? t('scanning_wait') : '';
-      statusEl.className = 'status';
-      lastStatus = nextState ? { key: 'scanning_wait', params: {}, type: null } : null;
+      setScanInputLock(nextState);
       if (nextState) {
+        activeScanContext = buildScanContext(payload || {});
+        scanStartedAtMs = Date.now();
+        scanLastStatusKey = '';
+        scanLastElapsedSecond = -1;
+        if (scanLive) {
+          scanLive.classList.remove('hidden');
+        }
         applyScanStatus('scanning');
+        refreshScanningFeedback(true);
+        if (scanFeedbackTimer) {
+          clearInterval(scanFeedbackTimer);
+        }
+        scanFeedbackTimer = window.setInterval(() => {
+          refreshScanningFeedback();
+        }, 250);
+        return;
       }
+
+      if (scanFeedbackTimer) {
+        clearInterval(scanFeedbackTimer);
+        scanFeedbackTimer = null;
+      }
+      scanStartedAtMs = 0;
+      scanLastStatusKey = '';
+      scanLastElapsedSecond = -1;
+      activeScanContext = null;
+      if (scanLive) {
+        scanLive.classList.add('hidden');
+      }
+      refreshScanLivePanel();
+
+      const transientKeys = new Set([
+        'scanning_wait',
+        'scanning_wait_elapsed',
+        'scan_wait_slow',
+        'scan_wait_very_slow',
+      ]);
+      if (lastStatus && lastStatus.key && transientKeys.has(lastStatus.key)) {
+        statusEl.textContent = '';
+        statusEl.className = 'status';
+        lastStatus = null;
+        return;
+      }
+      refreshStatus();
     }
 
     function showStatus(message, type, key = null, params = {}) {
       statusEl.textContent = message;
-      statusEl.className = `status ${type}`;
+      statusEl.className = type ? `status ${type}` : 'status';
       lastStatus = { message, type, key, params };
     }
 

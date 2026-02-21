@@ -13,6 +13,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from settings import apply_config_env
+from werkzeug.exceptions import BadRequest
 
 load_dotenv()
 apply_config_env()
@@ -66,8 +67,27 @@ def favicon():
     )
 
 
+def _coerce_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if not token:
+            return default
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        if token in {"0", "false", "no", "off"}:
+            return False
+        return default
+    return bool(value)
+
+
 def _env_flag(value: Optional[str]) -> bool:
-    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+    return _coerce_bool(value, default=False)
 
 
 def _split_api_keys(value: Optional[str]) -> list[str]:
@@ -123,7 +143,7 @@ ENV_SAVE_DIR = os.getenv("SCAN_SAVE_DIR", str(Path("data") / "scans")).strip()
 
 def _should_save_scan(payload: dict) -> bool:
     if "saveScan" in payload:
-        return bool(payload.get("saveScan"))
+        return _coerce_bool(payload.get("saveScan"), default=ENV_SAVE_SCAN)
     return ENV_SAVE_SCAN
 
 
@@ -218,18 +238,55 @@ def index() -> str:
 
 @app.route("/scan", methods=["POST"])
 def scan() -> tuple:
-    payload = request.get_json(force=True, silent=True) or {}
+    raw_body = request.get_data(cache=True, as_text=False)
+    if raw_body:
+        try:
+            payload = request.get_json(force=True, silent=False)
+        except BadRequest:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "Invalid JSON payload",
+                        "error_code": 400,
+                    }
+                ),
+                400,
+            )
+    else:
+        payload = {}
+    if payload is None:
+        payload = {}
+    if not isinstance(payload, dict):
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "Scan payload must be a JSON object",
+                    "error_code": 400,
+                }
+            ),
+            400,
+        )
     api_keys = ENV_API_KEYS or _payload_api_keys(payload)
     sports = payload.get("sports") or []
-    all_sports = bool(payload.get("allSports")) if "allSports" in payload else DEFAULT_ALL_SPORTS
-    all_markets = bool(payload.get("allMarkets")) if "allMarkets" in payload else ENV_ALL_MARKETS
+    all_sports = _coerce_bool(payload.get("allSports"), default=DEFAULT_ALL_SPORTS)
+    all_markets = _coerce_bool(payload.get("allMarkets"), default=ENV_ALL_MARKETS)
     stake = payload.get("stake")
     regions = payload.get("regions")
     bookmakers = payload.get("bookmakers")
     commission = payload.get("commission")
-    include_purebet = bool(payload.get("includePurebet")) if "includePurebet" in payload else None
+    include_purebet = (
+        _coerce_bool(payload.get("includePurebet"), default=False)
+        if "includePurebet" in payload
+        else None
+    )
     include_providers_raw = payload.get("includeProviders")
-    sharp_book = (payload.get("sharpBook") or DEFAULT_SHARP_BOOK).strip().lower()
+    sharp_book_raw = payload.get("sharpBook")
+    if isinstance(sharp_book_raw, str):
+        sharp_book = sharp_book_raw.strip().lower() or DEFAULT_SHARP_BOOK
+    else:
+        sharp_book = DEFAULT_SHARP_BOOK
     try:
         min_edge_percent = (
             float(payload.get("minEdgePercent")) if payload.get("minEdgePercent") is not None else MIN_EDGE_PERCENT

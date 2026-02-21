@@ -490,6 +490,10 @@ button:focus-visible {
   color: var(--error);
 }
 
+.status.warning {
+  color: var(--warning);
+}
+
 .commission-box {
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md);
@@ -1173,6 +1177,18 @@ body.modal-open .content {
   margin-top: 0.65rem;
   color: var(--warning);
   font-size: 0.86rem;
+}
+
+.scan-live {
+  margin-top: 0.65rem;
+  display: grid;
+  gap: 0.24rem;
+}
+
+.scan-live-line {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.84rem;
 }
 
 .scan-status .summary-info {
