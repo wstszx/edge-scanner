@@ -254,7 +254,12 @@ class ScannerError(Exception):
 
 
 def _iso_now() -> str:
-    return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return (
+        dt.datetime.now(dt.timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _provider_snapshot_filename(provider_key: object) -> str:
@@ -756,7 +761,7 @@ class _ScanRequestLogger:
         try:
             target_dir = Path(SCAN_REQUEST_LOG_DIR)
             target_dir.mkdir(parents=True, exist_ok=True)
-            stamp = dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")
             path = target_dir / f"requests_{stamp}_{uuid.uuid4().hex[:6]}.jsonl"
             self._handle = path.open("w", encoding="utf-8")
             self.path = str(path)
@@ -1815,6 +1820,8 @@ def _infer_sport_key_from_active_league(league: dict) -> Optional[str]:
 
     if "nfl" in haystack:
         return "americanfootball_nfl"
+    if "ncaaf" in haystack or ("ncaa" in haystack and "football" in haystack):
+        return "americanfootball_ncaaf"
     if "nba" in haystack:
         return "basketball_nba"
     if "ncaa" in haystack and "basket" in haystack:
@@ -2158,7 +2165,7 @@ def _normalize_purebet_markets_payload(
         return []
     min_stake = _purebet_min_stake()
     max_age_seconds = _purebet_max_age_seconds()
-    now_epoch = int(dt.datetime.utcnow().timestamp())
+    now_epoch = int(dt.datetime.now(dt.timezone.utc).timestamp())
     normalized: List[dict] = []
     for market in payload:
         if not isinstance(market, dict):
@@ -3094,7 +3101,8 @@ def _is_total_market_key(market_key: object) -> bool:
 
 
 def _is_h2h_market_key(market_key: object) -> bool:
-    return _normalize_line_component(market_key) == "h2h"
+    token = _normalize_line_component(market_key)
+    return token in {"h2h", "h2h_3_way"}
 
 
 def _line_key(market: str, outcome: dict) -> Optional[str]:
@@ -3217,7 +3225,7 @@ def _collect_market_entries(
         offer_count = len(offers)
         if offer_count < 2:
             continue
-        # Only h2h can be genuine 3-way (home/draw/away). Other market types stay 2-way.
+        # Only moneyline-style markets can be genuine 3-way (home/draw/away).
         if offer_count > 3 or (offer_count > 2 and not _is_h2h_market_key(market_key)):
             continue
         outcomes = list(offers.values())
@@ -4600,6 +4608,9 @@ def run_scan(
             continue
         if sport_key not in scan_sports_by_key:
             scan_sports_by_key[sport_key] = sport
+    # When scanning all active sports, providers should track the same active sport set.
+    if enabled_provider_keys and all_sports and scan_sports_by_key:
+        provider_target_sport_keys = set(scan_sports_by_key.keys())
     for sport_key in requested_sport_keys:
         if sport_key not in scan_sports_by_key and sport_key in provider_target_sport_keys:
             scan_sports_by_key[sport_key] = _sport_stub(sport_key)

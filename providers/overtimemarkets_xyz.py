@@ -65,6 +65,7 @@ OTM_MARKETS_CACHE: Dict[str, object] = {
 
 SPORT_LABEL_HINTS: Dict[str, Sequence[str]] = {
     "americanfootball_nfl": ("football", "american football"),
+    "americanfootball_ncaaf": ("football", "american football"),
     "basketball_nba": ("basketball",),
     "basketball_ncaab": ("basketball",),
     "baseball_mlb": ("baseball",),
@@ -79,6 +80,7 @@ SPORT_LABEL_HINTS: Dict[str, Sequence[str]] = {
 
 LEAGUE_HINTS: Dict[str, Sequence[str]] = {
     "americanfootball_nfl": ("nfl",),
+    "americanfootball_ncaaf": ("ncaaf", "ncaa football", "college football"),
     "basketball_nba": ("nba",),
     "basketball_ncaab": ("ncaa", "college"),
     "baseball_mlb": ("mlb",),
@@ -147,6 +149,39 @@ def _normalize_market_key(value: object) -> str:
     token = _normalize_text(value).lower()
     token = re.sub(r"[^a-z0-9]+", "_", token)
     return token.strip("_")
+
+
+def _market_period_suffix(*values: object) -> str:
+    token = "_".join(_normalize_market_key(item) for item in values if _normalize_market_key(item))
+    if not token:
+        return ""
+    if any(pattern in token for pattern in ("second_half", "2nd_half", "half_2", "h2")):
+        return "h2"
+    if any(pattern in token for pattern in ("first_half", "1st_half", "half_time", "halftime", "half_1", "h1")):
+        return "h1"
+    quarter_patterns = {
+        "q1": ("q1", "quarter_1", "1st_quarter", "first_quarter"),
+        "q2": ("q2", "quarter_2", "2nd_quarter", "second_quarter"),
+        "q3": ("q3", "quarter_3", "3rd_quarter", "third_quarter"),
+        "q4": ("q4", "quarter_4", "4th_quarter", "fourth_quarter"),
+    }
+    for suffix, patterns in quarter_patterns.items():
+        if any(pattern in token for pattern in patterns):
+            return suffix
+    return ""
+
+
+def _scoped_market_alias(base_key: str, *period_hints: object) -> str:
+    suffix = _market_period_suffix(*period_hints)
+    return f"{base_key}_{suffix}" if suffix else base_key
+
+
+def _base_market_key(value: object) -> str:
+    key = _normalize_market_key(value)
+    for prefix in ("h2h_", "spreads_", "totals_"):
+        if key.startswith(prefix):
+            return prefix[:-1]
+    return key
 
 
 def _requested_market_keys(markets: Sequence[str]) -> set[str]:
@@ -417,18 +452,19 @@ def _market_aliases(market: dict) -> List[str]:
         if key:
             aliases.append(key)
 
+    period_hints = (market_type, market_name)
     market_type_lc = market_type.lower()
     market_name_lc = market_name.lower()
     if _is_h2h_market(market):
-        aliases.append("h2h")
+        aliases.append(_scoped_market_alias("h2h", *period_hints))
     if any(token in market_type_lc for token in ("spread", "handicap")) or any(
         token in market_name_lc for token in ("spread", "handicap")
     ):
-        aliases.append("spreads")
+        aliases.append(_scoped_market_alias("spreads", *period_hints))
     if any(token in market_type_lc for token in ("total", "over_under", "overunder")) or any(
         token in market_name_lc for token in ("total", "over/under", "over under")
     ):
-        aliases.append("totals")
+        aliases.append(_scoped_market_alias("totals", *period_hints))
     if "btts" in market_type_lc or "both teams to score" in market_name_lc:
         aliases.extend(["btts", "both_teams_to_score"])
 
@@ -494,6 +530,7 @@ def _build_market(
         target_market = (
             "both_teams_to_score" if "both_teams_to_score" in requested_markets else "btts"
         )
+    target_market_base = _base_market_key(target_market)
 
     odds_raw = row.get("odds")
     if not isinstance(odds_raw, list) or len(odds_raw) < 2:
@@ -503,11 +540,11 @@ def _build_market(
     if odd_one is None or odd_two is None or odd_one <= 1 or odd_two <= 1:
         return None
 
-    if target_market == "h2h":
+    if target_market_base == "h2h":
         if len(odds_raw) != 2:
             return None
         return {
-            "key": "h2h",
+            "key": target_market,
             "outcomes": [
                 {"name": home_team, "price": round(float(odd_one), 6)},
                 {"name": away_team, "price": round(float(odd_two), 6)},
@@ -515,24 +552,24 @@ def _build_market(
         }
 
     point = _market_point_value(row)
-    if target_market == "spreads":
+    if target_market_base == "spreads":
         if point is None:
             return None
         value = round(float(point), 6)
         return {
-            "key": "spreads",
+            "key": target_market,
             "outcomes": [
                 {"name": home_team, "price": round(float(odd_one), 6), "point": value},
                 {"name": away_team, "price": round(float(odd_two), 6), "point": round(-value, 6)},
             ],
         }
 
-    if target_market == "totals":
+    if target_market_base == "totals":
         if point is None:
             return None
         value = round(float(point), 6)
         return {
-            "key": "totals",
+            "key": target_market,
             "outcomes": [
                 {"name": "Over", "price": round(float(odd_one), 6), "point": value},
                 {"name": "Under", "price": round(float(odd_two), 6), "point": value},

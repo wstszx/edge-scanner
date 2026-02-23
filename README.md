@@ -241,7 +241,7 @@ Default mode (`allMarkets=false`):
 
 | Sport | Default Markets |
 |-------|------------------|
-| NFL, NBA, NCAAB, MLB, NHL | `h2h`, `spreads`, `totals` |
+| NFL, NCAAF, NBA, NCAAB, MLB, NHL | `h2h`, `spreads`, `totals` |
 | Soccer (EPL, La Liga, etc.) | `spreads`, `totals` |
 
 Extended mode (`allMarkets=true` or `ARBITRAGE_ALL_MARKETS=1`):
@@ -316,7 +316,7 @@ Default mode (`allMarkets=false`):
 
 | Sport | Default Markets |
 |-------|------------------|
-| NFL, NBA, NCAAB, MLB, NHL | `h2h`, `spreads`, `totals` |
+| NFL, NCAAF, NBA, NCAAB, MLB, NHL | `h2h`, `spreads`, `totals` |
 | Soccer (EPL, La Liga, etc.) | `spreads`, `totals` |
 
 Extended mode (`allMarkets=true` or `ARBITRAGE_ALL_MARKETS=1`):

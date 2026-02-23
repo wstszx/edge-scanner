@@ -99,6 +99,42 @@ class Notifier:
             self.telegram_token and self.telegram_chat_id
         )
 
+    @staticmethod
+    def _as_float(value: object) -> Optional[float]:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _middle_ev_value(cls, item: dict) -> float:
+        for key in ("ev", "ev_percent", "ev_dollars"):
+            value = cls._as_float(item.get(key))
+            if value is not None:
+                return value
+        return 0.0
+
+    @classmethod
+    def _middle_gap_points(cls, item: dict) -> Optional[float]:
+        gap_points = cls._as_float(item.get("gap_points"))
+        if gap_points is not None:
+            return gap_points
+        gap = item.get("gap")
+        if isinstance(gap, dict):
+            return cls._as_float(gap.get("points"))
+        return None
+
+    @classmethod
+    def _middle_probability(cls, item: dict) -> Optional[float]:
+        for key in ("probability", "middle_probability"):
+            value = cls._as_float(item.get(key))
+            if value is not None:
+                return value
+        percent = cls._as_float(item.get("probability_percent"))
+        if percent is not None:
+            return percent / 100.0
+        return None
+
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
@@ -127,7 +163,7 @@ class Notifier:
         ]
         filtered_mid = [
             o for o in (middle_list or [])
-            if isinstance(o, dict) and (o.get("ev") or 0) >= self.min_ev
+            if isinstance(o, dict) and self._middle_ev_value(o) >= self.min_ev
         ]
 
         if not filtered_arb and not filtered_ev and not filtered_mid:
@@ -220,16 +256,16 @@ class Notifier:
 
     @staticmethod
     def _top_middles(items: List[dict], n: int = 3) -> List[dict]:
-        sorted_items = sorted(items, key=lambda x: x.get("ev") or 0, reverse=True)
+        sorted_items = sorted(items, key=Notifier._middle_ev_value, reverse=True)
         out = []
         for o in sorted_items[:n]:
             out.append(
                 {
                     "event": o.get("event"),
                     "market": o.get("market"),
-                    "gap_points": o.get("gap_points"),
-                    "ev": o.get("ev"),
-                    "probability": o.get("probability"),
+                    "gap_points": Notifier._middle_gap_points(o),
+                    "ev": Notifier._middle_ev_value(o),
+                    "probability": Notifier._middle_probability(o),
                 }
             )
         return out

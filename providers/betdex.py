@@ -38,6 +38,7 @@ BETDEX_USER_AGENT = os.getenv(
 
 SPORT_SUBCATEGORY_DEFAULTS: Dict[str, Sequence[str]] = {
     "americanfootball_nfl": ("AMFOOT",),
+    "americanfootball_ncaaf": ("AMFOOT",),
     "basketball_nba": ("BBALL",),
     "basketball_ncaab": ("BBALL",),
     "baseball_mlb": ("BASEBALL",),
@@ -52,6 +53,7 @@ SPORT_SUBCATEGORY_DEFAULTS: Dict[str, Sequence[str]] = {
 
 SPORT_LEAGUE_HINTS: Dict[str, Sequence[str]] = {
     "americanfootball_nfl": ("nfl",),
+    "americanfootball_ncaaf": ("ncaaf", "ncaa football", "college football"),
     "basketball_nba": ("nba",),
     "basketball_ncaab": ("ncaab", "ncaa", "college"),
     "baseball_mlb": ("mlb",),
@@ -588,6 +590,34 @@ def _normalize_market_key(value: object) -> str:
     return token.strip("_")
 
 
+def _market_period_suffix(*values: object) -> str:
+    tokens = "_".join(_normalize_market_key(item) for item in values if _normalize_market_key(item))
+    if not tokens:
+        return ""
+    # Check more specific patterns first.
+    if any(token in tokens for token in ("second_half", "2nd_half", "half_2", "h2")):
+        return "h2"
+    if any(token in tokens for token in ("first_half", "1st_half", "half_time", "halftime", "half_1", "h1")):
+        return "h1"
+    quarter_patterns = {
+        "q1": ("q1", "quarter_1", "1st_quarter", "first_quarter"),
+        "q2": ("q2", "quarter_2", "2nd_quarter", "second_quarter"),
+        "q3": ("q3", "quarter_3", "3rd_quarter", "third_quarter"),
+        "q4": ("q4", "quarter_4", "4th_quarter", "fourth_quarter"),
+    }
+    for suffix, patterns in quarter_patterns.items():
+        if any(pattern in tokens for pattern in patterns):
+            return suffix
+    return ""
+
+
+def _scoped_market_key(base_key: str, *period_hints: object) -> str:
+    suffix = _market_period_suffix(*period_hints)
+    if suffix:
+        return f"{base_key}_{suffix}"
+    return base_key
+
+
 def _requested_market_keys(markets: Sequence[str]) -> set[str]:
     requested = {_normalize_market_key(item) for item in (markets or []) if _normalize_market_key(item)}
     if "both_teams_to_score" in requested:
@@ -597,21 +627,22 @@ def _requested_market_keys(markets: Sequence[str]) -> set[str]:
     return requested
 
 
-def _market_aliases_for_type(market_type: str) -> List[str]:
+def _market_aliases_for_type(market_type: str, market_name: object = None) -> List[str]:
     aliases: List[str] = []
     token = _normalize_market_key(market_type)
     if token:
         aliases.append(token)
+    period_hints = (market_type, market_name)
     if "HANDICAP" in market_type:
-        aliases.append("spreads")
+        aliases.append(_scoped_market_key("spreads", *period_hints))
     if "OVER_UNDER" in market_type:
-        aliases.append("totals")
+        aliases.append(_scoped_market_key("totals", *period_hints))
     if (
         "MONEYLINE" in market_type
         or "FULL_TIME_RESULT" in market_type
         or "MATCH_RESULT" in market_type
     ):
-        aliases.append("h2h")
+        aliases.append(_scoped_market_key("h2h", *period_hints))
     if "BTTS" in market_type:
         aliases.extend(["btts", "both_teams_to_score"])
     out = []
@@ -989,6 +1020,10 @@ def fetch_events(
         for market in event_markets:
             market_id = _normalize_text(market.get("id"))
             market_type = _market_type_id(market)
+            market_name = _normalize_text(market.get("name") or market.get("marketName"))
+            target_h2h_key = _scoped_market_key("h2h", market_type, market_name)
+            target_spread_key = _scoped_market_key("spreads", market_type, market_name)
+            target_total_key = _scoped_market_key("totals", market_type, market_name)
             prices_by_outcome = _best_back_prices(
                 prices_by_market_id.get(market_id),
                 back_side=back_side,
@@ -1008,7 +1043,7 @@ def fetch_events(
             if len(outcomes) < 2:
                 continue
 
-            if "h2h" in requested_markets and len(outcomes) == 2:
+            if target_h2h_key in requested_markets and len(outcomes) == 2:
                 if "HANDICAP" not in market_type and "OVER_UNDER" not in market_type:
                     if "MONEYLINE" in market_type or "FULL_TIME_RESULT" in market_type or "MATCH_RESULT" in market_type:
                         titles = {_normalize_token(item["title"]) for item in outcomes}
@@ -1018,7 +1053,7 @@ def fetch_events(
                             away_out = out_by_token.get(_normalize_token(away_team))
                             if home_out and away_out:
                                 h2h = {
-                                    "key": "h2h",
+                                    "key": target_h2h_key,
                                     "outcomes": [
                                         {"name": home_team, "price": home_out["price"]},
                                         {"name": away_team, "price": away_out["price"]},
@@ -1026,7 +1061,7 @@ def fetch_events(
                                 }
                             else:
                                 h2h = {
-                                    "key": "h2h",
+                                    "key": target_h2h_key,
                                     "outcomes": [
                                         {"name": outcomes[0]["title"], "price": outcomes[0]["price"]},
                                         {"name": outcomes[1]["title"], "price": outcomes[1]["price"]},
@@ -1035,7 +1070,7 @@ def fetch_events(
                             if best_h2h is None or _score_market(h2h) > _score_market(best_h2h):
                                 best_h2h = h2h
 
-            if "spreads" in requested_markets and len(outcomes) == 2 and "HANDICAP" in market_type:
+            if target_spread_key in requested_markets and len(outcomes) == 2 and "HANDICAP" in market_type:
                 value_a, value_b = _parse_market_value_pair(market.get("marketValue"))
                 spread_outcomes = []
                 for idx, outcome in enumerate(outcomes):
@@ -1052,13 +1087,13 @@ def fetch_events(
                         }
                     )
                 if len(spread_outcomes) == 2:
-                    spread = {"key": "spreads", "outcomes": spread_outcomes}
+                    spread = {"key": target_spread_key, "outcomes": spread_outcomes}
                     sig = _market_signature(spread)
                     prev = by_signature.get(sig)
                     if prev is None or _score_market(spread) > _score_market(prev):
                         by_signature[sig] = spread
 
-            if "totals" in requested_markets and len(outcomes) == 2 and "OVER_UNDER" in market_type:
+            if target_total_key in requested_markets and len(outcomes) == 2 and "OVER_UNDER" in market_type:
                 market_total = _parse_market_value_single(market.get("marketValue"))
                 totals = {}
                 for outcome in outcomes:
@@ -1076,7 +1111,7 @@ def fetch_events(
                     }
                 if "Over" in totals and "Under" in totals:
                     if abs(float(totals["Over"]["point"]) - float(totals["Under"]["point"])) <= 1e-6:
-                        total_market = {"key": "totals", "outcomes": [totals["Over"], totals["Under"]]}
+                        total_market = {"key": target_total_key, "outcomes": [totals["Over"], totals["Under"]]}
                         sig = _market_signature(total_market)
                         prev = by_signature.get(sig)
                         if prev is None or _score_market(total_market) > _score_market(prev):
@@ -1084,8 +1119,15 @@ def fetch_events(
 
             if len(outcomes) == 2:
                 dynamic_key = None
-                for alias in _market_aliases_for_type(market_type):
-                    if alias in {"h2h", "spreads", "totals"}:
+                for alias in _market_aliases_for_type(market_type, market_name):
+                    if (
+                        alias == "h2h"
+                        or alias.startswith("h2h_")
+                        or alias == "spreads"
+                        or alias.startswith("spreads_")
+                        or alias == "totals"
+                        or alias.startswith("totals_")
+                    ):
                         continue
                     if alias in requested_markets:
                         dynamic_key = alias

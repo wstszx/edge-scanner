@@ -1431,7 +1431,9 @@
     const SPORT_KEY_LABELS = {
       zh: {
         americanfootball_nfl: 'NFL',
+        americanfootball_ncaaf: 'NCAA美式橄榄球',
         basketball_nba: 'NBA',
+        basketball_ncaab: 'NCAA男篮',
         baseball_mlb: 'MLB',
         icehockey_nhl: 'NHL',
         soccer_epl: '英超',
@@ -1446,7 +1448,9 @@
     const SPORT_LABELS = {
       zh: {
         NFL: 'NFL',
+        NCAAF: 'NCAA美式橄榄球',
         NBA: 'NBA',
+        NCAAB: 'NCAA男篮',
         MLB: 'MLB',
         NHL: 'NHL',
         'Premier League': '英超',
@@ -2715,10 +2719,15 @@
     }
 
     function renderScanData(payload) {
+      const previousSelection = captureArbSelectionSnapshot();
       lastScanData = payload;
-      clearArbCalculatorSelection();
       if (payload && typeof payload.commission_rate === 'number') {
         lastCommissionRate = payload.commission_rate;
+      }
+      if (payload) {
+        restoreArbCalculatorSelection(payload, previousSelection);
+      } else {
+        clearArbCalculatorSelection();
       }
       renderArbitrage();
       renderMiddles();
@@ -2892,6 +2901,73 @@
       ].join('::');
     }
 
+    function normalizeArbLegToken(value) {
+      return `${value || ''}`.trim().toLowerCase();
+    }
+
+    function buildArbLegIdentity(outcome, point) {
+      const normalizedOutcome = normalizeArbLegToken(outcome);
+      const normalizedPoint =
+        point === undefined || point === null || point === ''
+          ? ''
+          : normalizeArbLegToken(point);
+      return `${normalizedOutcome}::${normalizedPoint}`;
+    }
+
+    function buildArbOpportunityStableKey(opp) {
+      if (!opp || typeof opp !== 'object') return '';
+      const odds = Array.isArray(opp.best_odds) ? opp.best_odds.slice(0, 3) : [];
+      const legSignature = odds
+        .map((item) => buildArbLegIdentity(item?.outcome, item?.point))
+        .filter(Boolean)
+        .sort()
+        .join('|');
+      return [
+        `${opp.event_id || ''}`.trim(),
+        `${opp.commence_time || ''}`.trim(),
+        `${opp.market || ''}`.trim(),
+        legSignature,
+      ].join('::');
+    }
+
+    function captureArbSelectionSnapshot() {
+      const hasSelection = Boolean(selectedArbKey || selectedArbOpp || arbCalculatorState);
+      if (!hasSelection) return null;
+      return {
+        key: selectedArbKey || arbCalculatorState?.key || '',
+        opportunity: selectedArbOpp || null,
+        state: cloneArbCalculatorState(arbCalculatorState),
+      };
+    }
+
+    function cloneArbCalculatorState(state) {
+      if (!state || typeof state !== 'object') return null;
+      const clonedLegs = Array.isArray(state.legs)
+        ? state.legs.map((leg) => ({
+          odds: Number(leg?.odds),
+          stake: Number(leg?.stake),
+          outcome: `${leg?.outcome || ''}`,
+          bookmaker: `${leg?.bookmaker || ''}`,
+          point: leg?.point,
+          maxStake: leg?.maxStake,
+        }))
+        : [];
+      return {
+        key: `${state.key || ''}`,
+        mode: typeof state.mode === 'string' ? state.mode : 'total',
+        totalStake: Number(state.totalStake),
+        legs: clonedLegs,
+      };
+    }
+
+    function resolveArbCalculatorMode(mode, legCount) {
+      if (typeof mode !== 'string') return 'total';
+      if (!mode.startsWith('base_')) return mode;
+      const baseIdx = Number(mode.slice(5));
+      if (!Number.isInteger(baseIdx) || baseIdx < 0 || baseIdx >= legCount) return 'total';
+      return mode;
+    }
+
     function roundMoney(value) {
       if (!Number.isFinite(value)) return 0;
       return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -2935,9 +3011,9 @@
       };
     }
 
-    function initializeArbCalculatorFromOpportunity(opp, oppKey = null) {
+    function buildArbCalculatorLegsFromOpportunity(opp) {
       const odds = Array.isArray(opp?.best_odds) ? opp.best_odds.slice(0, 3) : [];
-      const calcLegs = odds
+      return odds
         .map((item) => {
           const legOdds = parseOddsValue(item?.effective_price ?? item?.price);
           if (!legOdds) return null;
@@ -2951,31 +3027,123 @@
           };
         })
         .filter(Boolean);
-      if (calcLegs.length < 2) {
-        arbCalculatorState = null;
-        renderArbCalculator();
-        return;
-      }
+    }
+
+    function defaultArbTotalStake() {
       const defaultTotalRaw = parseFloat(stakeInput?.value);
-      const defaultTotal = Number.isFinite(defaultTotalRaw) && defaultTotalRaw > 0
+      return Number.isFinite(defaultTotalRaw) && defaultTotalRaw > 0
         ? roundMoney(defaultTotalRaw)
         : 100;
-      const split = splitStakesByTotal(defaultTotal, calcLegs.map((item) => item.odds));
-      if (!split || !Array.isArray(split.stakes) || split.stakes.length !== calcLegs.length) {
-        arbCalculatorState = null;
-        renderArbCalculator();
-        return;
+    }
+
+    function applySplitStakesToLegs(legs, totalStake) {
+      const split = splitStakesByTotal(totalStake, legs.map((item) => item.odds));
+      if (!split || !Array.isArray(split.stakes) || split.stakes.length !== legs.length) {
+        return null;
       }
-      const legs = calcLegs.map((item, idx) => ({
+      return legs.map((item, idx) => ({
         ...item,
         stake: split.stakes[idx],
       }));
-      arbCalculatorState = {
-        key: oppKey || buildArbOpportunityKey(opp),
+    }
+
+    function rebuildArbCalculatorState(opp, oppKey, preservedState = null) {
+      const calcLegs = buildArbCalculatorLegsFromOpportunity(opp);
+      if (calcLegs.length < 2) return null;
+
+      const fallbackTotal = defaultArbTotalStake();
+      if (preservedState && Array.isArray(preservedState.legs) && preservedState.legs.length) {
+        const previousByIdentity = new Map();
+        preservedState.legs.forEach((leg) => {
+          const key = buildArbLegIdentity(leg?.outcome, leg?.point);
+          if (!key || previousByIdentity.has(key)) return;
+          previousByIdentity.set(key, leg);
+        });
+        const restoredLegs = calcLegs.map((leg) => {
+          const previousLeg = previousByIdentity.get(buildArbLegIdentity(leg.outcome, leg.point));
+          const stake = parseStakeValue(previousLeg?.stake);
+          const odds = parseOddsValue(previousLeg?.odds);
+          return {
+            ...leg,
+            odds: odds || leg.odds,
+            stake: stake === null ? 0 : stake,
+          };
+        });
+        const restoredTotal = roundMoney(
+          restoredLegs.reduce((sum, leg) => sum + (Number.isFinite(leg.stake) ? leg.stake : 0), 0)
+        );
+        if (restoredTotal > 0) {
+          return {
+            key: oppKey,
+            mode: resolveArbCalculatorMode(preservedState.mode, restoredLegs.length),
+            totalStake: restoredTotal,
+            legs: restoredLegs,
+          };
+        }
+        const requestedTotal = parseStakeValue(preservedState.totalStake);
+        const splitTotal = requestedTotal !== null && requestedTotal > 0 ? requestedTotal : fallbackTotal;
+        const splitLegs = applySplitStakesToLegs(restoredLegs, splitTotal);
+        if (splitLegs) {
+          return {
+            key: oppKey,
+            mode: 'total',
+            totalStake: splitTotal,
+            legs: splitLegs,
+          };
+        }
+      }
+
+      const defaultLegs = applySplitStakesToLegs(calcLegs, fallbackTotal);
+      if (!defaultLegs) return null;
+      return {
+        key: oppKey,
         mode: 'total',
-        totalStake: defaultTotal,
-        legs,
+        totalStake: fallbackTotal,
+        legs: defaultLegs,
       };
+    }
+
+    function findArbOpportunityForRestore(opportunities, snapshot) {
+      if (!Array.isArray(opportunities) || !opportunities.length || !snapshot) return null;
+      const currentKey = `${snapshot.key || ''}`;
+      if (currentKey) {
+        const directMatch = opportunities.find((opp) => buildArbOpportunityKey(opp) === currentKey);
+        if (directMatch) return directMatch;
+      }
+      const stableKey = buildArbOpportunityStableKey(snapshot.opportunity);
+      if (!stableKey) return null;
+      return opportunities.find((opp) => buildArbOpportunityStableKey(opp) === stableKey) || null;
+    }
+
+    function restoreArbCalculatorSelection(payload, snapshot) {
+      const opportunities = payload?.arbitrage?.opportunities || [];
+      const matchedOpp = findArbOpportunityForRestore(opportunities, snapshot);
+      if (!matchedOpp) {
+        clearArbCalculatorSelection();
+        return;
+      }
+      const matchedKey = buildArbOpportunityKey(matchedOpp);
+      const rebuilt = rebuildArbCalculatorState(matchedOpp, matchedKey, snapshot?.state || null);
+      if (!rebuilt) {
+        clearArbCalculatorSelection();
+        return;
+      }
+      selectedArbKey = matchedKey;
+      selectedArbOpp = matchedOpp;
+      arbCalculatorState = rebuilt;
+    }
+
+    function initializeArbCalculatorFromOpportunity(opp, oppKey = null, preservedState = null) {
+      const key = oppKey || buildArbOpportunityKey(opp);
+      const rebuiltState = rebuildArbCalculatorState(opp, key, preservedState);
+      if (!rebuiltState) {
+        arbCalculatorState = null;
+        renderArbCalculator();
+        return;
+      }
+      selectedArbKey = key;
+      selectedArbOpp = opp;
+      arbCalculatorState = rebuiltState;
       renderArbCalculator();
     }
 

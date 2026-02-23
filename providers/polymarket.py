@@ -46,6 +46,7 @@ EVENTS_CACHE: Dict[str, object] = {
 
 SPORT_ALIASES: Dict[str, Sequence[str]] = {
     "americanfootball_nfl": ("nfl", "american-football"),
+    "americanfootball_ncaaf": ("ncaaf", "ncaa-football", "college-football", "college-football-playoff"),
     "basketball_nba": ("nba",),
     "basketball_ncaab": ("ncaab", "ncaa", "ncaa-basketball"),
     "baseball_mlb": ("mlb", "baseball"),

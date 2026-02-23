@@ -40,6 +40,7 @@ SX_SPORT_ID_MAP: Dict[str, int] = {
     "basketball_nba": 1,
     "basketball_ncaab": 1,
     "americanfootball_nfl": 8,
+    "americanfootball_ncaaf": 8,
     "baseball_mlb": 3,
     "icehockey_nhl": 2,
     "soccer_epl": 5,
@@ -54,6 +55,7 @@ SPORT_LEAGUE_HINTS: Dict[str, Sequence[str]] = {
     "basketball_nba": ("nba",),
     "basketball_ncaab": ("ncaa", "college"),
     "americanfootball_nfl": ("nfl",),
+    "americanfootball_ncaaf": ("ncaaf", "college football", "ncaa football"),
     "baseball_mlb": ("mlb", "major league baseball"),
     "icehockey_nhl": ("nhl", "national hockey league"),
     "soccer_epl": ("premier league", "epl"),
@@ -226,6 +228,39 @@ def _normalize_market_key(value: object) -> str:
     return token.strip("_")
 
 
+def _market_period_suffix(*values: object) -> str:
+    token = "_".join(_normalize_market_key(item) for item in values if _normalize_market_key(item))
+    if not token:
+        return ""
+    if any(pattern in token for pattern in ("second_half", "2nd_half", "half_2", "h2")):
+        return "h2"
+    if any(pattern in token for pattern in ("first_half", "1st_half", "half_time", "halftime", "half_1", "h1")):
+        return "h1"
+    quarter_patterns = {
+        "q1": ("q1", "quarter_1", "1st_quarter", "first_quarter"),
+        "q2": ("q2", "quarter_2", "2nd_quarter", "second_quarter"),
+        "q3": ("q3", "quarter_3", "3rd_quarter", "third_quarter"),
+        "q4": ("q4", "quarter_4", "4th_quarter", "fourth_quarter"),
+    }
+    for suffix, patterns in quarter_patterns.items():
+        if any(pattern in token for pattern in patterns):
+            return suffix
+    return ""
+
+
+def _scoped_market_alias(base_key: str, *period_hints: object) -> str:
+    suffix = _market_period_suffix(*period_hints)
+    return f"{base_key}_{suffix}" if suffix else base_key
+
+
+def _base_market_key(value: object) -> str:
+    key = _normalize_market_key(value)
+    for prefix in ("h2h_", "spreads_", "totals_"):
+        if key.startswith(prefix):
+            return prefix[:-1]
+    return key
+
+
 def _requested_market_keys(markets: Sequence[str]) -> set[str]:
     requested = {_normalize_market_key(item) for item in (markets or []) if _normalize_market_key(item)}
     if "both_teams_to_score" in requested:
@@ -304,6 +339,7 @@ def _market_type_aliases(market: dict) -> List[str]:
     raw_type = _normalize_text(market.get("marketType") or market.get("type")).upper()
     raw_name = _normalize_text(market.get("marketName") or market.get("name"))
     aliases: List[str] = []
+    period_hints = (raw_type, raw_name)
 
     for raw in (raw_type, raw_name):
         key = _normalize_market_key(raw)
@@ -316,15 +352,15 @@ def _market_type_aliases(market: dict) -> List[str]:
     if any(token in type_lc for token in ("money_line", "moneyline", "match_odds", "h2h")) or any(
         token in name_lc for token in ("moneyline", "match winner", "winner", "to win")
     ):
-        aliases.append("h2h")
+        aliases.append(_scoped_market_alias("h2h", *period_hints))
     if any(token in type_lc for token in ("spread", "handicap")) or any(
         token in name_lc for token in ("spread", "handicap")
     ):
-        aliases.append("spreads")
+        aliases.append(_scoped_market_alias("spreads", *period_hints))
     if any(token in type_lc for token in ("total", "over_under", "overunder")) or any(
         token in name_lc for token in ("total", "over/under", "over under")
     ):
-        aliases.append("totals")
+        aliases.append(_scoped_market_alias("totals", *period_hints))
     if "btts" in type_lc or "both teams to score" in name_lc:
         aliases.extend(["btts", "both_teams_to_score"])
 
@@ -377,6 +413,7 @@ def _normalize_fixture_market(
         target_market_key = (
             "both_teams_to_score" if "both_teams_to_score" in requested_markets else "btts"
         )
+    target_market_base = _base_market_key(target_market_key)
 
     odds_one = _moneyline_decimal_from_summary(market.get("bestOddsOutcomeOne"))
     odds_two = _moneyline_decimal_from_summary(market.get("bestOddsOutcomeTwo"))
@@ -404,7 +441,7 @@ def _normalize_fixture_market(
         "outcome_two_point": None,
     }
 
-    if target_market_key == "h2h":
+    if target_market_base == "h2h":
         if "draw" in {label_one_token, label_two_token}:
             return None
         if label_one_token == away_token and label_two_token == home_token:
@@ -418,7 +455,7 @@ def _normalize_fixture_market(
             candidate["outcome_two_name"] = away_team
         return candidate
 
-    if target_market_key == "spreads":
+    if target_market_base == "spreads":
         name_one, point_one = _spread_name_point(outcome_one_label)
         name_two, point_two = _spread_name_point(outcome_two_label)
         value_one, value_two = _market_value_pair(market)
@@ -448,7 +485,7 @@ def _normalize_fixture_market(
         candidate["outcome_two_point"] = round(float(point_two), 6)
         return candidate
 
-    if target_market_key == "totals":
+    if target_market_base == "totals":
         side_one, point_one = _total_side_point(outcome_one_label)
         side_two, point_two = _total_side_point(outcome_two_label)
         if side_one is None and side_two is None:
@@ -965,7 +1002,7 @@ def fetch_events(
             outcomes[1]["point"] = round(float(point_two), 6)
 
         description = _normalize_text(candidate.get("description"))
-        if description and candidate.get("market_key") not in {"h2h", "spreads", "totals"}:
+        if description and _base_market_key(candidate.get("market_key")) not in {"h2h", "spreads", "totals"}:
             outcomes[0]["description"] = description
             outcomes[1]["description"] = description
 

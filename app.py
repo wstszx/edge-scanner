@@ -199,6 +199,16 @@ def _sanitize_scan_request(payload: dict) -> dict:
     return sanitized
 
 
+def _extract_opportunity_list(payload: object) -> list[dict]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        opportunities = payload.get("opportunities")
+        if isinstance(opportunities, list):
+            return [item for item in opportunities if isinstance(item, dict)]
+    return []
+
+
 @app.route("/")
 def index() -> str:
     return render_template(
@@ -370,9 +380,21 @@ def scan() -> tuple:
     )
     if result.get("success"):
         scan_time = result.get("scan_time", "")
+        arbitrage_items = _extract_opportunity_list(result.get("arbitrage"))
+        if not arbitrage_items:
+            arbitrage_items = _extract_opportunity_list(result.get("opportunities"))
+        middle_items = _extract_opportunity_list(result.get("middles"))
+        plus_ev_items = _extract_opportunity_list(result.get("plus_ev"))
         # Persist history (non-blocking)
         try:
-            get_history_manager().save_opportunities(result, scan_time=scan_time)
+            get_history_manager().save_opportunities(
+                {
+                    "opportunities": arbitrage_items,
+                    "middles": middle_items,
+                    "plus_ev": plus_ev_items,
+                },
+                scan_time=scan_time,
+            )
         except Exception:
             pass
         # Send notifications in background thread (non-blocking)
@@ -381,9 +403,9 @@ def scan() -> tuple:
             def _notify():
                 try:
                     notifier.notify_opportunities(
-                        arb_list=result.get("opportunities") or [],
-                        middle_list=result.get("middles") or [],
-                        ev_list=result.get("plus_ev") or [],
+                        arb_list=arbitrage_items,
+                        middle_list=middle_items,
+                        ev_list=plus_ev_items,
                         scan_time=scan_time,
                     )
                 except Exception:

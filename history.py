@@ -47,6 +47,26 @@ _MODE_FILES = {
 }
 
 
+def _extract_mode_items(
+    scan_result: dict,
+    mode_key: str,
+    legacy_key: Optional[str] = None,
+) -> List[dict]:
+    candidates = []
+    if legacy_key:
+        candidates.append(scan_result.get(legacy_key))
+    candidates.append(scan_result.get(mode_key))
+
+    for candidate in candidates:
+        if isinstance(candidate, list):
+            return [item for item in candidate if isinstance(item, dict)]
+        if isinstance(candidate, dict):
+            nested = candidate.get("opportunities")
+            if isinstance(nested, list):
+                return [item for item in nested if isinstance(item, dict)]
+    return []
+
+
 class HistoryManager:
     """Thread-safe append-only JSONL history store."""
 
@@ -77,13 +97,13 @@ class HistoryManager:
 
         ts = scan_time or _utc_now()
         written = 0
-        for mode, result_key in [
-            ("arbitrage", "opportunities"),
-            ("middles", "middles"),
-            ("ev", "plus_ev"),
+        for mode, mode_key, legacy_key in [
+            ("arbitrage", "arbitrage", "opportunities"),
+            ("middles", "middles", None),
+            ("ev", "plus_ev", None),
         ]:
-            items = scan_result.get(result_key) or []
-            if not isinstance(items, list) or not items:
+            items = _extract_mode_items(scan_result, mode_key=mode_key, legacy_key=legacy_key)
+            if not items:
                 continue
             records = [_flatten_record(item, ts, mode) for item in items]
             written += self._append_records(mode, records)
@@ -245,12 +265,35 @@ def _flatten_record(item: dict, scan_time: str, mode: str) -> dict:
             for o in (item.get("best_odds") or [])
         ]
     elif mode == "middles":
-        base["ev"] = item.get("ev")
-        base["gap_points"] = item.get("gap_points")
-        base["probability"] = item.get("probability")
+        ev = item.get("ev")
+        if ev is None:
+            ev = item.get("ev_percent")
+        base["ev"] = ev
+        base["ev_percent"] = item.get("ev_percent")
+        gap_points = item.get("gap_points")
+        gap = item.get("gap")
+        if gap_points is None and isinstance(gap, dict):
+            gap_points = gap.get("points")
+        base["gap_points"] = gap_points
+        probability = item.get("probability")
+        if probability is None:
+            probability = item.get("middle_probability")
+        if probability is None:
+            probability_percent = item.get("probability_percent")
+            try:
+                probability = float(probability_percent) / 100.0
+            except (TypeError, ValueError):
+                probability = None
+        base["probability"] = probability
+        side_a = item.get("side_a") if isinstance(item.get("side_a"), dict) else {}
+        side_b = item.get("side_b") if isinstance(item.get("side_b"), dict) else {}
+        book_a = item.get("book_a") or side_a.get("bookmaker")
+        line_a = item.get("line_a") if item.get("line_a") is not None else side_a.get("line")
+        book_b = item.get("book_b") or side_b.get("bookmaker")
+        line_b = item.get("line_b") if item.get("line_b") is not None else side_b.get("line")
         base["books"] = [
-            {"bookmaker": item.get("book_a"), "line": item.get("line_a")},
-            {"bookmaker": item.get("book_b"), "line": item.get("line_b")},
+            {"bookmaker": book_a, "line": line_a},
+            {"bookmaker": book_b, "line": line_b},
         ]
     elif mode == "ev":
         base["edge_percent"] = item.get("edge_percent") or item.get("net_edge_percent")

@@ -60,6 +60,7 @@ CHAIN_ID_TO_SLUG = {
 
 SPORT_SLUG_HINTS: Dict[str, Sequence[str]] = {
     "americanfootball_nfl": ("american-football",),
+    "americanfootball_ncaaf": ("american-football",),
     "basketball_nba": ("basketball",),
     "basketball_ncaab": ("basketball",),
     "baseball_mlb": ("baseball",),
@@ -74,6 +75,7 @@ SPORT_SLUG_HINTS: Dict[str, Sequence[str]] = {
 
 SPORT_LEAGUE_HINTS: Dict[str, Sequence[str]] = {
     "americanfootball_nfl": ("nfl",),
+    "americanfootball_ncaaf": ("ncaaf", "ncaa football", "college football"),
     "basketball_nba": ("nba",),
     "basketball_ncaab": ("ncaa", "college"),
     "baseball_mlb": ("mlb", "major league baseball"),
@@ -725,6 +727,37 @@ def _condition_market_aliases(market_meta: dict) -> List[str]:
     return out
 
 
+def _looks_segmented_market_label(value: object) -> bool:
+    label = _normalize_text(value).lower()
+    if not label:
+        return False
+    return any(
+        token in label
+        for token in ("half", "quarter", "period", "inning", "set", "map", "game:")
+    )
+
+
+def _condition_is_segmented(condition: dict) -> bool:
+    for key in ("gamePeriodId", "period", "periodId", "gamePeriod"):
+        raw = _normalize_text(condition.get(key))
+        if raw and raw != "1":
+            return True
+    for key in ("marketName", "name", "title", "conditionName", "condition"):
+        if _looks_segmented_market_label(condition.get(key)):
+            return True
+    market = condition.get("market")
+    if isinstance(market, dict):
+        for key in ("name", "marketName", "label", "type"):
+            if _looks_segmented_market_label(market.get(key)):
+                return True
+        raw_period = _normalize_text(
+            market.get("gamePeriodId") or market.get("period") or market.get("periodId")
+        )
+        if raw_period and raw_period != "1":
+            return True
+    return False
+
+
 def _normalize_condition_market(
     condition: dict,
     home_team: str,
@@ -831,10 +864,7 @@ def _normalize_condition_market(
             or "full time result" in market_name
             or "match winner" in market_name
         )
-        is_segment = any(
-            token in market_name
-            for token in ("half", "quarter", "period", "inning", "set", "map", "game:")
-        )
+        is_segment = _looks_segmented_market_label(market_name)
         if looks_like_winner and not is_segment:
             return {
                 "key": "h2h",
@@ -904,6 +934,8 @@ def _normalize_condition_market(
 
 
 def _fallback_h2h_market(condition: dict, home_team: str, away_team: str) -> Optional[dict]:
+    if _condition_is_segmented(condition):
+        return None
     outcomes = condition.get("outcomes")
     if not isinstance(outcomes, list) or len(outcomes) != 2:
         return None

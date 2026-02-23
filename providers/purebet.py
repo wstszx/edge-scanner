@@ -263,6 +263,8 @@ def _infer_sport_key_from_active_league(league: dict) -> Optional[str]:
 
     if "nfl" in haystack:
         return "americanfootball_nfl"
+    if "ncaaf" in haystack or ("ncaa" in haystack and "football" in haystack):
+        return "americanfootball_ncaaf"
     if "nba" in haystack:
         return "basketball_nba"
     if "ncaa" in haystack and "basket" in haystack:
@@ -678,7 +680,7 @@ def _normalize_purebet_markets_payload(
         return []
     min_stake = _purebet_min_stake()
     max_age_seconds = _purebet_max_age_seconds()
-    now_epoch = int(dt.datetime.utcnow().timestamp())
+    now_epoch = int(dt.datetime.now(dt.timezone.utc).timestamp())
     normalized: List[dict] = []
     for market in payload:
         if not isinstance(market, dict):

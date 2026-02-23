@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import app as app_module
 
@@ -62,6 +62,31 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertFalse(kwargs.get("all_sports"))
         self.assertFalse(kwargs.get("all_markets"))
         self.assertFalse(kwargs.get("include_purebet"))
+
+    def test_scan_saves_history_from_nested_result_shape(self) -> None:
+        result_payload = {
+            "success": True,
+            "scan_time": "2026-02-22T12:00:00Z",
+            "arbitrage": {"opportunities": [{"event": "A vs B"}]},
+            "middles": {"opportunities": [{"event": "C vs D"}]},
+            "plus_ev": {"opportunities": [{"event": "E vs F"}]},
+        }
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+        with (
+            patch.object(app_module, "run_scan", return_value=result_payload),
+            patch.object(app_module, "get_history_manager", return_value=history_manager),
+            patch.object(app_module, "get_notifier", return_value=notifier),
+        ):
+            response = self.client.post("/scan", json={})
+
+        self.assertEqual(response.status_code, 200)
+        history_manager.save_opportunities.assert_called_once()
+        history_payload = history_manager.save_opportunities.call_args.args[0]
+        self.assertEqual(len(history_payload.get("opportunities") or []), 1)
+        self.assertEqual(len(history_payload.get("middles") or []), 1)
+        self.assertEqual(len(history_payload.get("plus_ev") or []), 1)
 
 
 if __name__ == "__main__":

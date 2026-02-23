@@ -177,6 +177,7 @@ MAX_MIDDLE_PROBABILITY = 0.35
 
 SPORT_DISPLAY_NAMES = {
     "americanfootball_nfl": "NFL",
+    "americanfootball_ncaaf": "NCAAF",
     "basketball_nba": "NBA",
     "basketball_ncaab": "NCAAB",
     "baseball_mlb": "MLB",
@@ -191,6 +192,7 @@ SPORT_DISPLAY_NAMES = {
 
 AMERICAN_SPORTS = {
     "americanfootball_nfl",
+    "americanfootball_ncaaf",
     "basketball_nba",
     "basketball_ncaab",
     "baseball_mlb",
@@ -208,6 +210,7 @@ SOCCER_SPORTS = {
 
 _DEFAULT_SPORT_KEYS = [
     "americanfootball_nfl",
+    "americanfootball_ncaaf",
     "basketball_nba",
     "basketball_ncaab",
     "baseball_mlb",
@@ -232,6 +235,7 @@ DEFAULT_SPORT_OPTIONS = [
 
 AMERICAN_MARKETS = ["h2h", "spreads", "totals"]
 SOCCER_MARKETS = ["spreads", "totals"]
+GENERIC_MARKETS = ["h2h"]
 
 ROI_BANDS = [
     (float("-inf"), 0.0, "<0%"),
@@ -395,11 +399,18 @@ EDGE_BANDS = [
 
 
 def markets_for_sport(sport_key: str) -> list[str]:
-    if sport_key in AMERICAN_SPORTS:
+    key = (sport_key or "").strip().lower()
+    if key in AMERICAN_SPORTS:
         return AMERICAN_MARKETS
-    if sport_key in SOCCER_SPORTS:
+    if key in SOCCER_SPORTS:
         return SOCCER_MARKETS
-    return SOCCER_MARKETS.copy()
+    # Support unknown leagues under known families (e.g., basketball_wnba, americanfootball_ncaaf).
+    if key.startswith(("americanfootball_", "basketball_", "baseball_", "icehockey_")):
+        return AMERICAN_MARKETS.copy()
+    if key.startswith("soccer_"):
+        return SOCCER_MARKETS.copy()
+    # Generic fallback keeps scans broad without forcing potentially invalid spread/total markets.
+    return GENERIC_MARKETS.copy()
 
 # -----------------------------------------------------------------------------
 # History configuration

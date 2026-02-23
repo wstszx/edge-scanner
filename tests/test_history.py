@@ -112,6 +112,65 @@ class TestHistoryManager(unittest.TestCase):
         records = self.hm.load_recent(limit=100)
         self.assertEqual(len(records), 0)
 
+    def test_save_nested_run_scan_result_shape(self):
+        scan = {
+            "success": True,
+            "arbitrage": {
+                "opportunities": [
+                    {
+                        "event": "Team A vs Team B",
+                        "sport": "basketball_nba",
+                        "sport_display": "NBA",
+                        "market": "h2h",
+                        "commence_time": "2024-01-01T20:00:00Z",
+                        "roi_percent": 1.5,
+                        "best_odds": [
+                            {"outcome": "Team A", "bookmaker": "DraftKings", "price": 2.1},
+                            {"outcome": "Team B", "bookmaker": "FanDuel", "price": 2.1},
+                        ],
+                    }
+                ]
+            },
+            "middles": {
+                "opportunities": [
+                    {
+                        "event": "Team C vs Team D",
+                        "sport": "americanfootball_nfl",
+                        "sport_display": "NFL",
+                        "market": "spreads",
+                        "commence_time": "2024-01-02T18:00:00Z",
+                        "ev_percent": 2.4,
+                        "probability_percent": 12.5,
+                        "gap": {"points": 3.0},
+                        "side_a": {"bookmaker": "Book A", "line": -3.5},
+                        "side_b": {"bookmaker": "Book B", "line": 1.5},
+                    }
+                ]
+            },
+            "plus_ev": {
+                "opportunities": [
+                    {
+                        "event": "Team E vs Team F",
+                        "sport": "baseball_mlb",
+                        "sport_display": "MLB",
+                        "market": "h2h",
+                        "commence_time": "2024-01-03T18:00:00Z",
+                        "edge_percent": 3.2,
+                        "ev_per_100": 2.3,
+                        "bet": {"soft_book": "BetMGM", "soft_odds": 2.1},
+                        "sharp": {"book": "Pinnacle", "fair_odds": 1.95},
+                    }
+                ]
+            },
+        }
+
+        written = self.hm.save_opportunities(scan, scan_time="2024-01-01T12:00:00Z")
+        self.assertEqual(written, 3)
+        stats = self.hm.get_stats()
+        self.assertEqual(stats["modes"]["arbitrage"]["count"], 1)
+        self.assertEqual(stats["modes"]["middles"]["count"], 1)
+        self.assertEqual(stats["modes"]["ev"]["count"], 1)
+
 
 class TestFlattenRecord(unittest.TestCase):
     def test_arbitrage_record(self):
@@ -141,6 +200,23 @@ class TestFlattenRecord(unittest.TestCase):
         rec = _flatten_record(item, "2024-01-01T12:00:00Z", "ev")
         self.assertEqual(rec["edge_percent"], 5.0)
         self.assertEqual(rec["soft_book"], "FanDuel")
+
+    def test_middles_record_new_shape(self):
+        item = {
+            "event": "E vs F",
+            "market": "totals",
+            "ev_percent": 1.8,
+            "probability_percent": 10.0,
+            "gap": {"points": 2.0},
+            "side_a": {"bookmaker": "Book A", "line": 219.5},
+            "side_b": {"bookmaker": "Book B", "line": 221.5},
+        }
+        rec = _flatten_record(item, "2024-01-01T12:00:00Z", "middles")
+        self.assertEqual(rec["ev"], 1.8)
+        self.assertEqual(rec["gap_points"], 2.0)
+        self.assertAlmostEqual(rec["probability"], 0.1, places=5)
+        self.assertEqual(rec["books"][0]["bookmaker"], "Book A")
+        self.assertEqual(rec["books"][1]["line"], 221.5)
 
 
 if __name__ == "__main__":
