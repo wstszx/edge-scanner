@@ -316,7 +316,7 @@ class Notifier:
             for o in summary["top_ev"]:
                 lines.append(
                     f"  • {o.get('event')} [{o.get('market')}] "
-                    f"{o.get('soft_book')} edge={o.get('edge_percent'):.1f}%"
+                    f"{o.get('soft_book')} edge={o.get('edge_percent') or 0:.1f}%"
                 )
         return "\n".join(lines)
 
@@ -334,11 +334,14 @@ def _utc_now() -> str:
 # ---------------------------------------------------------------------------
 
 _default_notifier: Optional[Notifier] = None
+_notifier_lock = threading.Lock()
 
 
 def get_notifier() -> Notifier:
     """Return the module-level singleton Notifier."""
     global _default_notifier
     if _default_notifier is None:
-        _default_notifier = Notifier()
+        with _notifier_lock:
+            if _default_notifier is None:
+                _default_notifier = Notifier()
     return _default_notifier

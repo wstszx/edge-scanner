@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import socket
@@ -396,7 +397,7 @@ def scan() -> tuple:
                 scan_time=scan_time,
             )
         except Exception:
-            pass
+            logging.warning("Failed to save scan history", exc_info=True)
         # Send notifications in background thread (non-blocking)
         notifier = get_notifier()
         if notifier.is_configured:
@@ -409,7 +410,7 @@ def scan() -> tuple:
                         scan_time=scan_time,
                     )
                 except Exception:
-                    pass
+                    logging.warning("Failed to send notifications", exc_info=True)
             threading.Thread(target=_notify, daemon=True).start()
     if _should_save_scan(payload):
         saved_path = _save_scan_payload(payload, result)

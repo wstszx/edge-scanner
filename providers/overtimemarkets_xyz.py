@@ -208,7 +208,7 @@ def _normalize_commence_time(value: object) -> Optional[str]:
         if timestamp > 1e12:
             timestamp /= 1000.0
         try:
-            return dt.datetime.utcfromtimestamp(timestamp).replace(microsecond=0).isoformat() + "Z"
+            return dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         except (OSError, OverflowError, ValueError):
             return None
     text = _normalize_text(value)

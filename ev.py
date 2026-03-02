@@ -93,8 +93,8 @@ def build_sharp_reference(
             continue
         first, second = entries
         fair_a, fair_b, vig_percent = remove_vig(first["price"], second["price"])
-        prob_a = 1 / fair_a if fair_a else 0.0
-        prob_b = 1 / fair_b if fair_b else 0.0
+        prob_a = 1 / fair_a if fair_a > 0 else 0.0
+        prob_b = 1 / fair_b if fair_b > 0 else 0.0
         references[key] = {
             "vig_percent": round(vig_percent, 2),
             "outcomes": {

@@ -240,7 +240,7 @@ def _normalize_commence_time(value: object) -> Optional[str]:
     if text.isdigit():
         try:
             ts = int(text)
-            return dt.datetime.utcfromtimestamp(ts).replace(microsecond=0).isoformat() + "Z"
+            return dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         except (TypeError, ValueError, OSError, OverflowError):
             return None
     try:

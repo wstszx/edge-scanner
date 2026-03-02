@@ -216,10 +216,11 @@ class HistoryManager:
         if not path.exists():
             return []
         records: List[dict] = []
-        try:
-            lines = path.read_bytes().splitlines()
-        except OSError:
-            return []
+        with self._lock:
+            try:
+                lines = path.read_bytes().splitlines()
+            except OSError:
+                return []
         for raw in reversed(lines):
             if not raw.strip():
                 continue
@@ -312,11 +313,14 @@ def _flatten_record(item: dict, scan_time: str, mode: str) -> dict:
 # ---------------------------------------------------------------------------
 
 _default_manager: Optional[HistoryManager] = None
+_manager_lock = threading.Lock()
 
 
 def get_history_manager() -> HistoryManager:
     """Return the module-level singleton HistoryManager."""
     global _default_manager
     if _default_manager is None:
-        _default_manager = HistoryManager()
+        with _manager_lock:
+            if _default_manager is None:
+                _default_manager = HistoryManager()
     return _default_manager

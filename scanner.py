@@ -243,6 +243,7 @@ PUREBET_ACTIVE_LEAGUES_CACHE: Dict[str, object] = {
     "mapping": {},
     "meta": {},
 }
+_PUREBET_LEAGUE_CACHE_LOCK = threading.Lock()
 
 
 class ScannerError(Exception):
@@ -870,24 +871,20 @@ def _instrumented_session_request(self, method, url, **kwargs):  # type: ignore[
     finally:
         active = _active_request_loggers()
         logger = _select_request_logger(active)
-        if logger is None:
-            return
-        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
-        try:
-            entry = _build_request_log_entry(
-                method=method,
-                url=url,
-                kwargs=kwargs,
-                elapsed_ms=elapsed_ms,
-                response=response,
-                error=error,
-            )
-        except Exception:
-            return
-        try:
-            logger.log_request(entry)
-        except Exception:
-            return
+        if logger is not None:
+            elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+            try:
+                entry = _build_request_log_entry(
+                    method=method,
+                    url=url,
+                    kwargs=kwargs,
+                    elapsed_ms=elapsed_ms,
+                    response=response,
+                    error=error,
+                )
+                logger.log_request(entry)
+            except Exception:
+                pass
 
 
 def _ensure_request_logging_patch() -> None:
@@ -1057,7 +1054,7 @@ def _purebet_event_url(event_id: object) -> str:
     return f"{_purebet_public_base()}/event/{quote(raw, safe='')}"
 
 
-def _clamp_commission(rate: float) -> float:
+def _clamp_commission(rate: Optional[float]) -> float:
     if rate is None:
         return DEFAULT_COMMISSION
     return max(0.0, min(rate, 0.2))
@@ -1904,9 +1901,10 @@ def _load_purebet_league_map(
         return mapping
     now = time.time()
     ttl = _purebet_league_sync_ttl()
-    cache_valid = ttl > 0 and now < float(PUREBET_ACTIVE_LEAGUES_CACHE.get("expires_at", 0.0))
-    cached_mapping = PUREBET_ACTIVE_LEAGUES_CACHE.get("mapping") or {}
-    cached_meta = PUREBET_ACTIVE_LEAGUES_CACHE.get("meta") or {}
+    with _PUREBET_LEAGUE_CACHE_LOCK:
+        cache_valid = ttl > 0 and now < float(PUREBET_ACTIVE_LEAGUES_CACHE.get("expires_at", 0.0))
+        cached_mapping = PUREBET_ACTIVE_LEAGUES_CACHE.get("mapping") or {}
+        cached_meta = PUREBET_ACTIVE_LEAGUES_CACHE.get("meta") or {}
     if cache_valid and isinstance(cached_mapping, dict):
         mapping.update(cached_mapping)
         if stats is not None:
@@ -1949,9 +1947,10 @@ def _load_purebet_league_map(
 
     dynamic_mapping, meta = _build_dynamic_purebet_league_map(payload, mapping)
     expires_at = now + ttl if ttl > 0 else now
-    PUREBET_ACTIVE_LEAGUES_CACHE["expires_at"] = expires_at
-    PUREBET_ACTIVE_LEAGUES_CACHE["mapping"] = dynamic_mapping
-    PUREBET_ACTIVE_LEAGUES_CACHE["meta"] = meta
+    with _PUREBET_LEAGUE_CACHE_LOCK:
+        PUREBET_ACTIVE_LEAGUES_CACHE["expires_at"] = expires_at
+        PUREBET_ACTIVE_LEAGUES_CACHE["mapping"] = dynamic_mapping
+        PUREBET_ACTIVE_LEAGUES_CACHE["meta"] = meta
     mapping.update(dynamic_mapping)
     if stats is not None:
         stats["league_sync_source"] = "live"
@@ -2026,7 +2025,7 @@ def _epoch_to_iso(value: float) -> Optional[str]:
     if timestamp > 1e12:
         timestamp /= 1000.0
     try:
-        return dt.datetime.utcfromtimestamp(timestamp).replace(microsecond=0).isoformat() + "Z"
+        return dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     except (OSError, OverflowError, ValueError):
         return None
 
@@ -2044,7 +2043,7 @@ def _normalize_commence_time(value) -> Optional[str]:
             return _epoch_to_iso(int(text))
         try:
             if text.endswith("Z"):
-                dt.datetime.fromisoformat(text[:-1])
+                dt.datetime.fromisoformat(text[:-1])  # validate format
                 return text
             parsed = dt.datetime.fromisoformat(text)
         except ValueError:
@@ -3237,6 +3236,8 @@ def _collect_market_entries(
             if any(p is None for p in point_values):
                 continue
             # Require opposite sides of the spread (one positive, one negative) and different teams.
+            # Only the first two outcomes are checked; prior filtering ensures spread markets
+            # always have exactly 2 outcomes (offer_count > 2 skips non-h2h markets above).
             if point_values[0] * point_values[1] >= 0:
                 continue
             outcome_names = {o.get("name", "").strip().lower() for o in outcomes}

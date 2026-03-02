@@ -6,6 +6,7 @@ import difflib
 import json
 import os
 import re
+import threading
 import time
 import unicodedata
 from pathlib import Path
@@ -93,6 +94,7 @@ PUREBET_ACTIVE_LEAGUES_CACHE: Dict[str, object] = {
     "mapping": {},
     "meta": {},
 }
+_PUREBET_LEAGUE_CACHE_LOCK = threading.Lock()
 
 def _purebet_public_base() -> str:
     base = (PUREBET_ORIGIN or "").strip() or "https://purebet.io"
@@ -355,9 +357,10 @@ def _load_purebet_league_map(
         return mapping
     now = time.time()
     ttl = _purebet_league_sync_ttl()
-    cache_valid = ttl > 0 and now < float(PUREBET_ACTIVE_LEAGUES_CACHE.get("expires_at", 0.0))
-    cached_mapping = PUREBET_ACTIVE_LEAGUES_CACHE.get("mapping") or {}
-    cached_meta = PUREBET_ACTIVE_LEAGUES_CACHE.get("meta") or {}
+    with _PUREBET_LEAGUE_CACHE_LOCK:
+        cache_valid = ttl > 0 and now < float(PUREBET_ACTIVE_LEAGUES_CACHE.get("expires_at", 0.0))
+        cached_mapping = PUREBET_ACTIVE_LEAGUES_CACHE.get("mapping") or {}
+        cached_meta = PUREBET_ACTIVE_LEAGUES_CACHE.get("meta") or {}
     if cache_valid and isinstance(cached_mapping, dict):
         mapping.update(cached_mapping)
         if stats is not None:
@@ -400,9 +403,10 @@ def _load_purebet_league_map(
 
     dynamic_mapping, meta = _build_dynamic_purebet_league_map(payload, mapping)
     expires_at = now + ttl if ttl > 0 else now
-    PUREBET_ACTIVE_LEAGUES_CACHE["expires_at"] = expires_at
-    PUREBET_ACTIVE_LEAGUES_CACHE["mapping"] = dynamic_mapping
-    PUREBET_ACTIVE_LEAGUES_CACHE["meta"] = meta
+    with _PUREBET_LEAGUE_CACHE_LOCK:
+        PUREBET_ACTIVE_LEAGUES_CACHE["expires_at"] = expires_at
+        PUREBET_ACTIVE_LEAGUES_CACHE["mapping"] = dynamic_mapping
+        PUREBET_ACTIVE_LEAGUES_CACHE["meta"] = meta
     mapping.update(dynamic_mapping)
     if stats is not None:
         stats["league_sync_source"] = "live"
@@ -475,7 +479,7 @@ def _epoch_to_iso(value: float) -> Optional[str]:
     if timestamp > 1e12:
         timestamp /= 1000.0
     try:
-        return dt.datetime.utcfromtimestamp(timestamp).replace(microsecond=0).isoformat() + "Z"
+        return dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     except (OSError, OverflowError, ValueError):
         return None
 
