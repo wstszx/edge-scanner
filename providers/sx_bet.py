@@ -17,7 +17,7 @@ SX_BET_API_BASE = os.getenv("SX_BET_API_BASE", "https://api.sx.bet").strip()
 SX_BET_PUBLIC_BASE = os.getenv("SX_BET_PUBLIC_BASE", "https://sx.bet").strip()
 SX_BET_BASE_TOKEN = os.getenv(
     "SX_BET_BASE_TOKEN",
-    "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+    "0x6629Ce1Cf35Cc1329ebB4F63202F3f197b3F050B",
 ).strip()
 SX_BET_TIMEOUT_RAW = os.getenv("SX_BET_TIMEOUT_SECONDS", "20").strip()
 SX_BET_RETRIES_RAW = os.getenv("SX_BET_RETRIES", "2").strip()
@@ -568,20 +568,30 @@ def _fixture_matches_sport(
 
 def _moneyline_decimal_from_summary(value) -> Optional[float]:
     """
-    SX summary fields may already be decimal odds or probabilities.
-    - > 1: treat as decimal odds
-    - (0,1): treat as probability and convert to decimal
+    SX summary fields can be:
+    - decimal odds (legacy payloads)
+    - probability 0..1
+    - scaled implied odds from orders endpoints (1e20 scale)
     """
-    odds = _safe_float(value)
-    if odds is None:
+    raw = _safe_float(value)
+    if raw is None:
         return None
-    if odds <= 0:
+    if raw <= 0:
         return None
-    if odds > 1:
-        return odds
-    if odds >= 1:
-        return None
-    converted = 1.0 / odds
+
+    # Current SX payloads typically use the implied-odds format (1e20 scale).
+    # Interpret those with the same parser used for orders/odds endpoints.
+    if raw > 10000:
+        return _moneyline_decimal_from_percentage(raw)
+
+    # Basis-point style probabilities occasionally appear in older payloads.
+    if raw > 100:
+        return _moneyline_decimal_from_percentage(raw)
+
+    # Preserve legacy decimal/probability support.
+    if raw > 1:
+        return raw
+    converted = 1.0 / raw
     return converted if converted > 1 else None
 
 

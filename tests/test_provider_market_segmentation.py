@@ -21,6 +21,15 @@ class TestBetdexSegmentation(unittest.TestCase):
 
 
 class TestSxBetSegmentation(unittest.TestCase):
+    def test_summary_scaled_implied_odds_are_converted(self) -> None:
+        odds = sx_bet._moneyline_decimal_from_summary("53125000000000000000")
+        self.assertIsNotNone(odds)
+        self.assertAlmostEqual(odds, 1.8823529411764706, places=9)
+
+    def test_summary_legacy_decimal_odds_are_preserved(self) -> None:
+        odds = sx_bet._moneyline_decimal_from_summary(2.05)
+        self.assertEqual(odds, 2.05)
+
     def test_half_time_totals_alias_is_segmented(self) -> None:
         aliases = sx_bet._market_type_aliases(
             {"marketType": "OVER_UNDER", "marketName": "First Half Total Goals"}
@@ -106,4 +115,3 @@ class TestBookmakerFallbackSegmentation(unittest.TestCase):
         market = bookmaker_xyz._fallback_h2h_market(condition, "Home", "Away")
         self.assertIsNotNone(market)
         self.assertEqual(market["key"], "h2h")
-

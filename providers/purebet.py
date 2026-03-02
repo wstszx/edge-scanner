@@ -686,6 +686,9 @@ def _normalize_purebet_markets_payload(
     max_age_seconds = _purebet_max_age_seconds()
     now_epoch = int(dt.datetime.now(dt.timezone.utc).timestamp())
     normalized: List[dict] = []
+    # Some Purebet feeds expose 1X2 as three separate binary markets (mkt=1/2/3).
+    # We collect side0 (the affirmative outcome) and rebuild one 3-way market.
+    one_x_two_outcomes: Dict[int, dict] = {}
     for market in payload:
         if not isinstance(market, dict):
             continue
@@ -771,6 +774,25 @@ def _normalize_purebet_markets_payload(
                 }
             )
         elif market_key == "h2h":
+            raw_type_key = _normalize_text(raw_market_type)
+            # v3 /markets can encode 1X2 as separate binary rows:
+            # mkt=1 (home), mkt=2 (draw), mkt=3 (away).
+            if raw_type_key == "1x2" and side2 is None:
+                mkt_code = _safe_float(market.get("mkt"))
+                if mkt_code in (1.0, 2.0, 3.0):
+                    outcome_code = int(mkt_code)
+                    existing = one_x_two_outcomes.get(outcome_code)
+                    candidate = {
+                        "price": side0["odds"],
+                        "stake": side0.get("stake"),
+                        "last_updated": side0.get("last_updated"),
+                    }
+                    if (
+                        existing is None
+                        or float(candidate.get("stake") or 0.0) > float(existing.get("stake") or 0.0)
+                    ):
+                        one_x_two_outcomes[outcome_code] = candidate
+                continue
             h2h_key = "h2h"
             if side2 and "h2h_3_way" in supported and "h2h" not in supported:
                 h2h_key = "h2h_3_way"
@@ -824,6 +846,56 @@ def _normalize_purebet_markets_payload(
                 outcomes.append(row)
             if len(outcomes) == 2:
                 normalized.append({"key": target_market_key, "outcomes": outcomes})
+    if one_x_two_outcomes:
+        home_out = one_x_two_outcomes.get(1)
+        draw_out = one_x_two_outcomes.get(2)
+        away_out = one_x_two_outcomes.get(3)
+        if home_out and away_out and draw_out and "h2h_3_way" in supported:
+            normalized.append(
+                {
+                    "key": "h2h_3_way",
+                    "outcomes": [
+                        {
+                            "name": home,
+                            "price": home_out["price"],
+                            "stake": home_out.get("stake"),
+                            "last_updated": home_out.get("last_updated"),
+                        },
+                        {
+                            "name": "Draw",
+                            "price": draw_out["price"],
+                            "stake": draw_out.get("stake"),
+                            "last_updated": draw_out.get("last_updated"),
+                        },
+                        {
+                            "name": away,
+                            "price": away_out["price"],
+                            "stake": away_out.get("stake"),
+                            "last_updated": away_out.get("last_updated"),
+                        },
+                    ],
+                }
+            )
+        elif home_out and away_out and draw_out is None and "h2h" in supported:
+            normalized.append(
+                {
+                    "key": "h2h",
+                    "outcomes": [
+                        {
+                            "name": home,
+                            "price": home_out["price"],
+                            "stake": home_out.get("stake"),
+                            "last_updated": home_out.get("last_updated"),
+                        },
+                        {
+                            "name": away,
+                            "price": away_out["price"],
+                            "stake": away_out.get("stake"),
+                            "last_updated": away_out.get("last_updated"),
+                        },
+                    ],
+                }
+            )
     return normalized
 
 def _fetch_purebet_event_markets(
@@ -967,7 +1039,13 @@ def _normalize_purebet_v3_events(
         event_url = _purebet_event_url(event_id)
         markets_out: List[dict] = []
         odds = event.get("odds")
-        if isinstance(odds, list) and ("h2h" in supported_markets or "h2h_3_way" in supported_markets):
+        # When details mode is enabled, /markets is the source of truth; avoid
+        # mixing /events inline odds with detail markets.
+        if (
+            not allow_empty_markets
+            and isinstance(odds, list)
+            and ("h2h" in supported_markets or "h2h_3_way" in supported_markets)
+        ):
             markets_out.extend(_normalize_purebet_h2h_markets(odds, home, away))
         if not markets_out and not allow_empty_markets:
             continue

@@ -305,6 +305,7 @@
           <button type="button" class="tab-btn active" data-tab="arbitrage" data-i18n="tab_arbitrage">Arbitrage</button>
           <button type="button" class="tab-btn" data-tab="middles" data-i18n="tab_middles">Middles</button>
           <button type="button" class="tab-btn" data-tab="plus-ev" data-i18n="tab_plus_ev">+EV</button>
+          <button type="button" class="tab-btn" data-tab="providers" data-i18n="tab_providers">Providers</button>
           <button type="button" class="tab-btn" data-tab="history" data-i18n="tab_history">History</button>
         </nav>
 
@@ -707,6 +708,22 @@
         </section>
 
 
+        <section id="providers-panel" class="hidden">
+          <section class="card results-card provider-data-card">
+            <div class="card-head">
+              <h3 data-i18n="provider_data_title">Provider Data Inspector</h3>
+              <div class="table-meta">
+                <span id="provider-data-count">0 providers</span>
+              </div>
+            </div>
+            <p class="helper" data-i18n="provider_data_helper">Inspect per-provider raw snapshots and expand nested
+              fields.</p>
+            <div id="provider-data-empty" class="empty" data-i18n="provider_data_empty">Run a scan to load provider
+              data.</div>
+            <div id="provider-data-list" class="provider-data-list"></div>
+          </section>
+        </section>
+
         <section id="history-panel" class="hidden">
           <section class="card results-card">
             <div class="card-head">
@@ -874,6 +891,11 @@
     const arbitragePanel = document.getElementById('arbitrage-panel');
     const middlesPanel = document.getElementById('middles-panel');
     const plusEvPanel = document.getElementById('plus-ev-panel');
+    const providersPanel = document.getElementById('providers-panel');
+    const historyPanel = document.getElementById('history-panel');
+    const providerDataCount = document.getElementById('provider-data-count');
+    const providerDataEmpty = document.getElementById('provider-data-empty');
+    const providerDataList = document.getElementById('provider-data-list');
     const middlesConfig = document.getElementById('middles-config');
     const plusEvConfig = document.getElementById('plus-ev-config');
     const minGapInput = document.getElementById('min-gap-input');
@@ -950,6 +972,9 @@
     let selectedArbKey = null;
     let selectedArbOpp = null;
     let arbCalculatorState = null;
+    const providerSnapshotCache = {};
+    const providerSnapshotLoading = new Set();
+    const providerJsonChildLimit = 200;
 
     const TRANSLATIONS = {
       en: {
@@ -1014,6 +1039,25 @@
         tab_arbitrage: 'Arbitrage',
         tab_middles: 'Middles',
         tab_plus_ev: '+EV',
+        tab_providers: 'Providers',
+        provider_data_title: 'Provider Data Inspector',
+        provider_data_helper: 'Inspect per-provider raw snapshots and expand nested fields.',
+        provider_data_empty: 'Run a scan to load provider data.',
+        provider_data_count: '{count} providers',
+        provider_events: 'Events',
+        provider_sports: 'Sports',
+        provider_errors: 'Errors',
+        provider_status_ready: 'Ready',
+        provider_status_error: 'Error',
+        provider_status_idle: 'Idle',
+        provider_load_snapshot: 'Load Snapshot',
+        provider_reload_snapshot: 'Reload Snapshot',
+        provider_loading: 'Loading snapshot...',
+        provider_snapshot_missing: 'Snapshot file not found for this provider.',
+        provider_fetch_failed: 'Failed to load provider snapshot: {error}',
+        provider_json_truncated: '{count} more entries truncated.',
+        provider_key_label: 'Key',
+        provider_requested_markets: 'Requested Markets',
 
         tab_history: '历史',
         history_log_open: '扫描历史',
@@ -1427,6 +1471,28 @@
         unknown_error: '未知错误',
       },
     };
+
+    Object.assign(TRANSLATIONS.zh || {}, {
+      tab_providers: '\u5e73\u53f0\u6570\u636e',
+      provider_data_title: '\u5e73\u53f0\u6570\u636e\u6821\u9a8c',
+      provider_data_helper: '\u67e5\u770b\u6bcf\u4e2a\u5e73\u53f0\u6293\u53d6\u7684\u539f\u59cb\u5feb\u7167\uff0c\u53ef\u6309\u5c42\u7ea7\u5c55\u5f00/\u6298\u53e0\u3002',
+      provider_data_empty: '\u8bf7\u5148\u8fd0\u884c\u626b\u63cf\u4ee5\u52a0\u8f7d\u5e73\u53f0\u6570\u636e\u3002',
+      provider_data_count: '{count} \u4e2a\u5e73\u53f0',
+      provider_events: '\u8d5b\u4e8b',
+      provider_sports: '\u9879\u76ee',
+      provider_errors: '\u9519\u8bef',
+      provider_status_ready: '\u6b63\u5e38',
+      provider_status_error: '\u5f02\u5e38',
+      provider_status_idle: '\u672a\u52a0\u8f7d',
+      provider_load_snapshot: '\u52a0\u8f7d\u539f\u59cb\u6570\u636e',
+      provider_reload_snapshot: '\u91cd\u65b0\u52a0\u8f7d',
+      provider_loading: '\u52a0\u8f7d\u4e2d...',
+      provider_snapshot_missing: '\u672a\u627e\u5230\u8be5\u5e73\u53f0\u5feb\u7167\uff0c\u8bf7\u5148\u8fd0\u884c\u626b\u63cf\u3002',
+      provider_fetch_failed: '\u52a0\u8f7d\u5e73\u53f0\u5feb\u7167\u5931\u8d25\uff1a{error}',
+      provider_json_truncated: '\u5df2\u622a\u65ad {count} \u6761\uff0c\u5f53\u6570\u636e\u8fc7\u5927\u65f6\u5efa\u8bae\u6309\u9700\u5c55\u5f00\u3002',
+      provider_key_label: 'Key',
+      provider_requested_markets: '\u8bf7\u6c42\u76d8\u53e3',
+    });
 
     const SPORT_KEY_LABELS = {
       zh: {
@@ -2087,6 +2153,18 @@
       });
     });
 
+    if (providerDataList) {
+      providerDataList.addEventListener('click', (event) => {
+        const button = event.target instanceof Element
+          ? event.target.closest('button.provider-load-btn')
+          : null;
+        if (!button) return;
+        const providerKey = button.dataset.providerKey;
+        if (!providerKey) return;
+        loadProviderSnapshot(providerKey);
+      });
+    }
+
     function updateQuickActionState() {
       if (!quickActionButtons || !quickActionButtons.length) return;
       quickActionButtons.forEach((button) => {
@@ -2732,6 +2810,7 @@
       renderArbitrage();
       renderMiddles();
       renderPlusEv();
+      renderProviderData();
       renderPartialWarning(payload);
       if (payload) {
         applyScanStatus(payload.partial ? 'partial' : 'ready');
@@ -2739,6 +2818,272 @@
         applyScanStatus('error');
       }
       updateScanMeta(payload);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function getProviderSummaries() {
+      const providers = lastScanData?.custom_providers;
+      if (!providers || typeof providers !== 'object') return [];
+      return Object.values(providers)
+        .filter((item) => item && typeof item === 'object')
+        .filter((item) => {
+          const eventsMerged = Number(item.events_merged || 0);
+          const sportCount = Array.isArray(item.sports) ? item.sports.length : 0;
+          return Boolean(item.enabled) || eventsMerged > 0 || sportCount > 0;
+        })
+        .sort((left, right) => {
+          const leftEvents = Number(left?.events_merged || 0);
+          const rightEvents = Number(right?.events_merged || 0);
+          if (leftEvents !== rightEvents) return rightEvents - leftEvents;
+          return String(left?.name || left?.key || '').localeCompare(String(right?.name || right?.key || ''));
+        });
+    }
+
+    function providerStatusKey(providerSummary) {
+      if (!providerSummary || typeof providerSummary !== 'object') return 'provider_status_idle';
+      const sports = Array.isArray(providerSummary.sports) ? providerSummary.sports : [];
+      if (sports.some((entry) => entry && entry.error)) return 'provider_status_error';
+      if (Number(providerSummary.events_merged || 0) > 0) return 'provider_status_ready';
+      return providerSummary.enabled ? 'provider_status_idle' : 'provider_status_idle';
+    }
+
+    function renderProviderData() {
+      if (!providerDataList || !providerDataEmpty || !providerDataCount) return;
+      const summaries = getProviderSummaries();
+      providerDataCount.textContent = t('provider_data_count', { count: summaries.length });
+
+      if (!lastScanData || !summaries.length) {
+        providerDataList.innerHTML = '';
+        providerDataEmpty.textContent = t('provider_data_empty');
+        providerDataEmpty.classList.remove('hidden');
+        return;
+      }
+
+      const snapshotPaths = (lastScanData && typeof lastScanData.provider_snapshot_paths === 'object')
+        ? lastScanData.provider_snapshot_paths
+        : {};
+
+      providerDataEmpty.classList.add('hidden');
+      providerDataList.innerHTML = summaries.map((summary) => {
+        const key = String(summary.key || '');
+        const name = String(summary.name || key || '-');
+        const eventsMerged = Number(summary.events_merged || 0);
+        const sports = Array.isArray(summary.sports) ? summary.sports : [];
+        const errorCount = sports.filter((item) => item && item.error).length;
+        const statusKey = providerStatusKey(summary);
+        const statusClass = statusKey === 'provider_status_error'
+          ? 'provider-chip is-error'
+          : (statusKey === 'provider_status_ready' ? 'provider-chip is-ready' : 'provider-chip');
+        const snapshotExists = Boolean(snapshotPaths && snapshotPaths[key]);
+        const loadLabel = providerSnapshotCache[key] ? t('provider_reload_snapshot') : t('provider_load_snapshot');
+        const sportRows = sports.length
+          ? sports.map((entry) => {
+            const sportKey = String(entry?.sport_key || t('unknown'));
+            const sportLabel = translateSportKey(sportKey, sportKey);
+            const sportError = String(entry?.error || '').trim();
+            const eventsReturned = Number(entry?.events_returned || 0);
+            const marketList = Array.isArray(entry?.requested_markets) ? entry.requested_markets.join(', ') : '';
+            const marketHint = marketList
+              ? `<span class="provider-market-hint">${t('provider_requested_markets')}: ${escapeHtml(marketList)}</span>`
+              : '';
+            if (sportError) {
+              return `
+                <div class="provider-sport-row">
+                  <span class="provider-sport-key">${escapeHtml(sportLabel)}</span>
+                  <span class="provider-sport-error">${escapeHtml(sportError)}</span>
+                  ${marketHint}
+                </div>
+              `;
+            }
+            return `
+              <div class="provider-sport-row">
+                <span class="provider-sport-key">${escapeHtml(sportLabel)}</span>
+                <span class="provider-sport-value">${eventsReturned}</span>
+                ${marketHint}
+              </div>
+            `;
+          }).join('')
+          : `<div class="provider-sport-row"><span class="muted">${t('no_data')}</span></div>`;
+        const snapshotHint = snapshotExists ? '' : `<p class="muted provider-hint">${t('provider_snapshot_missing')}</p>`;
+        return `
+          <details class="provider-card" data-provider-key="${escapeHtml(key)}">
+            <summary>
+              <div class="provider-summary-title">
+                <strong>${escapeHtml(name)}</strong>
+                <span class="provider-summary-key">${t('provider_key_label')}: ${escapeHtml(key)}</span>
+              </div>
+              <div class="provider-summary-metrics">
+                <span class="provider-chip">${t('provider_events')}: ${eventsMerged}</span>
+                <span class="provider-chip">${t('provider_sports')}: ${sports.length}</span>
+                <span class="provider-chip">${t('provider_errors')}: ${errorCount}</span>
+                <span class="${statusClass}">${t(statusKey)}</span>
+              </div>
+            </summary>
+            <div class="provider-card-body">
+              <div class="provider-sports-grid">${sportRows}</div>
+              ${snapshotHint}
+              <div class="provider-actions">
+                <button type="button" class="secondary-btn provider-load-btn" data-provider-key="${escapeHtml(key)}"
+                  ${snapshotExists ? '' : 'disabled'}>${loadLabel}</button>
+                <span class="provider-load-status muted" data-provider-status="${escapeHtml(key)}"></span>
+              </div>
+              <div class="provider-json-shell" data-provider-json="${escapeHtml(key)}"></div>
+            </div>
+          </details>
+        `;
+      }).join('');
+
+      summaries.forEach((summary) => {
+        const key = String(summary.key || '');
+        if (!key || !providerSnapshotCache[key]) return;
+        mountProviderSnapshotTree(key, providerSnapshotCache[key]);
+      });
+    }
+
+    function providerStatusElement(providerKey) {
+      if (!providerDataList) return null;
+      return Array.from(providerDataList.querySelectorAll('[data-provider-status]'))
+        .find((el) => el.dataset.providerStatus === providerKey) || null;
+    }
+
+    function providerJsonElement(providerKey) {
+      if (!providerDataList) return null;
+      return Array.from(providerDataList.querySelectorAll('[data-provider-json]'))
+        .find((el) => el.dataset.providerJson === providerKey) || null;
+    }
+
+    function providerLoadButton(providerKey) {
+      if (!providerDataList) return null;
+      return Array.from(providerDataList.querySelectorAll('button[data-provider-key]'))
+        .find((el) => el.dataset.providerKey === providerKey) || null;
+    }
+
+    function setProviderStatusMessage(providerKey, message, isError = false) {
+      const statusEl = providerStatusElement(providerKey);
+      if (!statusEl) return;
+      statusEl.textContent = message || '';
+      statusEl.classList.toggle('error', Boolean(isError));
+    }
+
+    function providerPrimitiveClass(value) {
+      if (value === null) return 'is-null';
+      const valueType = typeof value;
+      if (valueType === 'string') return 'is-string';
+      if (valueType === 'number') return 'is-number';
+      if (valueType === 'boolean') return 'is-boolean';
+      return 'is-plain';
+    }
+
+    function formatProviderPrimitive(value) {
+      if (value === null) return 'null';
+      if (typeof value === 'string') return `"${value}"`;
+      return String(value);
+    }
+
+    function buildProviderJsonNode(value, key, depth) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'provider-json-item';
+
+      if (value === null || typeof value !== 'object') {
+        wrapper.classList.add('provider-json-leaf');
+        if (key !== null && key !== undefined) {
+          const keyEl = document.createElement('span');
+          keyEl.className = 'provider-json-key';
+          keyEl.textContent = `${key}: `;
+          wrapper.appendChild(keyEl);
+        }
+        const valueEl = document.createElement('span');
+        valueEl.className = `provider-json-value ${providerPrimitiveClass(value)}`;
+        valueEl.textContent = formatProviderPrimitive(value);
+        wrapper.appendChild(valueEl);
+        return wrapper;
+      }
+
+      const entries = Array.isArray(value)
+        ? value.map((item, index) => [String(index), item])
+        : Object.entries(value);
+
+      const details = document.createElement('details');
+      details.className = 'provider-json-node';
+      details.open = depth < 2;
+
+      const summary = document.createElement('summary');
+      if (key !== null && key !== undefined) {
+        const keyEl = document.createElement('span');
+        keyEl.className = 'provider-json-key';
+        keyEl.textContent = `${key}: `;
+        summary.appendChild(keyEl);
+      }
+      const typeEl = document.createElement('span');
+      typeEl.className = 'provider-json-type';
+      typeEl.textContent = Array.isArray(value) ? 'Array' : 'Object';
+      summary.appendChild(typeEl);
+      const countEl = document.createElement('span');
+      countEl.className = 'provider-json-count';
+      countEl.textContent = ` (${entries.length})`;
+      summary.appendChild(countEl);
+      details.appendChild(summary);
+
+      const children = document.createElement('div');
+      children.className = 'provider-json-children';
+      const visibleEntries = entries.slice(0, providerJsonChildLimit);
+      visibleEntries.forEach(([childKey, childValue]) => {
+        children.appendChild(buildProviderJsonNode(childValue, childKey, depth + 1));
+      });
+      if (entries.length > visibleEntries.length) {
+        const truncated = document.createElement('div');
+        truncated.className = 'provider-json-truncated';
+        truncated.textContent = t('provider_json_truncated', { count: entries.length - visibleEntries.length });
+        children.appendChild(truncated);
+      }
+      details.appendChild(children);
+      wrapper.appendChild(details);
+      return wrapper;
+    }
+
+    function mountProviderSnapshotTree(providerKey, snapshot) {
+      const container = providerJsonElement(providerKey);
+      if (!container) return;
+      container.innerHTML = '';
+      container.appendChild(buildProviderJsonNode(snapshot, null, 0));
+    }
+
+    async function loadProviderSnapshot(providerKey) {
+      if (!providerKey || providerSnapshotLoading.has(providerKey)) return;
+      const loadBtn = providerLoadButton(providerKey);
+      providerSnapshotLoading.add(providerKey);
+      if (loadBtn) loadBtn.disabled = true;
+      setProviderStatusMessage(providerKey, t('provider_loading'), false);
+      try {
+        const response = await fetch(`/provider-snapshots/${encodeURIComponent(providerKey)}`);
+        const payload = await response.json();
+        if (!response.ok || !payload || payload.success !== true) {
+          throw new Error(payload?.error || t('unknown_error'));
+        }
+        providerSnapshotCache[providerKey] = payload.snapshot;
+        mountProviderSnapshotTree(providerKey, payload.snapshot);
+        setProviderStatusMessage(providerKey, '');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error || t('unknown_error'));
+        setProviderStatusMessage(providerKey, t('provider_fetch_failed', { error: message }), true);
+      } finally {
+        providerSnapshotLoading.delete(providerKey);
+        const refreshBtn = providerLoadButton(providerKey);
+        if (refreshBtn) {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = providerSnapshotCache[providerKey]
+            ? t('provider_reload_snapshot')
+            : t('provider_load_snapshot');
+        }
+      }
     }
 
     function renderArbitrage() {
@@ -3982,22 +4327,34 @@
     }
 
     function setActiveTab(tab) {
-      activeTab = tab;
-      tabs.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tab));
-      arbitragePanel.classList.toggle('hidden', tab !== 'arbitrage');
-      middlesPanel.classList.toggle('hidden', tab !== 'middles');
-      plusEvPanel.classList.toggle('hidden', tab !== 'plus-ev');
-      if (arbitrageConfig) {
-        arbitrageConfig.classList.toggle('hidden', tab !== 'arbitrage');
+      const allowedTabs = new Set(['arbitrage', 'middles', 'plus-ev', 'providers', 'history']);
+      const normalizedTab = allowedTabs.has(tab) ? tab : 'arbitrage';
+      activeTab = normalizedTab;
+      tabs.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === normalizedTab));
+      arbitragePanel.classList.toggle('hidden', normalizedTab !== 'arbitrage');
+      middlesPanel.classList.toggle('hidden', normalizedTab !== 'middles');
+      plusEvPanel.classList.toggle('hidden', normalizedTab !== 'plus-ev');
+      if (providersPanel) {
+        providersPanel.classList.toggle('hidden', normalizedTab !== 'providers');
       }
-      middlesConfig.classList.toggle('hidden', tab !== 'middles');
-      plusEvConfig.classList.toggle('hidden', tab !== 'plus-ev');
-      if (tab === 'arbitrage') {
+      if (historyPanel) {
+        historyPanel.classList.toggle('hidden', normalizedTab !== 'history');
+      }
+      if (arbitrageConfig) {
+        arbitrageConfig.classList.toggle('hidden', normalizedTab !== 'arbitrage');
+      }
+      middlesConfig.classList.toggle('hidden', normalizedTab !== 'middles');
+      plusEvConfig.classList.toggle('hidden', normalizedTab !== 'plus-ev');
+      if (normalizedTab === 'arbitrage') {
         renderArbitrage();
-      } else if (tab === 'middles') {
+      } else if (normalizedTab === 'middles') {
         renderMiddles();
-      } else {
+      } else if (normalizedTab === 'plus-ev') {
         renderPlusEv();
+      } else if (normalizedTab === 'providers') {
+        renderProviderData();
+      } else if (normalizedTab === 'history' && typeof window.loadHistory === 'function') {
+        window.loadHistory();
       }
     }
 
@@ -4184,45 +4541,6 @@
       const historyEmpty = document.getElementById('history-empty');
       const historyTableCount = document.getElementById('history-table-count');
 
-      // Override the display logic for tabs to include History
-      const allTabs = document.querySelectorAll('.tab-btn');
-      const arbPanel = document.getElementById('arbitrage-panel');
-      const arbConfig = document.getElementById('arbitrage-config');
-      const midPanel = document.getElementById('middles-panel');
-      const midConfig = document.getElementById('middles-config');
-      const evPanel = document.getElementById('plus-ev-panel');
-      const evConfig = document.getElementById('plus-ev-config');
-
-      allTabs.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const tabId = e.target.dataset.tab;
-          allTabs.forEach(t => t.classList.remove('active'));
-          e.target.classList.add('active');
-
-          arbPanel?.classList.add('hidden');
-          arbConfig?.classList.add('hidden');
-          midPanel?.classList.add('hidden');
-          midConfig?.classList.add('hidden');
-          evPanel?.classList.add('hidden');
-          evConfig?.classList.add('hidden');
-          historyPanel?.classList.add('hidden');
-
-          if (tabId === 'arbitrage') {
-            arbPanel?.classList.remove('hidden');
-            arbConfig?.classList.remove('hidden');
-          } else if (tabId === 'middles') {
-            midPanel?.classList.remove('hidden');
-            midConfig?.classList.remove('hidden');
-          } else if (tabId === 'plus-ev') {
-            evPanel?.classList.remove('hidden');
-            evConfig?.classList.remove('hidden');
-          } else if (tabId === 'history') {
-            historyPanel?.classList.remove('hidden');
-            if (window.loadHistory) window.loadHistory();
-          }
-        });
-      });
-
       window.loadHistory = function loadHistory() {
         if (!refreshHistoryBtn) return;
         refreshHistoryBtn.disabled = true;
@@ -4294,7 +4612,11 @@
       }
 
       if (refreshHistoryBtn) {
-        refreshHistoryBtn.addEventListener('click', loadHistory);
+        refreshHistoryBtn.addEventListener('click', window.loadHistory);
+      }
+      const activeTabId = document.querySelector('.tab-btn.active')?.dataset?.tab;
+      if (activeTabId === 'history' && typeof window.loadHistory === 'function') {
+        window.loadHistory();
       }
     });
   </script>

@@ -1174,6 +1174,214 @@ body.modal-open .content {
   font-size: 0.9rem;
 }
 
+.provider-data-list {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.72rem;
+}
+
+.provider-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  overflow: hidden;
+}
+
+.provider-card > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  padding: 0.75rem 0.9rem;
+}
+
+.provider-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.provider-summary-title {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+}
+
+.provider-summary-title strong {
+  font-size: 0.96rem;
+}
+
+.provider-summary-key {
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.provider-summary-metrics {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  flex-wrap: wrap;
+}
+
+.provider-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  padding: 0.18rem 0.52rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--surface);
+}
+
+.provider-chip.is-ready {
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.provider-chip.is-error {
+  border-color: color-mix(in srgb, var(--error) 45%, transparent);
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+.provider-card-body {
+  border-top: 1px solid var(--border);
+  padding: 0.72rem 0.9rem 0.9rem;
+  display: grid;
+  gap: 0.66rem;
+}
+
+.provider-sports-grid {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.provider-sport-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 0.42rem 0.58rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem 0.6rem;
+  align-items: center;
+}
+
+.provider-sport-key {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.provider-sport-value {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.provider-sport-error {
+  font-size: 0.8rem;
+  color: var(--error);
+}
+
+.provider-market-hint {
+  grid-column: 1 / -1;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.provider-hint {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.provider-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.provider-load-status {
+  font-size: 0.8rem;
+}
+
+.provider-load-status.error {
+  color: var(--error);
+}
+
+.provider-json-shell {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 0.58rem 0.66rem;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.provider-json-item {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.provider-json-node {
+  margin: 0.12rem 0;
+}
+
+.provider-json-node > summary {
+  cursor: pointer;
+  color: var(--text-soft);
+}
+
+.provider-json-key {
+  color: var(--text);
+}
+
+.provider-json-type {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.provider-json-count {
+  color: var(--text-muted);
+}
+
+.provider-json-children {
+  margin-left: 1rem;
+  border-left: 1px dashed color-mix(in srgb, var(--text-muted) 38%, transparent);
+  padding-left: 0.65rem;
+}
+
+.provider-json-leaf {
+  margin: 0.08rem 0;
+}
+
+.provider-json-value.is-string {
+  color: var(--success);
+}
+
+.provider-json-value.is-number {
+  color: var(--accent-2);
+}
+
+.provider-json-value.is-boolean {
+  color: var(--warning);
+}
+
+.provider-json-value.is-null {
+  color: var(--text-muted);
+}
+
+.provider-json-truncated {
+  margin-top: 0.3rem;
+  color: var(--warning);
+}
+
 .hidden {
   display: none !important;
 }

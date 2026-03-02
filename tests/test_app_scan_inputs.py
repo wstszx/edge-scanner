@@ -63,6 +63,19 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertFalse(kwargs.get("all_markets"))
         self.assertFalse(kwargs.get("include_purebet"))
 
+    def test_scan_derives_include_providers_when_empty_list_is_sent(self) -> None:
+        with patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan:
+            response = self.client.post(
+                "/scan",
+                json={
+                    "bookmakers": ["SX Bet"],
+                    "includeProviders": [],
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        kwargs = mocked_run_scan.call_args.kwargs
+        self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
+
     def test_scan_saves_history_from_nested_result_shape(self) -> None:
         result_payload = {
             "success": True,

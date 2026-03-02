@@ -142,6 +142,9 @@ if not ENV_API_KEYS:
 ENV_ALL_MARKETS = _env_flag(os.getenv("ARBITRAGE_ALL_MARKETS"))
 ENV_SAVE_SCAN = _env_flag(os.getenv("SCAN_SAVE_ENABLED"))
 ENV_SAVE_DIR = os.getenv("SCAN_SAVE_DIR", str(Path("data") / "scans")).strip()
+ENV_PROVIDER_SNAPSHOT_DIR = os.getenv(
+    "CUSTOM_PROVIDER_SNAPSHOT_DIR", str(Path("data") / "provider_snapshots")
+).strip()
 
 
 def _should_save_scan(payload: dict) -> bool:
@@ -198,6 +201,16 @@ def _sanitize_scan_request(payload: dict) -> dict:
         elif isinstance(value, str) and value.strip():
             sanitized["apiKeys"] = "***redacted***"
     return sanitized
+
+
+def _provider_snapshot_path(provider_key: str) -> Optional[Path]:
+    if not isinstance(provider_key, str):
+        return None
+    token = re.sub(r"[^a-z0-9._-]+", "_", provider_key.strip().lower())
+    if not token:
+        return None
+    base_dir = Path(ENV_PROVIDER_SNAPSHOT_DIR)
+    return base_dir / f"{token}.json"
 
 
 def _extract_opportunity_list(payload: object) -> list[dict]:
@@ -347,7 +360,7 @@ def scan() -> tuple:
         ]
     else:
         include_providers_value = None
-    if include_providers_value is None and bookmakers_value:
+    if (include_providers_value is None or not include_providers_value) and bookmakers_value:
         derived = []
         seen = set()
         for book in bookmakers_value:
@@ -450,6 +463,38 @@ def history_stats() -> tuple:
         return jsonify({"success": True, **stats}), 200
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/provider-snapshots/<provider_key>", methods=["GET"])
+def provider_snapshot(provider_key: str) -> tuple:
+    snapshot_path = _provider_snapshot_path(provider_key)
+    if snapshot_path is None:
+        return jsonify({"success": False, "error": "Invalid provider key"}), 400
+    if not snapshot_path.is_file():
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": f"No snapshot found for provider '{provider_key}'",
+                }
+            ),
+            404,
+        )
+    try:
+        with snapshot_path.open("r", encoding="utf-8") as handle:
+            snapshot = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+    return (
+        jsonify(
+            {
+                "success": True,
+                "provider_key": provider_key,
+                "snapshot": snapshot,
+            }
+        ),
+        200,
+    )
 
 
 def _port_available(port: int) -> bool:
