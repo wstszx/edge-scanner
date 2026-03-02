@@ -722,6 +722,57 @@
               data.</div>
             <div id="provider-data-list" class="provider-data-list"></div>
           </section>
+          <section class="card results-card provider-match-card">
+            <div class="card-head">
+              <h3 data-i18n="provider_match_title">Cross-Provider Match Report</h3>
+              <div class="table-meta">
+                <span id="provider-match-count">0 matched clusters</span>
+                <button type="button" id="refresh-provider-match-btn" class="secondary-btn"
+                  data-i18n="refresh_btn">Refresh</button>
+              </div>
+            </div>
+            <p class="helper" data-i18n="provider_match_helper">Shows matched games across providers based on teams and
+              kickoff window.</p>
+            <div id="provider-match-empty" class="empty" data-i18n="provider_match_empty">Run a scan to load
+              cross-provider match data.</div>
+            <div id="provider-match-content" class="hidden">
+              <div id="provider-match-summary" class="provider-match-summary"></div>
+              <div class="table-scroll">
+                <table id="provider-match-table">
+                  <thead>
+                    <tr>
+                      <th data-i18n="provider_match_col_sport">Sport</th>
+                      <th data-i18n="provider_match_col_time">Start (UTC)</th>
+                      <th data-i18n="provider_match_col_pair">Pair</th>
+                      <th data-i18n="provider_match_col_providers">Providers</th>
+                      <th data-i18n="provider_match_col_events">Events</th>
+                      <th data-i18n="provider_match_col_markets">Markets</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+              <div class="provider-single-head">
+                <h4 data-i18n="provider_match_single_title">Single-Provider Samples</h4>
+                <span id="provider-single-count">0 samples</span>
+              </div>
+              <div class="table-scroll">
+                <table id="provider-single-table">
+                  <thead>
+                    <tr>
+                      <th data-i18n="provider_match_col_sport">Sport</th>
+                      <th data-i18n="provider_match_col_time">Start (UTC)</th>
+                      <th data-i18n="provider_match_col_provider">Provider</th>
+                      <th data-i18n="provider_match_col_pair">Pair</th>
+                      <th data-i18n="provider_match_col_events">Event ID</th>
+                      <th data-i18n="provider_match_col_markets">Markets</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
         </section>
 
         <section id="history-panel" class="hidden">
@@ -896,6 +947,14 @@
     const providerDataCount = document.getElementById('provider-data-count');
     const providerDataEmpty = document.getElementById('provider-data-empty');
     const providerDataList = document.getElementById('provider-data-list');
+    const providerMatchCount = document.getElementById('provider-match-count');
+    const providerMatchEmpty = document.getElementById('provider-match-empty');
+    const providerMatchContent = document.getElementById('provider-match-content');
+    const providerMatchSummary = document.getElementById('provider-match-summary');
+    const providerMatchTableBody = document.querySelector('#provider-match-table tbody');
+    const providerSingleCount = document.getElementById('provider-single-count');
+    const providerSingleTableBody = document.querySelector('#provider-single-table tbody');
+    const refreshProviderMatchBtn = document.getElementById('refresh-provider-match-btn');
     const middlesConfig = document.getElementById('middles-config');
     const plusEvConfig = document.getElementById('plus-ev-config');
     const minGapInput = document.getElementById('min-gap-input');
@@ -975,6 +1034,8 @@
     const providerSnapshotCache = {};
     const providerSnapshotLoading = new Set();
     const providerJsonChildLimit = 200;
+    let crossProviderReportCache = null;
+    let crossProviderReportLoading = false;
 
     const TRANSLATIONS = {
       en: {
@@ -1058,6 +1119,27 @@
         provider_json_truncated: '{count} more entries truncated.',
         provider_key_label: 'Key',
         provider_requested_markets: 'Requested Markets',
+        provider_match_title: 'Cross-Provider Match Report',
+        provider_match_helper: 'Shows matched games across providers based on teams and kickoff window.',
+        provider_match_empty: 'Run a scan to load cross-provider match data.',
+        provider_match_count: '{count} matched clusters',
+        provider_match_single_count: '{count} samples',
+        provider_match_overlaps: 'Overlaps',
+        provider_match_total_clusters: 'Clusters',
+        provider_match_raw_records: 'Raw records',
+        provider_match_tolerance: 'Tolerance {minutes}m',
+        provider_match_col_sport: 'Sport',
+        provider_match_col_time: 'Start (UTC)',
+        provider_match_col_pair: 'Pair',
+        provider_match_col_providers: 'Providers',
+        provider_match_col_provider: 'Provider',
+        provider_match_col_events: 'Events',
+        provider_match_col_markets: 'Markets',
+        provider_match_single_title: 'Single-Provider Samples',
+        provider_match_no_overlaps: 'No overlap clusters found in this scan.',
+        provider_match_no_single: 'No single-provider samples to show.',
+        provider_match_loading: 'Loading cross-provider report...',
+        provider_match_fetch_failed: 'Failed to load cross-provider report: {error}',
 
         tab_history: '历史',
         history_log_open: '扫描历史',
@@ -1492,6 +1574,27 @@
       provider_json_truncated: '\u5df2\u622a\u65ad {count} \u6761\uff0c\u5f53\u6570\u636e\u8fc7\u5927\u65f6\u5efa\u8bae\u6309\u9700\u5c55\u5f00\u3002',
       provider_key_label: 'Key',
       provider_requested_markets: '\u8bf7\u6c42\u76d8\u53e3',
+      provider_match_title: '\u8de8\u5e73\u53f0\u6bd4\u8d5b\u5339\u914d\u62a5\u544a',
+      provider_match_helper: '\u6839\u636e\u961f\u540d\u4e0e\u5f00\u8d5b\u65f6\u95f4\u7a97\u53e3\u5c55\u793a\u591a\u5e73\u53f0\u5339\u914d\u7684\u6bd4\u8d5b\u3002',
+      provider_match_empty: '\u8bf7\u5148\u8fd0\u884c\u626b\u63cf\u4ee5\u751f\u6210\u8de8\u5e73\u53f0\u5339\u914d\u6570\u636e\u3002',
+      provider_match_count: '\u5339\u914d\u7c07 {count}',
+      provider_match_single_count: '\u6837\u672c {count}',
+      provider_match_overlaps: '\u91cd\u53e0\u7c07',
+      provider_match_total_clusters: '\u603b\u7c07\u6570',
+      provider_match_raw_records: '\u539f\u59cb\u8bb0\u5f55',
+      provider_match_tolerance: '\u5bb9\u5dee {minutes}\u5206\u949f',
+      provider_match_col_sport: '\u9879\u76ee',
+      provider_match_col_time: '\u5f00\u8d5b\u65f6\u95f4(UTC)',
+      provider_match_col_pair: '\u5bf9\u9635',
+      provider_match_col_providers: '\u5e73\u53f0',
+      provider_match_col_provider: '\u5e73\u53f0',
+      provider_match_col_events: '\u8d5b\u4e8b',
+      provider_match_col_markets: '\u76d8\u53e3',
+      provider_match_single_title: '\u5355\u5e73\u53f0\u6837\u672c',
+      provider_match_no_overlaps: '\u672c\u6b21\u626b\u63cf\u6ca1\u6709\u53d1\u73b0\u8de8\u5e73\u53f0\u91cd\u53e0\u7c07\u3002',
+      provider_match_no_single: '\u6682\u65e0\u5355\u5e73\u53f0\u6837\u672c\u3002',
+      provider_match_loading: '\u6b63\u5728\u52a0\u8f7d\u8de8\u5e73\u53f0\u62a5\u544a...',
+      provider_match_fetch_failed: '\u52a0\u8f7d\u8de8\u5e73\u53f0\u62a5\u544a\u5931\u8d25\uff1a{error}',
     });
 
     const SPORT_KEY_LABELS = {
@@ -1614,6 +1717,7 @@
       }
       renderPartialWarning(lastScanData);
       renderArbCalculator();
+      renderCrossProviderReport(crossProviderReportCache);
     }
 
     function setLanguage(nextLang) {
@@ -2162,6 +2266,12 @@
         const providerKey = button.dataset.providerKey;
         if (!providerKey) return;
         loadProviderSnapshot(providerKey);
+      });
+    }
+
+    if (refreshProviderMatchBtn) {
+      refreshProviderMatchBtn.addEventListener('click', () => {
+        loadCrossProviderReport(true);
       });
     }
 
@@ -2811,6 +2921,13 @@
       renderMiddles();
       renderPlusEv();
       renderProviderData();
+      if (payload && payload.cross_provider_match_report_path) {
+        crossProviderReportCache = null;
+        loadCrossProviderReport(true);
+      } else {
+        crossProviderReportCache = null;
+        renderCrossProviderReport(null);
+      }
       renderPartialWarning(payload);
       if (payload) {
         applyScanStatus(payload.partial ? 'partial' : 'ready');
@@ -3083,6 +3200,163 @@
             ? t('provider_reload_snapshot')
             : t('provider_load_snapshot');
         }
+      }
+    }
+
+    function formatProviderPair(value) {
+      const raw = String(value || '').trim();
+      if (!raw) return t('unknown');
+      return raw.replace(/\s+/g, ' ');
+    }
+
+    function renderCrossProviderReport(report, errorMessage = '') {
+      if (
+        !providerMatchCount ||
+        !providerMatchEmpty ||
+        !providerMatchContent ||
+        !providerMatchSummary ||
+        !providerMatchTableBody ||
+        !providerSingleCount ||
+        !providerSingleTableBody
+      ) {
+        return;
+      }
+      if (!report || typeof report !== 'object') {
+        providerMatchCount.textContent = t('provider_match_count', { count: 0 });
+        providerSingleCount.textContent = t('provider_match_single_count', { count: 0 });
+        providerMatchSummary.innerHTML = '';
+        providerMatchTableBody.innerHTML = '';
+        providerSingleTableBody.innerHTML = '';
+        providerMatchContent.classList.add('hidden');
+        providerMatchEmpty.textContent = errorMessage
+          ? t('provider_match_fetch_failed', { error: errorMessage })
+          : t('provider_match_empty');
+        providerMatchEmpty.classList.remove('hidden');
+        return;
+      }
+
+      const summary = report.summary && typeof report.summary === 'object' ? report.summary : {};
+      const clusters = Array.isArray(report.clusters) ? report.clusters : [];
+      const singles = Array.isArray(report.single_provider_samples) ? report.single_provider_samples : [];
+      const overlapCount = Number(summary.overlap_clusters ?? clusters.length ?? 0);
+      const totalClusters = Number(summary.total_match_clusters ?? 0);
+      const totalRawRecords = Number(summary.total_raw_records ?? 0);
+      const toleranceMinutes = Number(summary.tolerance_minutes ?? 0);
+
+      providerMatchCount.textContent = t('provider_match_count', { count: clusters.length });
+      providerSingleCount.textContent = t('provider_match_single_count', { count: singles.length });
+      providerMatchSummary.innerHTML = `
+        <span class="provider-chip is-ready">${t('provider_match_overlaps')}: ${overlapCount}</span>
+        <span class="provider-chip">${t('provider_match_total_clusters')}: ${totalClusters}</span>
+        <span class="provider-chip">${t('provider_match_raw_records')}: ${totalRawRecords}</span>
+        <span class="provider-chip">${t('provider_match_tolerance', { minutes: toleranceMinutes })}</span>
+      `;
+
+      if (clusters.length) {
+        providerMatchTableBody.innerHTML = clusters.map((cluster) => {
+          const sportKey = String(cluster?.sport_key || '');
+          const sportLabel = translateSportKey(sportKey, sportKey || t('unknown'));
+          const startUtc = formatDateTime(cluster?.representative_time_utc);
+          const pairText = formatProviderPair(cluster?.pair_norm);
+          const providers = Array.isArray(cluster?.providers) ? cluster.providers : [];
+          const events = Array.isArray(cluster?.events) ? cluster.events : [];
+          const providerText = providers.length ? providers.join(', ') : '-';
+          const eventsText = events.length
+            ? events.map((entry) => `${entry?.provider || '-'}:${entry?.event_id || '-'}`).join(' | ')
+            : '-';
+          const marketsText = events.length
+            ? events.map((entry) => `${entry?.provider || '-'}:${entry?.markets_count ?? '-'}`).join(' | ')
+            : '-';
+          return `
+            <tr>
+              <td>${escapeHtml(sportLabel)}</td>
+              <td>${escapeHtml(startUtc)}</td>
+              <td>${escapeHtml(pairText)}</td>
+              <td>${escapeHtml(providerText)}</td>
+              <td>${escapeHtml(eventsText)}</td>
+              <td>${escapeHtml(marketsText)}</td>
+            </tr>
+          `;
+        }).join('');
+      } else {
+        providerMatchTableBody.innerHTML = `
+          <tr>
+            <td colspan="6">${escapeHtml(t('provider_match_no_overlaps'))}</td>
+          </tr>
+        `;
+      }
+
+      if (singles.length) {
+        providerSingleTableBody.innerHTML = singles.map((entry) => {
+          const sportKey = String(entry?.sport_key || '');
+          const sportLabel = translateSportKey(sportKey, sportKey || t('unknown'));
+          const startUtc = formatDateTime(entry?.commence_time);
+          const provider = String(entry?.provider || '-');
+          const pairText = formatProviderPair(entry?.pair_norm);
+          const eventId = String(entry?.event_id || '-');
+          const marketsCount = String(entry?.markets_count ?? '-');
+          return `
+            <tr>
+              <td>${escapeHtml(sportLabel)}</td>
+              <td>${escapeHtml(startUtc)}</td>
+              <td>${escapeHtml(provider)}</td>
+              <td>${escapeHtml(pairText)}</td>
+              <td>${escapeHtml(eventId)}</td>
+              <td>${escapeHtml(marketsCount)}</td>
+            </tr>
+          `;
+        }).join('');
+      } else {
+        providerSingleTableBody.innerHTML = `
+          <tr>
+            <td colspan="6">${escapeHtml(t('provider_match_no_single'))}</td>
+          </tr>
+        `;
+      }
+
+      providerMatchEmpty.classList.add('hidden');
+      providerMatchContent.classList.remove('hidden');
+    }
+
+    async function loadCrossProviderReport(forceReload = false) {
+      if (crossProviderReportLoading) return;
+      if (!forceReload && crossProviderReportCache) {
+        renderCrossProviderReport(crossProviderReportCache);
+        return;
+      }
+      const hasReportPath = Boolean(lastScanData?.cross_provider_match_report_path);
+      if (!hasReportPath && !forceReload) {
+        renderCrossProviderReport(null);
+        return;
+      }
+
+      crossProviderReportLoading = true;
+      if (refreshProviderMatchBtn) refreshProviderMatchBtn.disabled = true;
+      if (providerMatchEmpty && !crossProviderReportCache) {
+        providerMatchEmpty.textContent = t('provider_match_loading');
+        providerMatchEmpty.classList.remove('hidden');
+      }
+      if (providerMatchContent && !crossProviderReportCache) {
+        providerMatchContent.classList.add('hidden');
+      }
+      try {
+        const response = await fetch('/cross-provider-report');
+        const payload = await response.json();
+        if (!response.ok || !payload || payload.success !== true) {
+          throw new Error(payload?.error || t('unknown_error'));
+        }
+        crossProviderReportCache = payload.report;
+        renderCrossProviderReport(crossProviderReportCache);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error || t('unknown_error'));
+        if (crossProviderReportCache) {
+          renderCrossProviderReport(crossProviderReportCache);
+        } else {
+          renderCrossProviderReport(null, message);
+        }
+      } finally {
+        crossProviderReportLoading = false;
+        if (refreshProviderMatchBtn) refreshProviderMatchBtn.disabled = false;
       }
     }
 
@@ -4353,6 +4627,11 @@
         renderPlusEv();
       } else if (normalizedTab === 'providers') {
         renderProviderData();
+        if (crossProviderReportCache) {
+          renderCrossProviderReport(crossProviderReportCache);
+        } else {
+          loadCrossProviderReport(false);
+        }
       } else if (normalizedTab === 'history' && typeof window.loadHistory === 'function') {
         window.loadHistory();
       }

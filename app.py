@@ -145,6 +145,9 @@ ENV_SAVE_DIR = os.getenv("SCAN_SAVE_DIR", str(Path("data") / "scans")).strip()
 ENV_PROVIDER_SNAPSHOT_DIR = os.getenv(
     "CUSTOM_PROVIDER_SNAPSHOT_DIR", str(Path("data") / "provider_snapshots")
 ).strip()
+ENV_CROSS_PROVIDER_REPORT_FILENAME = os.getenv(
+    "CROSS_PROVIDER_MATCH_REPORT_FILENAME", "cross_provider_match_report.json"
+).strip()
 
 
 def _should_save_scan(payload: dict) -> bool:
@@ -211,6 +214,20 @@ def _provider_snapshot_path(provider_key: str) -> Optional[Path]:
         return None
     base_dir = Path(ENV_PROVIDER_SNAPSHOT_DIR)
     return base_dir / f"{token}.json"
+
+
+def _cross_provider_report_path() -> Optional[Path]:
+    token = re.sub(
+        r"[^a-z0-9._-]+",
+        "_",
+        str(ENV_CROSS_PROVIDER_REPORT_FILENAME or "").strip().lower(),
+    )
+    if not token:
+        token = "cross_provider_match_report.json"
+    if not token.endswith(".json"):
+        token = f"{token}.json"
+    base_dir = Path(ENV_PROVIDER_SNAPSHOT_DIR)
+    return base_dir / token
 
 
 def _extract_opportunity_list(payload: object) -> list[dict]:
@@ -495,6 +512,29 @@ def provider_snapshot(provider_key: str) -> tuple:
         ),
         200,
     )
+
+
+@app.route("/cross-provider-report", methods=["GET"])
+def cross_provider_report() -> tuple:
+    report_path = _cross_provider_report_path()
+    if report_path is None:
+        return jsonify({"success": False, "error": "Invalid report path"}), 400
+    if not report_path.is_file():
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "Cross-provider report file not found",
+                }
+            ),
+            404,
+        )
+    try:
+        with report_path.open("r", encoding="utf-8") as handle:
+            report = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+    return jsonify({"success": True, "report": report}), 200
 
 
 def _port_available(port: int) -> bool:
