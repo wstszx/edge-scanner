@@ -558,8 +558,8 @@ def _event_matches_sport(
     return True
 
 
-def _best_back_prices(entry: Optional[dict], back_side: Optional[str] = None) -> Dict[str, float]:
-    best: Dict[str, float] = {}
+def _best_back_prices(entry: Optional[dict], back_side: Optional[str] = None) -> Dict[str, dict]:
+    best: Dict[str, dict] = {}
     if not isinstance(entry, dict):
         return best
     prices = entry.get("prices")
@@ -573,10 +573,20 @@ def _best_back_prices(entry: Optional[dict], back_side: Optional[str] = None) ->
             continue
         outcome_id = _normalize_text(item.get("outcomeId"))
         price = _safe_float(item.get("price"))
+        amount = _safe_float(item.get("amount"))
         if not outcome_id or price is None or price <= 1:
             continue
-        if outcome_id not in best or price > best[outcome_id]:
-            best[outcome_id] = price
+        existing = best.get(outcome_id)
+        existing_price = _safe_float(existing.get("price")) if isinstance(existing, dict) else None
+        existing_amount = _safe_float(existing.get("amount")) if isinstance(existing, dict) else None
+        is_better_price = existing_price is None or price > existing_price
+        is_tie_better_size = (
+            existing_price is not None
+            and abs(price - existing_price) <= 1e-12
+            and (amount or 0.0) > (existing_amount or 0.0)
+        )
+        if is_better_price or is_tie_better_size:
+            best[outcome_id] = {"price": float(price), "amount": amount}
     return best
 
 
@@ -1032,13 +1042,18 @@ def fetch_events(
             outcomes = []
             for outcome_id in _doc_ref_ids(market.get("marketOutcomes")):
                 outcome = outcomes_by_id.get(outcome_id)
-                price = prices_by_outcome.get(outcome_id)
+                price_row = prices_by_outcome.get(outcome_id) if isinstance(prices_by_outcome, dict) else None
+                price = _safe_float(price_row.get("price")) if isinstance(price_row, dict) else None
                 if not isinstance(outcome, dict) or price is None or price <= 1:
                     continue
                 title = _clean_team_name(outcome.get("title"))
                 if not title:
                     continue
-                outcomes.append({"title": title, "price": round(float(price), 6)})
+                stake_value = _safe_float(price_row.get("amount")) if isinstance(price_row, dict) else None
+                row = {"title": title, "price": round(float(price), 6)}
+                if stake_value is not None and stake_value > 0:
+                    row["stake"] = round(float(stake_value), 6)
+                outcomes.append(row)
 
             if len(outcomes) < 2:
                 continue
@@ -1055,16 +1070,32 @@ def fetch_events(
                                 h2h = {
                                     "key": target_h2h_key,
                                     "outcomes": [
-                                        {"name": home_team, "price": home_out["price"]},
-                                        {"name": away_team, "price": away_out["price"]},
+                                        {
+                                            "name": home_team,
+                                            "price": home_out["price"],
+                                            **({"stake": home_out["stake"]} if _safe_float(home_out.get("stake")) else {}),
+                                        },
+                                        {
+                                            "name": away_team,
+                                            "price": away_out["price"],
+                                            **({"stake": away_out["stake"]} if _safe_float(away_out.get("stake")) else {}),
+                                        },
                                     ],
                                 }
                             else:
                                 h2h = {
                                     "key": target_h2h_key,
                                     "outcomes": [
-                                        {"name": outcomes[0]["title"], "price": outcomes[0]["price"]},
-                                        {"name": outcomes[1]["title"], "price": outcomes[1]["price"]},
+                                        {
+                                            "name": outcomes[0]["title"],
+                                            "price": outcomes[0]["price"],
+                                            **({"stake": outcomes[0]["stake"]} if _safe_float(outcomes[0].get("stake")) else {}),
+                                        },
+                                        {
+                                            "name": outcomes[1]["title"],
+                                            "price": outcomes[1]["price"],
+                                            **({"stake": outcomes[1]["stake"]} if _safe_float(outcomes[1].get("stake")) else {}),
+                                        },
                                     ],
                                 }
                             if best_h2h is None or _score_market(h2h) > _score_market(best_h2h):
@@ -1084,6 +1115,7 @@ def fetch_events(
                             "name": name or (home_team if idx == 0 else away_team),
                             "price": outcome["price"],
                             "point": round(float(point), 6),
+                            **({"stake": outcome["stake"]} if _safe_float(outcome.get("stake")) else {}),
                         }
                     )
                 if len(spread_outcomes) == 2:
@@ -1108,6 +1140,7 @@ def fetch_events(
                         "name": side,
                         "price": outcome["price"],
                         "point": round(float(point), 6),
+                        **({"stake": outcome["stake"]} if _safe_float(outcome.get("stake")) else {}),
                     }
                 if "Over" in totals and "Under" in totals:
                     if abs(float(totals["Over"]["point"]) - float(totals["Under"]["point"])) <= 1e-6:
@@ -1141,6 +1174,8 @@ def fetch_events(
                             "name": outcome["title"],
                             "price": outcome["price"],
                         }
+                        if _safe_float(outcome.get("stake")):
+                            row["stake"] = outcome["stake"]
                         _, title_point = _parse_spread_title(outcome["title"])
                         point = title_point
                         if point is None and value_a is not None and value_b is not None:

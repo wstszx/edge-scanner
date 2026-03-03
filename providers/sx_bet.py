@@ -24,6 +24,8 @@ SX_BET_RETRIES_RAW = os.getenv("SX_BET_RETRIES", "2").strip()
 SX_BET_RETRY_BACKOFF_RAW = os.getenv("SX_BET_RETRY_BACKOFF", "0.5").strip()
 SX_BET_PAGE_TTL_RAW = os.getenv("SX_BET_PAGE_CACHE_TTL", "45").strip()
 SX_BET_ODDS_CACHE_TTL_RAW = os.getenv("SX_BET_ODDS_CACHE_TTL", "30").strip()
+SX_BET_ORDER_CACHE_TTL_RAW = os.getenv("SX_BET_ORDER_CACHE_TTL", "20").strip()
+SX_BET_BASE_TOKEN_DECIMALS_RAW = os.getenv("SX_BET_BASE_TOKEN_DECIMALS", "6").strip()
 SX_BET_USER_AGENT = os.getenv(
     "SX_BET_USER_AGENT",
     (
@@ -71,6 +73,10 @@ UPCOMING_CACHE: Dict[str, object] = {
     "entries": {},
 }
 ODDS_CACHE: Dict[str, object] = {
+    "expires_at": 0.0,
+    "entries": {},
+}
+ORDERS_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
     "entries": {},
 }
@@ -214,6 +220,35 @@ def _safe_float(value) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _bool_or_none(value: object) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    token = _normalize_text(value).lower()
+    if token in {"true", "1", "yes", "y"}:
+        return True
+    if token in {"false", "0", "no", "n"}:
+        return False
+    return None
+
+
+def _token_amount_from_raw(value: object, decimals: int) -> Optional[float]:
+    text = _normalize_text(value)
+    if not text:
+        return None
+    if re.fullmatch(r"[-+]?\d+", text):
+        try:
+            integer_value = int(text)
+        except ValueError:
+            return None
+        scale = 10 ** max(0, int(decimals))
+        if scale <= 1:
+            return float(integer_value)
+        return float(integer_value) / float(scale)
+    return _safe_float(text)
 
 
 def _normalize_token(value: object) -> str:
@@ -666,6 +701,24 @@ def _chunked(values: Sequence[str], size: int) -> List[List[str]]:
     return out
 
 
+def _extract_orders_payload(payload: object) -> List[dict]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        nested_orders = data.get("orders")
+        if isinstance(nested_orders, list):
+            return [item for item in nested_orders if isinstance(item, dict)]
+    root_orders = payload.get("orders")
+    if isinstance(root_orders, list):
+        return [item for item in root_orders if isinstance(item, dict)]
+    return []
+
+
 def _load_upcoming_fixtures(
     sport_id: int,
     base_token: str,
@@ -787,6 +840,100 @@ def _load_best_odds_map(
     return odds_map, retries_used_total, lookup_meta
 
 
+def _load_best_stake_map(
+    market_hashes: Sequence[str],
+    base_token: str,
+    retries: int,
+    backoff_seconds: float,
+    base_token_decimals: int,
+) -> Tuple[Dict[str, Tuple[Optional[float], Optional[float]]], int, dict]:
+    ttl = _int_or_default(SX_BET_ORDER_CACHE_TTL_RAW, 20, min_value=0)
+    now = time.time()
+    cache_valid = ttl > 0 and now < float(ORDERS_CACHE.get("expires_at", 0.0))
+    cache_entries = ORDERS_CACHE.get("entries") if isinstance(ORDERS_CACHE.get("entries"), dict) else {}
+
+    stake_map: Dict[str, Tuple[Optional[float], Optional[float]]] = {}
+    unresolved: List[str] = []
+    for market_hash in market_hashes:
+        cache_key = f"{base_token}:{market_hash}"
+        cached = cache_entries.get(cache_key) if cache_valid else None
+        if isinstance(cached, (list, tuple)) and len(cached) >= 2:
+            stake_one = _safe_float(cached[0])
+            stake_two = _safe_float(cached[1])
+            stake_map[market_hash] = (
+                round(float(stake_one), 6) if stake_one is not None and stake_one > 0 else None,
+                round(float(stake_two), 6) if stake_two is not None and stake_two > 0 else None,
+            )
+        else:
+            unresolved.append(market_hash)
+
+    retries_used_total = 0
+    lookup_meta = {
+        "orders_rows": 0,
+        "orders_missing_market_hash": 0,
+    }
+    best_by_market: Dict[str, Dict[int, Dict[str, Optional[float]]]] = {}
+    for chunk in _chunked(unresolved, 100):
+        payload, retries_used = _request_json(
+            "orders",
+            params={"marketHashes": ",".join(chunk), "baseToken": base_token},
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+        )
+        retries_used_total += retries_used
+        for order in _extract_orders_payload(payload):
+            lookup_meta["orders_rows"] += 1
+            market_hash = _normalize_text(order.get("marketHash"))
+            if not market_hash:
+                lookup_meta["orders_missing_market_hash"] += 1
+                continue
+            maker_outcome_one = _bool_or_none(order.get("isMakerBettingOutcomeOne"))
+            if maker_outcome_one is None:
+                continue
+            total_size = _token_amount_from_raw(order.get("totalBetSize"), base_token_decimals)
+            if total_size is None or total_size <= 0:
+                continue
+            filled_size = _token_amount_from_raw(order.get("fillAmount"), base_token_decimals) or 0.0
+            remaining_size = max(0.0, float(total_size) - float(filled_size))
+            if remaining_size <= 0:
+                continue
+            odds = _moneyline_decimal_from_percentage(order.get("percentageOdds"))
+            if odds is None or odds <= 1:
+                continue
+            side = 1 if maker_outcome_one else 2
+            market_state = best_by_market.setdefault(
+                market_hash,
+                {
+                    1: {"best_odds": None, "stake": 0.0},
+                    2: {"best_odds": None, "stake": 0.0},
+                },
+            )
+            side_state = market_state[side]
+            best_odds = _safe_float(side_state.get("best_odds"))
+            if best_odds is None or odds > best_odds + 1e-9:
+                side_state["best_odds"] = float(odds)
+                side_state["stake"] = float(remaining_size)
+            elif abs(odds - best_odds) <= 1e-9:
+                previous_stake = _safe_float(side_state.get("stake")) or 0.0
+                side_state["stake"] = previous_stake + float(remaining_size)
+
+    for market_hash in unresolved:
+        market_state = best_by_market.get(market_hash) if isinstance(best_by_market.get(market_hash), dict) else {}
+        side_one_state = market_state.get(1) if isinstance(market_state, dict) else {}
+        side_two_state = market_state.get(2) if isinstance(market_state, dict) else {}
+        stake_one_raw = _safe_float(side_one_state.get("stake")) if isinstance(side_one_state, dict) else None
+        stake_two_raw = _safe_float(side_two_state.get("stake")) if isinstance(side_two_state, dict) else None
+        stake_one = round(float(stake_one_raw), 6) if stake_one_raw is not None and stake_one_raw > 0 else None
+        stake_two = round(float(stake_two_raw), 6) if stake_two_raw is not None and stake_two_raw > 0 else None
+        stake_pair = (stake_one, stake_two)
+        stake_map[market_hash] = stake_pair
+        cache_entries[f"{base_token}:{market_hash}"] = stake_pair
+
+    ORDERS_CACHE["entries"] = cache_entries
+    ORDERS_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+    return stake_map, retries_used_total, lookup_meta
+
+
 def fetch_events(
     sport_key: str,
     markets: Sequence[str],
@@ -816,6 +963,13 @@ def fetch_events(
         "odds_lookup_null_entries": 0,
         "odds_lookup_sample_missing_hashes": [],
         "odds_lookup_sample_null_hashes": [],
+        "orders_lookup_requested": 0,
+        "orders_lookup_with_any_stake": 0,
+        "orders_lookup_without_stake": 0,
+        "orders_lookup_response_count": 0,
+        "orders_lookup_missing_hash_entries": 0,
+        "orders_lookup_missing_market_hash_rows": 0,
+        "orders_lookup_sample_missing_hashes": [],
         "dropped_missing_odds_count": 0,
         "dropped_invalid_odds_count": 0,
         "sample_dropped_market_hashes": [],
@@ -849,6 +1003,7 @@ def fetch_events(
 
     retries = _int_or_default(SX_BET_RETRIES_RAW, 2, min_value=0)
     backoff = _float_or_default(SX_BET_RETRY_BACKOFF_RAW, 0.5, min_value=0.0)
+    base_token_decimals = _int_or_default(SX_BET_BASE_TOKEN_DECIMALS_RAW, 6, min_value=0)
     manual_league_map = _parse_manual_league_map()
 
     fixtures, meta = _load_upcoming_fixtures(
@@ -864,6 +1019,7 @@ def fetch_events(
 
     candidates: List[dict] = []
     unresolved_hashes: List[str] = []
+    candidate_hashes: List[str] = []
     for fixture in fixtures:
         if not _fixture_matches_sport(sport_key, fixture, manual_league_map):
             stats["fixtures_filtered_out_by_league_count"] += 1
@@ -901,6 +1057,8 @@ def fetch_events(
             stats["fixtures_market_found_count"] += 1
             stats["candidates_total_count"] += 1
             market_hash = normalized_market.get("market_hash")
+            if market_hash:
+                candidate_hashes.append(str(market_hash))
             if (
                 (normalized_market.get("odds_one") is None or normalized_market.get("odds_two") is None)
                 and market_hash
@@ -956,6 +1114,37 @@ def fetch_events(
             stats.get("odds_lookup_resolved", 0) or 0
         )
 
+    stake_map: Dict[str, Tuple[Optional[float], Optional[float]]] = {}
+    if candidate_hashes:
+        unique_hashes = list(dict.fromkeys(candidate_hashes))
+        stats["orders_lookup_requested"] = len(unique_hashes)
+        stake_map, retries_used, order_meta = _load_best_stake_map(
+            market_hashes=unique_hashes,
+            base_token=base_token,
+            retries=retries,
+            backoff_seconds=backoff,
+            base_token_decimals=base_token_decimals,
+        )
+        stats["retries_used"] += retries_used
+        stats["orders_lookup_response_count"] = int(order_meta.get("orders_rows", 0) or 0)
+        stats["orders_lookup_missing_market_hash_rows"] = int(
+            order_meta.get("orders_missing_market_hash", 0) or 0
+        )
+        missing_hashes = [market_hash for market_hash in unique_hashes if market_hash not in stake_map]
+        stats["orders_lookup_missing_hash_entries"] = len(missing_hashes)
+        stats["orders_lookup_sample_missing_hashes"] = missing_hashes[:5]
+        with_any_stake = sum(
+            1
+            for market_hash in unique_hashes
+            if market_hash in stake_map
+            and (
+                stake_map[market_hash][0] is not None
+                or stake_map[market_hash][1] is not None
+            )
+        )
+        stats["orders_lookup_with_any_stake"] = with_any_stake
+        stats["orders_lookup_without_stake"] = len(unique_hashes) - with_any_stake
+
     events_by_id: Dict[str, dict] = {}
     for candidate in candidates:
         odds_one = candidate.get("odds_one")
@@ -975,6 +1164,14 @@ def fetch_events(
         if odds_one <= 1 or odds_two <= 1:
             stats["dropped_invalid_odds_count"] += 1
             continue
+
+        stake_one: Optional[float] = None
+        stake_two: Optional[float] = None
+        if market_hash:
+            mapped_stakes = stake_map.get(str(market_hash))
+            if mapped_stakes:
+                stake_one = _safe_float(mapped_stakes[0])
+                stake_two = _safe_float(mapped_stakes[1])
 
         event_id = candidate.get("event_id") or candidate.get("id")
         home_team = candidate.get("home_team")
@@ -1010,6 +1207,10 @@ def fetch_events(
             outcomes[0]["point"] = round(float(point_one), 6)
         if point_two is not None:
             outcomes[1]["point"] = round(float(point_two), 6)
+        if stake_one is not None and stake_one > 0:
+            outcomes[0]["stake"] = round(float(stake_one), 6)
+        if stake_two is not None and stake_two > 0:
+            outcomes[1]["stake"] = round(float(stake_two), 6)
 
         description = _normalize_text(candidate.get("description"))
         if description and _base_market_key(candidate.get("market_key")) not in {"h2h", "spreads", "totals"}:
