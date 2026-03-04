@@ -3102,7 +3102,7 @@ def fetch_odds_for_sport_multi_market(
 
 
 OutcomeInfo = Dict[str, object]
-LineMap = Dict[str, Dict[str, OutcomeInfo]]
+LineOfferMap = Dict[str, Dict[str, List[OutcomeInfo]]]
 
 
 def _is_spread_market_key(market_key: object) -> bool:
@@ -3153,10 +3153,10 @@ def _outcome_display_name(outcome: dict) -> str:
     return name or description
 
 
-def _record_best_prices(
+def _record_line_offers(
     markets: List[dict], market_key: str, commission_rate: float
-) -> LineMap:
-    lines: LineMap = {}
+) -> LineOfferMap:
+    lines: LineOfferMap = {}
     for book in markets:
         bookmaker = book.get("title") or book.get("key")
         bookmaker_key = str(book.get("key") or bookmaker or "").strip()
@@ -3191,13 +3191,12 @@ def _record_best_prices(
                 name = str(outcome.get("name") or "").strip()
                 if not name:
                     continue
-                existing = entry.get(name)
                 display_name = _outcome_display_name(outcome)
                 display_price = float(price)
                 is_exchange = bookmaker_key_normalized in EXCHANGE_KEYS
                 effective_price = _apply_commission(display_price, commission_rate, is_exchange)
-                if not existing or effective_price > existing["effective_price"]:
-                    entry[name] = {
+                entry.setdefault(name, []).append(
+                    {
                         "effective_price": effective_price,
                         "display_price": display_price,
                         "bookmaker": bookmaker,
@@ -3211,7 +3210,40 @@ def _record_best_prices(
                         "book_event_id": book_event_id,
                         "book_event_url": book_event_url,
                     }
-    return lines
+                )
+    normalized: LineOfferMap = {}
+    for line_key, outcome_map in lines.items():
+        normalized_outcomes: Dict[str, List[OutcomeInfo]] = {}
+        for name, offers in outcome_map.items():
+            if not isinstance(offers, list) or not offers:
+                continue
+            best_by_bookmaker: Dict[str, OutcomeInfo] = {}
+            for idx, offer in enumerate(offers):
+                if not isinstance(offer, dict):
+                    continue
+                book_identity = str(
+                    offer.get("bookmaker_key") or offer.get("bookmaker") or ""
+                ).strip().lower()
+                if not book_identity:
+                    book_identity = f"unknown:{idx}"
+                existing = best_by_bookmaker.get(book_identity)
+                offer_price = _safe_float(offer.get("effective_price")) or 0.0
+                existing_price = _safe_float(existing.get("effective_price")) if isinstance(existing, dict) else None
+                if existing_price is None or offer_price > existing_price:
+                    best_by_bookmaker[book_identity] = offer
+            ranked = sorted(
+                best_by_bookmaker.values(),
+                key=lambda item: (
+                    _safe_float(item.get("effective_price")) or 0.0,
+                    _safe_float(item.get("display_price")) or 0.0,
+                ),
+                reverse=True,
+            )
+            if ranked:
+                normalized_outcomes[name] = ranked
+        if normalized_outcomes:
+            normalized[line_key] = normalized_outcomes
+    return normalized
 
 
 def _available_markets(game: dict) -> List[str]:
@@ -3238,40 +3270,64 @@ def _collect_market_entries(
         }
         for book in bookmakers
     ]
-    best_lines = _record_best_prices(markets, market_key, commission_rate)
+    line_offers = _record_line_offers(markets, market_key, commission_rate)
     entries = []
-    for line_key, offers in best_lines.items():
+    for line_key, offers in line_offers.items():
         offer_count = len(offers)
         if offer_count < 2:
             continue
         # Only moneyline-style markets can be genuine 3-way (home/draw/away).
         if offer_count > 3 or (offer_count > 2 and not _is_h2h_market_key(market_key)):
             continue
-        outcomes = list(offers.values())
-        # Arbitrage output is meant to represent cross-book opportunities.
-        # Skip lines where all selected legs come from the same bookmaker.
-        bookmaker_keys = {
-            str(outcome.get("bookmaker_key") or outcome.get("bookmaker") or "").strip().lower()
-            for outcome in outcomes
-            if str(outcome.get("bookmaker_key") or outcome.get("bookmaker") or "").strip()
-        }
-        if len(bookmaker_keys) < 2:
+        outcome_names = sorted(offers.keys())
+        candidate_lists = [offers.get(name) or [] for name in outcome_names]
+        if any(not candidates for candidates in candidate_lists):
             continue
-        if _is_spread_market_key(market_key):
-            try:
-                point_values = [float(o.get("point")) for o in outcomes]
-            except (TypeError, ValueError):
+
+        best_outcomes: Optional[List[OutcomeInfo]] = None
+        best_net_stake_info: Optional[dict] = None
+        best_score: Optional[Tuple[float, float]] = None
+        for combination in itertools.product(*candidate_lists):
+            outcomes = list(combination)
+            # Arbitrage output is meant to represent cross-book opportunities.
+            # Skip lines where all selected legs come from the same bookmaker.
+            bookmaker_keys = {
+                str(outcome.get("bookmaker_key") or outcome.get("bookmaker") or "").strip().lower()
+                for outcome in outcomes
+                if str(outcome.get("bookmaker_key") or outcome.get("bookmaker") or "").strip()
+            }
+            if len(bookmaker_keys) < 2:
                 continue
-            if any(p is None for p in point_values):
+            if _is_spread_market_key(market_key):
+                try:
+                    point_values = [float(o.get("point")) for o in outcomes]
+                except (TypeError, ValueError):
+                    continue
+                if any(p is None for p in point_values):
+                    continue
+                # Require opposite sides of the spread (one positive, one negative) and different teams.
+                # Only the first two outcomes are checked; prior filtering ensures spread markets
+                # always have exactly 2 outcomes (offer_count > 2 skips non-h2h markets above).
+                if point_values[0] * point_values[1] >= 0:
+                    continue
+                selection_names = {o.get("name", "").strip().lower() for o in outcomes}
+                if len(selection_names) < 2:
+                    continue
+            net_stake_info = _calculate_stakes(outcomes, stake_total, price_field="effective_price")
+            guaranteed_profit = _safe_float(net_stake_info.get("guaranteed_profit"))
+            if guaranteed_profit is None or guaranteed_profit <= 0:
                 continue
-            # Require opposite sides of the spread (one positive, one negative) and different teams.
-            # Only the first two outcomes are checked; prior filtering ensures spread markets
-            # always have exactly 2 outcomes (offer_count > 2 skips non-h2h markets above).
-            if point_values[0] * point_values[1] >= 0:
-                continue
-            outcome_names = {o.get("name", "").strip().lower() for o in outcomes}
-            if len(outcome_names) < 2:
-                continue
+            net_roi = _safe_float(net_stake_info.get("roi_percent")) or 0.0
+            score = (guaranteed_profit, net_roi)
+            if best_score is None or score > best_score:
+                best_outcomes = outcomes
+                best_net_stake_info = net_stake_info
+                best_score = score
+
+        if not best_outcomes or not isinstance(best_net_stake_info, dict):
+            continue
+        outcomes = best_outcomes
+        net_stake_info = best_net_stake_info
         has_exchange = any(o.get("is_exchange") for o in outcomes)
         outcome_payload = [
             {
@@ -3288,11 +3344,6 @@ def _collect_market_entries(
             }
             for o in outcomes
         ]
-        net_stake_info = _calculate_stakes(outcomes, stake_total, price_field="effective_price")
-        if _safe_float(net_stake_info.get("guaranteed_profit")) is None:
-            continue
-        if float(net_stake_info.get("guaranteed_profit") or 0.0) <= 0:
-            continue
         gross_stake_info = (
             _calculate_stakes(
                 outcomes,
@@ -3911,7 +3962,9 @@ def _deduplicate_middles(opportunities: List[dict]) -> List[dict]:
     best_by_key: Dict[tuple, dict] = {}
     for opp in opportunities:
         key = (
+            opp.get("sport"),
             opp.get("event"),
+            opp.get("commence_time"),
             opp.get("market"),
             tuple(opp.get("gap", {}).get("middle_integers", [])),
         )
@@ -3969,6 +4022,7 @@ def _deduplicate_plus_ev(opportunities: List[dict]) -> List[dict]:
         key = (
             opp.get("event"),
             opp.get("sport"),
+            opp.get("commence_time"),
             opp.get("market"),
             (bet.get("outcome") or "").strip().lower(),
             normalized_point,
@@ -4525,6 +4579,7 @@ def run_scan(
         stake_amount = DEFAULT_STAKE_AMOUNT
     all_markets = bool(all_markets)
     requested_sport_keys = _normalize_requested_sport_keys(sports)
+    requested_provider_keys = _normalize_provider_keys(include_providers) or []
     enabled_provider_keys = _resolve_enabled_provider_keys(include_purebet, include_providers)
     enabled_provider_set = set(enabled_provider_keys)
     normalized_regions = _normalize_regions(regions)
@@ -4539,7 +4594,7 @@ def run_scan(
         enabled_provider_keys = [key for key in PROVIDER_FETCHERS if key in enabled_provider_set]
     active_provider_scan_caches = _activate_provider_scan_caches(enabled_provider_keys)
     provider_target_sport_keys = set(requested_sport_keys) if enabled_provider_keys else set()
-    explicit_provider_only = include_providers is not None and not api_bookmakers
+    explicit_provider_only = bool(requested_provider_keys) and not api_bookmakers
     should_fetch_api = not explicit_provider_only and not (
         normalized_bookmakers and not api_bookmakers
     )

@@ -146,6 +146,71 @@ class ScannerRegressionTests(unittest.TestCase):
         )
         self.assertEqual(entries, [])
 
+    def test_collect_market_entries_keeps_cross_book_fallback_combo(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "book_a",
+                    "title": "Book A",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.3},
+                                {"name": "Away Team", "price": 2.3},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_b",
+                    "title": "Book B",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.18},
+                                {"name": "Away Team", "price": 1.8},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_c",
+                    "title": "Book C",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 1.8},
+                                {"name": "Away Team", "price": 2.18},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.0,
+        )
+        self.assertTrue(entries)
+        best_odds = entries[0].get("best_odds") or []
+        selected_books = {
+            str(item.get("bookmaker_key") or "").strip().lower()
+            for item in best_odds
+            if isinstance(item, dict)
+        }
+        self.assertGreaterEqual(len(selected_books), 2)
+        self.assertGreater(entries[0].get("roi_percent", 0.0), 0.0)
+
     def test_merge_events_handles_home_away_flipped_provider_feeds(self) -> None:
         base_events = [
             {
@@ -265,6 +330,119 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertTrue(result.get("success"))
         self.assertTrue(captured_targets)
         self.assertIn("tennis_atp", captured_targets[0])
+
+    def test_run_scan_include_providers_empty_keeps_api_fetch_enabled(self) -> None:
+        sports_payload = [
+            {
+                "key": "americanfootball_nfl",
+                "title": "NFL",
+                "active": True,
+                "has_outrights": False,
+            }
+        ]
+        captured_should_fetch_api = []
+
+        def _fake_scan_single_sport(**kwargs):
+            captured_should_fetch_api.append(bool(kwargs.get("should_fetch_api")))
+            sport = kwargs.get("sport") or {}
+            sport_key = sport.get("key") or ""
+            sport_title = sport.get("title") or sport_key
+            return {
+                "skipped": False,
+                "sport_key": sport_key,
+                "sport_timing": {
+                    "sport_key": sport_key,
+                    "sport": sport_title,
+                    "api_fetch_ms": 0.0,
+                    "provider_fetch_ms": 0.0,
+                    "analysis_ms": 0.0,
+                    "events_scanned": 0,
+                    "providers": [],
+                    "total_ms": 0.0,
+                },
+                "timing_steps": [],
+                "api_market_skips": [],
+                "sport_errors": [],
+                "provider_updates": {},
+                "provider_snapshot_updates": {},
+                "purebet_update": {
+                    "events_merged": 0,
+                    "sports": [],
+                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
+                    "league_sync": {
+                        "live_updates": 0,
+                        "cache_hits": 0,
+                        "stale_cache_uses": 0,
+                        "dynamic_added": 0,
+                        "unresolved": 0,
+                    },
+                },
+                "events_scanned": 0,
+                "total_profit": 0.0,
+                "arb_opportunities": [],
+                "middle_opportunities": [],
+                "plus_ev_opportunities": [],
+                "stale_event_filters": [],
+                "successful": 1,
+            }
+
+        with (
+            patch.object(scanner, "fetch_sports", return_value=sports_payload),
+            patch.object(scanner, "_scan_single_sport", side_effect=_fake_scan_single_sport),
+            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
+        ):
+            result = scanner.run_scan(
+                api_key="dummy",
+                sports=["americanfootball_nfl"],
+                include_providers=[],
+            )
+
+        self.assertTrue(result.get("success"))
+        self.assertEqual(captured_should_fetch_api, [True])
+
+    def test_deduplicate_middles_keeps_distinct_commence_time(self) -> None:
+        opportunities = [
+            {
+                "sport": "basketball_nba",
+                "event": "Away vs Home",
+                "commence_time": "2026-03-04T01:00:00Z",
+                "market": "spreads",
+                "gap": {"middle_integers": [3]},
+                "ev_percent": 3.0,
+            },
+            {
+                "sport": "basketball_nba",
+                "event": "Away vs Home",
+                "commence_time": "2026-03-05T01:00:00Z",
+                "market": "spreads",
+                "gap": {"middle_integers": [3]},
+                "ev_percent": 2.0,
+            },
+        ]
+        deduped = scanner._deduplicate_middles(opportunities)
+        self.assertEqual(len(deduped), 2)
+
+    def test_deduplicate_plus_ev_keeps_distinct_commence_time(self) -> None:
+        opportunities = [
+            {
+                "sport": "basketball_nba",
+                "event": "Away vs Home",
+                "commence_time": "2026-03-04T01:00:00Z",
+                "market": "h2h",
+                "edge_percent": 4.2,
+                "bet": {"outcome": "Home", "point": None},
+            },
+            {
+                "sport": "basketball_nba",
+                "event": "Away vs Home",
+                "commence_time": "2026-03-05T01:00:00Z",
+                "market": "h2h",
+                "edge_percent": 3.1,
+                "bet": {"outcome": "Home", "point": None},
+            },
+        ]
+        deduped = scanner._deduplicate_plus_ev(opportunities)
+        self.assertEqual(len(deduped), 2)
 
 
 if __name__ == "__main__":
