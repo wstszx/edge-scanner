@@ -6,8 +6,6 @@ from .betdex import PROVIDER_TITLE as BETDEX_TITLE
 from .betdex import fetch_events as fetch_betdex_events
 from .bookmaker_xyz import PROVIDER_TITLE as BOOKMAKER_XYZ_TITLE
 from .bookmaker_xyz import fetch_events as fetch_bookmaker_xyz_events
-from .overtimemarkets_xyz import PROVIDER_TITLE as OVERTIMEMARKETS_XYZ_TITLE
-from .overtimemarkets_xyz import fetch_events as fetch_overtimemarkets_xyz_events
 from .polymarket import PROVIDER_TITLE as POLYMARKET_TITLE
 from .polymarket import fetch_events as fetch_polymarket_events
 from .purebet import PROVIDER_TITLE as PUREBET_TITLE
@@ -29,7 +27,6 @@ PROVIDER_FETCHERS: Dict[str, ProviderFetcher] = {
     "betdex": fetch_betdex_events,
     "bookmaker_xyz": fetch_bookmaker_xyz_events,
     "sx_bet": fetch_sx_bet_events,
-    "overtimemarkets_xyz": fetch_overtimemarkets_xyz_events,
     "polymarket": fetch_polymarket_events,
     "dexsport_io": fetch_dexsport_io_events,
     "sportbet_one": fetch_sportbet_one_events,
@@ -40,7 +37,6 @@ PROVIDER_TITLES: Dict[str, str] = {
     "betdex": BETDEX_TITLE,
     "bookmaker_xyz": BOOKMAKER_XYZ_TITLE,
     "sx_bet": SX_BET_TITLE,
-    "overtimemarkets_xyz": OVERTIMEMARKETS_XYZ_TITLE,
     "polymarket": POLYMARKET_TITLE,
     "dexsport_io": DEXSPORT_IO_TITLE,
     "sportbet_one": SPORTBET_ONE_TITLE,
@@ -57,9 +53,6 @@ PROVIDER_ALIASES: Dict[str, str] = {
     "sx bet": "sx_bet",
     "sx_bet": "sx_bet",
     "sxbet": "sx_bet",
-    "overtimemarkets.xyz": "overtimemarkets_xyz",
-    "overtimemarkets_xyz": "overtimemarkets_xyz",
-    "overtimemarketsxyz": "overtimemarkets_xyz",
     "polymarket": "polymarket",
     "dexsport_io": "dexsport_io",
     "dexsport.io": "dexsport_io",

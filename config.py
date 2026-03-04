@@ -317,7 +317,6 @@ BOOKMAKER_LABELS = {
     "sportbet_one": "Sportbet.one",
     "bookmaker_xyz": "bookmaker.xyz",
     "sx_bet": "SX Bet",
-    "overtimemarkets_xyz": "Overtime Markets",
     "polymarket": "Polymarket",
     "purebet": "Purebet",
 }
@@ -350,7 +349,6 @@ BOOKMAKER_URLS = {
     "sportbet_one": "https://sportbet.one/",
     "bookmaker_xyz": "https://bookmaker.xyz/",
     "sx_bet": "https://sx.bet/",
-    "overtimemarkets_xyz": "https://overtimemarkets.xyz/",
     "polymarket": "https://polymarket.com/",
     "purebet": "https://purebet.io/",
 }
@@ -365,7 +363,6 @@ for key in [
     "sportbet_one",
     "bookmaker_xyz",
     "sx_bet",
-    "overtimemarkets_xyz",
 ]:
     if key not in BOOKMAKER_KEYS:
         BOOKMAKER_KEYS.append(key)

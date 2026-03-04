@@ -5,7 +5,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from providers import betdex, bookmaker_xyz, overtimemarkets_xyz, polymarket, sx_bet
+from providers import betdex, bookmaker_xyz, polymarket, sx_bet
 
 
 class TestBetdexSegmentation(unittest.TestCase):
@@ -147,32 +147,6 @@ class TestPolymarketDepth(unittest.TestCase):
         outcomes = markets[0].get("outcomes") or []
         self.assertEqual(outcomes[0].get("stake"), 120.5)
         self.assertEqual(outcomes[1].get("stake"), 95.25)
-
-
-class TestOvertimeSegmentation(unittest.TestCase):
-    def test_half_time_totals_not_mapped_to_base_totals(self) -> None:
-        row = {
-            "type": "OVER_UNDER",
-            "marketName": "First Half Total Goals",
-            "odds": [2.1, 1.8],
-            "line": 1.5,
-        }
-        skipped = overtimemarkets_xyz._build_market(
-            row,
-            requested_markets={"totals"},
-            home_team="Team A",
-            away_team="Team B",
-        )
-        self.assertIsNone(skipped)
-
-        segmented = overtimemarkets_xyz._build_market(
-            row,
-            requested_markets={"totals_h1"},
-            home_team="Team A",
-            away_team="Team B",
-        )
-        self.assertIsNotNone(segmented)
-        self.assertEqual(segmented["key"], "totals_h1")
 
 
 class TestBookmakerFallbackSegmentation(unittest.TestCase):

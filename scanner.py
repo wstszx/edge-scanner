@@ -1751,6 +1751,18 @@ def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dic
                         if diff <= tolerance_seconds and (best_diff is None or diff < best_diff):
                             best_diff = diff
                             matched_event = base_event
+            # Some providers flip home/away labels for the same fixture.
+            if matched_event is None and team_key:
+                reverse_team_key = (team_key[0], team_key[2], team_key[1])
+                if reverse_team_key in by_team:
+                    extra_epoch = _event_time_seconds(extra)
+                    if extra_epoch is not None:
+                        best_diff = None
+                        for base_epoch, base_event in by_team[reverse_team_key]:
+                            diff = abs(base_epoch - extra_epoch)
+                            if diff <= tolerance_seconds and (best_diff is None or diff < best_diff):
+                                best_diff = diff
+                                matched_event = base_event
         if matched_event is None and tolerance_seconds > 0 and fuzzy_threshold > 0:
             normalized_key = _event_team_key_normalized(extra)
             extra_epoch = _event_time_seconds(extra)
@@ -1762,12 +1774,20 @@ def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dic
                 ):
                     if abs(base_epoch - extra_epoch) > tolerance_seconds:
                         continue
+                    # Evaluate both orientations to tolerate provider home/away flips.
                     score_home = _team_similarity(home_norm, base_home)
                     score_away = _team_similarity(away_norm, base_away)
-                    score = min(score_home, score_away)
+                    direct_score = min(score_home, score_away)
+                    reverse_home = _team_similarity(home_norm, base_away)
+                    reverse_away = _team_similarity(away_norm, base_home)
+                    reverse_score = min(reverse_home, reverse_away)
+                    score = max(direct_score, reverse_score)
                     if score < fuzzy_threshold:
                         continue
-                    avg_score = (score_home + score_away) / 2.0
+                    if reverse_score > direct_score:
+                        avg_score = (reverse_home + reverse_away) / 2.0
+                    else:
+                        avg_score = (score_home + score_away) / 2.0
                     if best_score is None or avg_score > best_score:
                         best_score = avg_score
                         matched_event = base_event
@@ -3228,6 +3248,15 @@ def _collect_market_entries(
         if offer_count > 3 or (offer_count > 2 and not _is_h2h_market_key(market_key)):
             continue
         outcomes = list(offers.values())
+        # Arbitrage output is meant to represent cross-book opportunities.
+        # Skip lines where all selected legs come from the same bookmaker.
+        bookmaker_keys = {
+            str(outcome.get("bookmaker_key") or outcome.get("bookmaker") or "").strip().lower()
+            for outcome in outcomes
+            if str(outcome.get("bookmaker_key") or outcome.get("bookmaker") or "").strip()
+        }
+        if len(bookmaker_keys) < 2:
+            continue
         if _is_spread_market_key(market_key):
             try:
                 point_values = [float(o.get("point")) for o in outcomes]

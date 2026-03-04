@@ -115,6 +115,80 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertTrue(entries)
         self.assertGreater(entries[0].get("roi_percent", 0.0), 0.0)
 
+    def test_collect_market_entries_rejects_single_book_arbitrage(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "sx_bet",
+                    "title": "SX Bet",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.06},
+                                {"name": "Away Team", "price": 2.04},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+
+        entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.0,
+        )
+        self.assertEqual(entries, [])
+
+    def test_merge_events_handles_home_away_flipped_provider_feeds(self) -> None:
+        base_events = [
+            {
+                "id": "base-1",
+                "sport_key": "baseball_mlb",
+                "home_team": "Los Angeles Dodgers",
+                "away_team": "Cleveland Guardians",
+                "commence_time": "2026-03-03T20:05:00Z",
+                "bookmakers": [
+                    {
+                        "key": "sx_bet",
+                        "title": "SX Bet",
+                        "event_id": "L17406189",
+                        "markets": [{"key": "h2h", "outcomes": []}],
+                    }
+                ],
+            }
+        ]
+        extra_events = [
+            {
+                "id": "extra-1",
+                "sport_key": "baseball_mlb",
+                "home_team": "Cleveland Guardians",
+                "away_team": "Los Angeles Dodgers",
+                "commence_time": "2026-03-03T20:05:00Z",
+                "bookmakers": [
+                    {
+                        "key": "polymarket",
+                        "title": "Polymarket",
+                        "event_id": "242604",
+                        "markets": [{"key": "h2h", "outcomes": []}],
+                    }
+                ],
+            }
+        ]
+
+        merged = scanner._merge_events(base_events, extra_events)
+        self.assertEqual(len(merged), 1)
+        books = merged[0].get("bookmakers") or []
+        keys = {str(book.get("key") or "").strip().lower() for book in books if isinstance(book, dict)}
+        self.assertIn("sx_bet", keys)
+        self.assertIn("polymarket", keys)
+
     def test_run_scan_all_sports_expands_provider_target_sports(self) -> None:
         sports_payload = [
             {
