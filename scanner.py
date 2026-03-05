@@ -1690,17 +1690,26 @@ def _filter_events_for_scan(events: Sequence[dict]) -> Tuple[List[dict], dict]:
 
 
 def _merge_bookmakers(target: List[dict], incoming: List[dict]) -> None:
-    seen = set()
+    book_index: Dict[str, dict] = {}
     for book in target:
-        key = (book.get("key") or book.get("title") or "").strip().lower()
-        if key:
-            seen.add(key)
-    for book in incoming:
-        key = (book.get("key") or book.get("title") or "").strip().lower()
-        if not key or key in seen:
+        if not isinstance(book, dict):
             continue
-        target.append(book)
-        seen.add(key)
+        key = _normalize_line_component(book.get("key") or book.get("title"))
+        if key and key not in book_index:
+            book_index[key] = book
+    for book in incoming:
+        if not isinstance(book, dict):
+            continue
+        key = _normalize_line_component(book.get("key") or book.get("title"))
+        if not key:
+            target.append(book)
+            continue
+        existing = book_index.get(key)
+        if existing is None:
+            target.append(book)
+            book_index[key] = book
+            continue
+        _merge_bookmaker_markets(existing, book)
 
 
 def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dict]:
@@ -2467,7 +2476,7 @@ def _normalize_purebet_v3_events(
     return normalized
 
 
-def fetch_purebet_events(
+def _legacy_fetch_purebet_events(
     sport_key: str,
     markets: Sequence[str],
     regions: Sequence[str],
@@ -2494,7 +2503,7 @@ def fetch_purebet_events(
         "league_sync_unresolved": 0,
         "league_sync_unresolved_samples": [],
     }
-    fetch_purebet_events.last_stats = stats
+    _legacy_fetch_purebet_events.last_stats = stats
     if bookmakers:
         lowered = {str(book).strip().lower() for book in bookmakers if isinstance(book, str)}
         if PUREBET_BOOK_KEY not in lowered and PUREBET_TITLE.lower() not in lowered:
@@ -2640,11 +2649,10 @@ def fetch_purebet_events(
                 filtered.append(event)
         events = filtered
     stats["events_returned_count"] = len(events)
-    fetch_purebet_events.last_stats = stats
+    _legacy_fetch_purebet_events.last_stats = stats
     return events
 
-
-_legacy_fetch_purebet_events = fetch_purebet_events
+_legacy_fetch_purebet_events.last_stats = {}
 
 
 def fetch_purebet_events(
@@ -2770,20 +2778,19 @@ def _build_sharp_reference(
         if not market_key:
             continue
         for outcome in market.get("outcomes", []):
-            price = outcome.get("price")
-            if not price or price <= 1:
+            price_val = _safe_float(outcome.get("price"))
+            if price_val is None or price_val <= 1:
                 continue
             line_key = _line_key(market_key, outcome)
             if not line_key:
                 continue
-            try:
-                price_val = float(price)
-            except (TypeError, ValueError):
-                continue
             adjusted_price = _apply_commission(price_val, commission_rate, is_exchange)
+            name_norm = _normalize_line_component(outcome.get("name"))
+            if not name_norm:
+                continue
             line_map.setdefault((market_key, line_key), []).append(
                 {
-                    "name": (outcome.get("name") or "").strip().lower(),
+                    "name": name_norm,
                     "display_name": _outcome_display_name(outcome),
                     "price": adjusted_price,
                     "raw_price": price_val,
@@ -2831,19 +2838,18 @@ def _two_way_outcomes(bookmaker: dict) -> Dict[Tuple[str, str], List[dict]]:
         if not market_key:
             continue
         for outcome in market.get("outcomes", []):
-            price = outcome.get("price")
-            if not price or price <= 1:
+            display_price = _safe_float(outcome.get("price"))
+            if display_price is None or display_price <= 1:
                 continue
             line_key = _line_key(market_key, outcome)
             if not line_key:
                 continue
-            try:
-                display_price = float(price)
-            except (TypeError, ValueError):
+            name_norm = _normalize_line_component(outcome.get("name"))
+            if not name_norm:
                 continue
             line_map.setdefault((market_key, line_key), []).append(
                 {
-                    "name": (outcome.get("name") or "").strip().lower(),
+                    "name": name_norm,
                     "display_name": _outcome_display_name(outcome),
                     "price": display_price,
                     "point": outcome.get("point"),
@@ -3160,7 +3166,7 @@ def _record_line_offers(
     for book in markets:
         bookmaker = book.get("title") or book.get("key")
         bookmaker_key = str(book.get("key") or bookmaker or "").strip()
-        bookmaker_key_normalized = bookmaker_key.lower()
+        bookmaker_key_normalized = _normalize_line_component(bookmaker_key)
         book_event_id = (
             book.get("event_id")
             or book.get("eventId")
@@ -3175,8 +3181,8 @@ def _record_line_offers(
             if market.get("key") != market_key:
                 continue
             for outcome in market.get("outcomes", []):
-                price = outcome.get("price")
-                if not price or price <= 1:
+                display_price = _safe_float(outcome.get("price"))
+                if display_price is None or display_price <= 1:
                     continue
                 key = _line_key(market_key, outcome)
                 if key is None:
@@ -3189,19 +3195,19 @@ def _record_line_offers(
                 )
                 entry = lines.setdefault(key, {})
                 name = str(outcome.get("name") or "").strip()
-                if not name:
+                outcome_key = _normalize_line_component(name)
+                if not outcome_key:
                     continue
                 display_name = _outcome_display_name(outcome)
-                display_price = float(price)
                 is_exchange = bookmaker_key_normalized in EXCHANGE_KEYS
                 effective_price = _apply_commission(display_price, commission_rate, is_exchange)
-                entry.setdefault(name, []).append(
+                entry.setdefault(outcome_key, []).append(
                     {
                         "effective_price": effective_price,
                         "display_price": display_price,
                         "bookmaker": bookmaker,
-                        "bookmaker_key": bookmaker_key,
-                        "name": name,
+                        "bookmaker_key": bookmaker_key_normalized or bookmaker_key,
+                        "name": outcome_key,
                         "display_name": display_name,
                         "description": outcome.get("description"),
                         "point": normalized_point,
@@ -3394,22 +3400,22 @@ def _collect_middle_opportunities(
     offers = []
     for book in bookmakers:
         bookmaker_title = book.get("title") or book.get("key")
-        bookmaker_key = book.get("key") or bookmaker_title
+        bookmaker_key_raw = book.get("key") or bookmaker_title
+        bookmaker_key = _normalize_line_component(bookmaker_key_raw) or str(bookmaker_key_raw or "").strip()
         markets = book.get("markets", [])
         for market in markets:
             if market.get("key") != market_key:
                 continue
             for outcome in market.get("outcomes", []):
                 point = outcome.get("point")
-                price = outcome.get("price")
-                if point is None or not price or price <= 1:
+                display_price = _safe_float(outcome.get("price"))
+                if point is None or display_price is None or display_price <= 1:
                     continue
                 name = outcome.get("name") or ""
                 try:
                     point_value = float(point)
                 except (TypeError, ValueError):
                     continue
-                display_price = float(price)
                 is_exchange = bookmaker_key in EXCHANGE_KEYS
                 effective_price = _apply_commission(display_price, commission_rate, is_exchange)
                 offers.append(
@@ -3456,11 +3462,16 @@ def _collect_plus_ev_opportunities(
     bookmakers = game.get("bookmakers", [])
     sharp_meta = None
     sharp_bookmaker = None
+    sharp_key = ""
     for candidate in sharp_priority:
+        candidate_key = _normalize_line_component(candidate.get("key"))
+        if not candidate_key:
+            continue
         for book in bookmakers:
-            if book.get("key") == candidate.get("key"):
+            if _normalize_line_component(book.get("key")) == candidate_key:
                 sharp_meta = candidate
                 sharp_bookmaker = book
+                sharp_key = candidate_key
                 break
         if sharp_bookmaker:
             break
@@ -3472,10 +3483,10 @@ def _collect_plus_ev_opportunities(
         return []
     opportunities: List[dict] = []
     for book in bookmakers:
-        key = book.get("key")
+        key = _normalize_line_component(book.get("key"))
         if not key:
             continue
-        if key == sharp_meta.get("key"):
+        if key == sharp_key:
             continue
         if SOFT_BOOK_KEY_SET and key not in SOFT_BOOK_KEY_SET:
             continue
@@ -4594,10 +4605,14 @@ def run_scan(
         enabled_provider_keys = [key for key in PROVIDER_FETCHERS if key in enabled_provider_set]
     active_provider_scan_caches = _activate_provider_scan_caches(enabled_provider_keys)
     provider_target_sport_keys = set(requested_sport_keys) if enabled_provider_keys else set()
-    explicit_provider_only = bool(requested_provider_keys) and not api_bookmakers
-    should_fetch_api = not explicit_provider_only and not (
-        normalized_bookmakers and not api_bookmakers
+    provider_only_via_bookmakers = bool(normalized_bookmakers) and not api_bookmakers
+    provider_only_via_missing_api_key = (
+        bool(requested_provider_keys)
+        and not normalized_bookmakers
+        and not api_bookmakers
+        and not api_keys
     )
+    should_fetch_api = not (provider_only_via_bookmakers or provider_only_via_missing_api_key)
     include_purebet = PUREBET_BOOK_KEY in enabled_provider_set
     request_logger.log_meta(
         {
@@ -4709,6 +4724,7 @@ def run_scan(
     if not filtered:
         arb_summary = _summaries([], 0, 0, 0.0, api_pool.calls_made)
         middle_summary = _middle_summary([])
+        plus_ev_summary = _plus_ev_summary([])
         return _finish({
             "success": True,
             "scan_time": _iso_now(),
@@ -4730,6 +4746,17 @@ def run_scan(
                     "min_gap": MIN_MIDDLE_GAP,
                     "sort": DEFAULT_MIDDLE_SORT,
                     "positive_only": SHOW_POSITIVE_EV_ONLY,
+                },
+            },
+            "plus_ev": {
+                "opportunities": [],
+                "opportunities_count": 0,
+                "summary": plus_ev_summary,
+                "defaults": {
+                    "sharp_book": sharp_book or DEFAULT_SHARP_BOOK,
+                    "min_edge_percent": min_edge_percent,
+                    "bankroll": bankroll,
+                    "kelly_fraction": kelly_fraction,
                 },
             },
             "sport_errors": [],

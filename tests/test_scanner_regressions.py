@@ -211,6 +211,202 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(len(selected_books), 2)
         self.assertGreater(entries[0].get("roi_percent", 0.0), 0.0)
 
+    def test_collect_market_entries_accepts_string_price_values(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "book_a",
+                    "title": "Book A",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": "2.1"},
+                                {"name": "Away Team", "price": "2.0"},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_b",
+                    "title": "Book B",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": "2.0"},
+                                {"name": "Away Team", "price": "2.1"},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.0,
+        )
+        self.assertTrue(entries)
+        self.assertGreater(entries[0].get("roi_percent", 0.0), 0.0)
+
+    def test_collect_market_entries_normalizes_outcome_name_case(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "book_a",
+                    "title": "Book A",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.1},
+                                {"name": "Away Team", "price": 2.0},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_b",
+                    "title": "Book B",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "home team", "price": 2.0},
+                                {"name": "away team", "price": 2.1},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.0,
+        )
+        self.assertTrue(entries)
+        self.assertGreater(entries[0].get("roi_percent", 0.0), 0.0)
+
+    def test_collect_middle_opportunities_applies_commission_for_mixed_case_exchange_key(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "Purebet",
+                    "title": "Purebet",
+                    "markets": [
+                        {
+                            "key": "totals",
+                            "outcomes": [
+                                {"name": "Over", "point": 210.5, "price": 2.0},
+                                {"name": "Under", "point": 211.5, "price": 2.0},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_b",
+                    "title": "Book B",
+                    "markets": [
+                        {
+                            "key": "totals",
+                            "outcomes": [
+                                {"name": "Over", "point": 210.5, "price": 2.0},
+                                {"name": "Under", "point": 211.5, "price": 2.0},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        entries = scanner._collect_middle_opportunities(
+            game,
+            market_key="totals",
+            stake_total=100.0,
+            commission_rate=0.05,
+        )
+        self.assertTrue(entries)
+        purebet_legs = []
+        for entry in entries:
+            for side_key in ("side_a", "side_b"):
+                side = entry.get(side_key) or {}
+                if (side.get("bookmaker") or "").strip().lower() == "purebet":
+                    purebet_legs.append(side)
+        self.assertTrue(purebet_legs)
+        self.assertTrue(
+            any(
+                float(side.get("effective_price") or 0.0)
+                < float(side.get("price") or 0.0)
+                for side in purebet_legs
+            )
+        )
+
+    def test_collect_plus_ev_accepts_mixed_case_soft_book_key(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "pinnacle",
+                    "title": "Pinnacle",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 1.9},
+                                {"name": "Away Team", "price": 1.9},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "DraftKings",
+                    "title": "DraftKings",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.2},
+                                {"name": "Away Team", "price": 1.7},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        entries = scanner._collect_plus_ev_opportunities(
+            game,
+            markets=["h2h"],
+            sharp_priority=scanner._sharp_priority("pinnacle"),
+            commission_rate=0.0,
+            min_edge_percent=0.0,
+            bankroll=1000.0,
+            kelly_fraction=0.25,
+        )
+        self.assertTrue(entries)
+        self.assertGreater(entries[0].get("edge_percent", 0.0), 0.0)
+
     def test_merge_events_handles_home_away_flipped_provider_feeds(self) -> None:
         base_events = [
             {
@@ -253,6 +449,68 @@ class ScannerRegressionTests(unittest.TestCase):
         keys = {str(book.get("key") or "").strip().lower() for book in books if isinstance(book, dict)}
         self.assertIn("sx_bet", keys)
         self.assertIn("polymarket", keys)
+
+    def test_merge_events_merges_markets_for_same_bookmaker(self) -> None:
+        base_events = [
+            {
+                "id": "base-1",
+                "sport_key": "basketball_nba",
+                "home_team": "Los Angeles Lakers",
+                "away_team": "Boston Celtics",
+                "commence_time": "2026-03-10T00:00:00Z",
+                "bookmakers": [
+                    {
+                        "key": "sx_bet",
+                        "title": "SX Bet",
+                        "markets": [
+                            {
+                                "key": "h2h",
+                                "outcomes": [
+                                    {"name": "Los Angeles Lakers", "price": 2.05},
+                                    {"name": "Boston Celtics", "price": 1.88},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        extra_events = [
+            {
+                "id": "extra-1",
+                "sport_key": "basketball_nba",
+                "home_team": "Los Angeles Lakers",
+                "away_team": "Boston Celtics",
+                "commence_time": "2026-03-10T00:00:00Z",
+                "bookmakers": [
+                    {
+                        "key": "sx_bet",
+                        "title": "SX Bet",
+                        "markets": [
+                            {
+                                "key": "spreads",
+                                "outcomes": [
+                                    {"name": "Los Angeles Lakers", "point": -1.5, "price": 1.95},
+                                    {"name": "Boston Celtics", "point": 1.5, "price": 1.95},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+
+        merged = scanner._merge_events(base_events, extra_events)
+        self.assertEqual(len(merged), 1)
+        books = merged[0].get("bookmakers") or []
+        self.assertEqual(len(books), 1)
+        market_keys = {
+            str(market.get("key") or "").strip().lower()
+            for market in (books[0].get("markets") or [])
+            if isinstance(market, dict)
+        }
+        self.assertIn("h2h", market_keys)
+        self.assertIn("spreads", market_keys)
 
     def test_run_scan_all_sports_expands_provider_target_sports(self) -> None:
         sports_payload = [
@@ -399,6 +657,148 @@ class ScannerRegressionTests(unittest.TestCase):
 
         self.assertTrue(result.get("success"))
         self.assertEqual(captured_should_fetch_api, [True])
+
+    def test_run_scan_include_providers_non_empty_keeps_api_fetch_enabled(self) -> None:
+        sports_payload = [
+            {
+                "key": "americanfootball_nfl",
+                "title": "NFL",
+                "active": True,
+                "has_outrights": False,
+            }
+        ]
+        captured_should_fetch_api = []
+
+        def _fake_scan_single_sport(**kwargs):
+            captured_should_fetch_api.append(bool(kwargs.get("should_fetch_api")))
+            sport = kwargs.get("sport") or {}
+            sport_key = sport.get("key") or ""
+            sport_title = sport.get("title") or sport_key
+            return {
+                "skipped": False,
+                "sport_key": sport_key,
+                "sport_timing": {
+                    "sport_key": sport_key,
+                    "sport": sport_title,
+                    "api_fetch_ms": 0.0,
+                    "provider_fetch_ms": 0.0,
+                    "analysis_ms": 0.0,
+                    "events_scanned": 0,
+                    "providers": [],
+                    "total_ms": 0.0,
+                },
+                "timing_steps": [],
+                "api_market_skips": [],
+                "sport_errors": [],
+                "provider_updates": {},
+                "provider_snapshot_updates": {},
+                "purebet_update": {
+                    "events_merged": 0,
+                    "sports": [],
+                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
+                    "league_sync": {
+                        "live_updates": 0,
+                        "cache_hits": 0,
+                        "stale_cache_uses": 0,
+                        "dynamic_added": 0,
+                        "unresolved": 0,
+                    },
+                },
+                "events_scanned": 0,
+                "total_profit": 0.0,
+                "arb_opportunities": [],
+                "middle_opportunities": [],
+                "plus_ev_opportunities": [],
+                "stale_event_filters": [],
+                "successful": 1,
+            }
+
+        with (
+            patch.object(scanner, "fetch_sports", return_value=sports_payload),
+            patch.object(scanner, "_scan_single_sport", side_effect=_fake_scan_single_sport),
+            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
+        ):
+            result = scanner.run_scan(
+                api_key="dummy",
+                sports=["americanfootball_nfl"],
+                include_providers=["sx_bet"],
+            )
+
+        self.assertTrue(result.get("success"))
+        self.assertEqual(captured_should_fetch_api, [True])
+
+    def test_run_scan_include_providers_without_api_keys_runs_provider_only(self) -> None:
+        captured_should_fetch_api = []
+
+        def _fake_scan_single_sport(**kwargs):
+            captured_should_fetch_api.append(bool(kwargs.get("should_fetch_api")))
+            sport = kwargs.get("sport") or {}
+            sport_key = sport.get("key") or ""
+            sport_title = sport.get("title") or sport_key
+            return {
+                "skipped": False,
+                "sport_key": sport_key,
+                "sport_timing": {
+                    "sport_key": sport_key,
+                    "sport": sport_title,
+                    "api_fetch_ms": 0.0,
+                    "provider_fetch_ms": 0.0,
+                    "analysis_ms": 0.0,
+                    "events_scanned": 0,
+                    "providers": [],
+                    "total_ms": 0.0,
+                },
+                "timing_steps": [],
+                "api_market_skips": [],
+                "sport_errors": [],
+                "provider_updates": {},
+                "provider_snapshot_updates": {},
+                "purebet_update": {
+                    "events_merged": 0,
+                    "sports": [],
+                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
+                    "league_sync": {
+                        "live_updates": 0,
+                        "cache_hits": 0,
+                        "stale_cache_uses": 0,
+                        "dynamic_added": 0,
+                        "unresolved": 0,
+                    },
+                },
+                "events_scanned": 0,
+                "total_profit": 0.0,
+                "arb_opportunities": [],
+                "middle_opportunities": [],
+                "plus_ev_opportunities": [],
+                "stale_event_filters": [],
+                "successful": 1,
+            }
+
+        with (
+            patch.object(scanner, "_scan_single_sport", side_effect=_fake_scan_single_sport),
+            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
+        ):
+            result = scanner.run_scan(
+                api_key="",
+                sports=["americanfootball_nfl"],
+                include_providers=["sx_bet"],
+            )
+
+        self.assertTrue(result.get("success"))
+        self.assertEqual(captured_should_fetch_api, [False])
+
+    def test_run_scan_empty_results_include_plus_ev_shape(self) -> None:
+        with patch.object(scanner, "fetch_sports", return_value=[]):
+            result = scanner.run_scan(
+                api_key="dummy",
+                sports=["americanfootball_nfl"],
+            )
+
+        self.assertTrue(result.get("success"))
+        plus_ev = result.get("plus_ev")
+        self.assertIsInstance(plus_ev, dict)
+        self.assertEqual(plus_ev.get("opportunities_count"), 0)
+        self.assertEqual(plus_ev.get("opportunities"), [])
 
     def test_deduplicate_middles_keeps_distinct_commence_time(self) -> None:
         opportunities = [

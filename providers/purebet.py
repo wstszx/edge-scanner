@@ -1223,6 +1223,11 @@ def fetch_events(
         )
     ]
     if bookmakers:
+        allowed = {
+            str(book).strip().lower()
+            for book in bookmakers
+            if isinstance(book, str) and str(book).strip()
+        }
         filtered = []
         for event in events:
             books = event.get("bookmakers") or []
@@ -1231,8 +1236,8 @@ def fetch_events(
             kept = [
                 book
                 for book in books
-                if (book.get("key") or "").strip() in bookmakers
-                or (book.get("title") or "").strip() in bookmakers
+                if (book.get("key") or "").strip().lower() in allowed
+                or (book.get("title") or "").strip().lower() in allowed
             ]
             if kept:
                 event["bookmakers"] = kept

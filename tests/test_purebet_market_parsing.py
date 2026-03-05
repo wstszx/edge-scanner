@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from providers import purebet
 
@@ -84,6 +85,47 @@ class PurebetMarketParsingTests(unittest.TestCase):
         )
         self.assertEqual(len(with_details), 1)
         self.assertEqual(with_details[0]["bookmakers"][0].get("markets"), [])
+
+    def test_fetch_events_bookmaker_filter_is_case_insensitive(self) -> None:
+        sample_events = [
+            {
+                "id": "evt-1",
+                "sport_key": "soccer_epl",
+                "home_team": "Home FC",
+                "away_team": "Away FC",
+                "commence_time": "2026-03-10T12:00:00Z",
+                "bookmakers": [
+                    {
+                        "key": "purebet",
+                        "title": "Purebet",
+                        "markets": [
+                            {
+                                "key": "h2h",
+                                "outcomes": [
+                                    {"name": "Home FC", "price": 2.0},
+                                    {"name": "Away FC", "price": 2.0},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        with (
+            patch.object(purebet, "PUREBET_SOURCE", "file"),
+            patch.object(purebet, "_load_event_list", return_value=sample_events),
+        ):
+            events = purebet.fetch_events(
+                sport_key="soccer_epl",
+                markets=["h2h"],
+                regions=["eu"],
+                bookmakers=["PureBet"],
+            )
+
+        self.assertEqual(len(events), 1)
+        books = events[0].get("bookmakers") or []
+        self.assertEqual(len(books), 1)
+        self.assertEqual((books[0].get("key") or "").strip().lower(), "purebet")
 
 
 if __name__ == "__main__":
