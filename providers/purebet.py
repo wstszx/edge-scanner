@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import concurrent.futures
 import datetime as dt
 import difflib
@@ -13,7 +14,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.parse import quote
 
+import httpx
 import requests
+
+from ._async_http import get_shared_client, request_json
 
 
 class ProviderError(Exception):
@@ -194,6 +198,31 @@ def _purebet_get_json(
     if last_error:
         raise last_error
     raise ProviderError("Purebet request failed")
+
+
+async def _purebet_get_json_async(
+    client: httpx.AsyncClient,
+    url: str,
+    params: Dict[str, object],
+    headers: Dict[str, str],
+    retries: int,
+    backoff_seconds: float,
+    timeout: int = 30,
+) -> Tuple[object, int]:
+    return await request_json(
+        client,
+        "GET",
+        url,
+        params=params,
+        headers=headers,
+        timeout=float(timeout),
+        retries=retries,
+        backoff_seconds=backoff_seconds,
+        error_cls=ProviderError,
+        network_error_prefix="Purebet network error",
+        parse_error_message="Failed to parse Purebet API response",
+        status_error_message=lambda status_code: f"Purebet API request failed ({status_code})",
+    )
 
 def _load_event_list(path: str) -> List[dict]:
     if not path:
@@ -376,6 +405,87 @@ def _load_purebet_league_map(
     backoff = _purebet_retry_backoff()
     try:
         payload, retries_used = _purebet_get_json(
+            leagues_url,
+            {},
+            headers or _purebet_headers(),
+            retries=retries,
+            backoff_seconds=backoff,
+            timeout=30,
+        )
+    except ProviderError as exc:
+        if isinstance(cached_mapping, dict):
+            mapping.update(cached_mapping)
+        if stats is not None:
+            stats["league_sync_source"] = "stale_cache" if cached_mapping else "error"
+            stats["league_sync_error"] = str(exc)
+            stats["league_sync_dynamic_added"] = len(cached_mapping) if isinstance(cached_mapping, dict) else 0
+        return mapping
+
+    if not isinstance(payload, list):
+        if isinstance(cached_mapping, dict):
+            mapping.update(cached_mapping)
+        if stats is not None:
+            stats["league_sync_source"] = "stale_cache" if cached_mapping else "invalid_payload"
+            stats["league_sync_error"] = "Purebet activeLeagues response must be a JSON array"
+            stats["league_sync_dynamic_added"] = len(cached_mapping) if isinstance(cached_mapping, dict) else 0
+        return mapping
+
+    dynamic_mapping, meta = _build_dynamic_purebet_league_map(payload, mapping)
+    expires_at = now + ttl if ttl > 0 else now
+    with _PUREBET_LEAGUE_CACHE_LOCK:
+        PUREBET_ACTIVE_LEAGUES_CACHE["expires_at"] = expires_at
+        PUREBET_ACTIVE_LEAGUES_CACHE["mapping"] = dynamic_mapping
+        PUREBET_ACTIVE_LEAGUES_CACHE["meta"] = meta
+    mapping.update(dynamic_mapping)
+    if stats is not None:
+        stats["league_sync_source"] = "live"
+        stats["league_sync_retries"] = retries_used
+        stats["league_sync_total_leagues"] = int(meta.get("total", 0) or 0)
+        stats["league_sync_dynamic_added"] = len(dynamic_mapping)
+        stats["league_sync_unresolved"] = int(meta.get("unresolved", 0) or 0)
+        stats["league_sync_unresolved_samples"] = list(meta.get("unresolved_samples", []))
+    return mapping
+
+
+async def _load_purebet_league_map_async(
+    client: httpx.AsyncClient,
+    base_url: Optional[str] = None,
+    headers: Optional[Dict[str, str]] = None,
+    stats: Optional[dict] = None,
+) -> Dict[str, str]:
+    mapping = _base_purebet_league_map()
+    if stats is not None:
+        stats["league_sync_enabled"] = bool(PUREBET_LEAGUE_SYNC_ENABLED)
+    if not PUREBET_LEAGUE_SYNC_ENABLED:
+        if stats is not None:
+            stats["league_sync_source"] = "disabled"
+        return mapping
+    if not base_url:
+        if stats is not None:
+            stats["league_sync_source"] = "no_base_url"
+        return mapping
+    now = time.time()
+    ttl = _purebet_league_sync_ttl()
+    with _PUREBET_LEAGUE_CACHE_LOCK:
+        cache_valid = ttl > 0 and now < float(PUREBET_ACTIVE_LEAGUES_CACHE.get("expires_at", 0.0))
+        cached_mapping = PUREBET_ACTIVE_LEAGUES_CACHE.get("mapping") or {}
+        cached_meta = PUREBET_ACTIVE_LEAGUES_CACHE.get("meta") or {}
+    if cache_valid and isinstance(cached_mapping, dict):
+        mapping.update(cached_mapping)
+        if stats is not None:
+            stats["league_sync_source"] = "cache"
+            stats["league_sync_total_leagues"] = int(cached_meta.get("total", 0) or 0)
+            stats["league_sync_dynamic_added"] = len(cached_mapping)
+            stats["league_sync_unresolved"] = int(cached_meta.get("unresolved", 0) or 0)
+            stats["league_sync_unresolved_samples"] = list(cached_meta.get("unresolved_samples", []))
+        return mapping
+
+    leagues_url = f"{base_url.rstrip('/')}/activeLeagues"
+    retries = _purebet_market_retries()
+    backoff = _purebet_retry_backoff()
+    try:
+        payload, retries_used = await _purebet_get_json_async(
+            client,
             leagues_url,
             {},
             headers or _purebet_headers(),
@@ -946,6 +1056,57 @@ def _fetch_purebet_event_markets(
         "error": None,
     }
 
+
+async def _fetch_purebet_event_markets_async(
+    client: httpx.AsyncClient,
+    base_url: str,
+    event: dict,
+    supported_markets: Sequence[str],
+    headers: Dict[str, str],
+    retries: int,
+    backoff_seconds: float,
+) -> dict:
+    event_id = event.get("id")
+    if not event_id:
+        return {"event_id": None, "markets": [], "retries_used": 0, "error": "missing_event_id"}
+    market_url = f"{base_url.rstrip('/')}/markets"
+    try:
+        payload, retries_used = await _purebet_get_json_async(
+            client,
+            market_url,
+            {"event": event_id},
+            headers,
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+            timeout=30,
+        )
+    except ProviderError as exc:
+        return {
+            "event_id": event_id,
+            "markets": [],
+            "retries_used": retries,
+            "error": str(exc),
+        }
+    if not isinstance(payload, list):
+        return {
+            "event_id": event_id,
+            "markets": [],
+            "retries_used": retries_used,
+            "error": "invalid_markets_payload",
+        }
+    markets = _normalize_purebet_markets_payload(
+        payload,
+        event.get("home_team") or "",
+        event.get("away_team") or "",
+        supported_markets,
+    )
+    return {
+        "event_id": event_id,
+        "markets": markets,
+        "retries_used": retries_used,
+        "error": None,
+    }
+
 def _normalize_purebet_h2h_markets(odds: Sequence[dict], home: str, away: str) -> List[dict]:
     groups: Dict[str, dict] = {}
     for item in odds:
@@ -1247,6 +1408,193 @@ def fetch_events(
     fetch_events.last_stats = stats
     return events
 
+
+async def fetch_events_async(
+    sport_key: str,
+    markets: Sequence[str],
+    regions: Sequence[str],
+    bookmakers: Optional[Sequence[str]] = None,
+) -> List[dict]:
+    _ = regions
+    source = PUREBET_SOURCE or "api"
+    stats = {
+        "source": source,
+        "events_payload_count": 0,
+        "events_normalized_count": 0,
+        "events_returned_count": 0,
+        "details_enabled": False,
+        "details_requested": 0,
+        "details_success": 0,
+        "details_failed": 0,
+        "details_empty": 0,
+        "details_retries": 0,
+        "details_workers": 0,
+        "details_error_samples": [],
+        "league_sync_enabled": False,
+        "league_sync_source": "not_used",
+        "league_sync_total_leagues": 0,
+        "league_sync_dynamic_added": 0,
+        "league_sync_unresolved": 0,
+        "league_sync_unresolved_samples": [],
+    }
+    fetch_events_async.last_stats = stats
+    if bookmakers:
+        lowered = {str(book).strip().lower() for book in bookmakers if isinstance(book, str)}
+        if PUREBET_BOOK_KEY not in lowered and PUREBET_TITLE.lower() not in lowered:
+            stats["events_returned_count"] = 0
+            return []
+    if source == "file":
+        raw_events = await asyncio.to_thread(_load_event_list, PUREBET_SAMPLE_PATH)
+        events = _normalize_purebet_events(raw_events)
+        stats["events_payload_count"] = len(events)
+        stats["events_normalized_count"] = len(events)
+    else:
+        base_url = PUREBET_API_BASE or PUREBET_DEFAULT_BASE
+        if not base_url:
+            raise ProviderError(
+                "Purebet API base URL not configured. Set PUREBET_API_BASE or use PUREBET_SOURCE=file."
+            )
+        client = await get_shared_client(PROVIDER_KEY, timeout=30.0, follow_redirects=True)
+        url = f"{base_url.rstrip('/')}/events"
+        params = {"live": "true" if PUREBET_LIVE else "false"}
+        headers = _purebet_headers()
+        payload, retries_used = await _purebet_get_json_async(
+            client,
+            url,
+            params,
+            headers,
+            retries=_purebet_market_retries(),
+            backoff_seconds=_purebet_retry_backoff(),
+            timeout=30,
+        )
+        stats["details_retries"] += retries_used
+        if not isinstance(payload, list):
+            raise ProviderError("Purebet API response must be a JSON array of events")
+        stats["events_payload_count"] = len(payload)
+        supported_markets = _normalize_purebet_requested_markets(markets)
+        needs_details = PUREBET_MARKETS_ENABLED and bool(supported_markets)
+        stats["details_enabled"] = bool(needs_details)
+        league_map = await _load_purebet_league_map_async(
+            client=client,
+            base_url=base_url,
+            headers=headers,
+            stats=stats,
+        )
+        events = _normalize_purebet_v3_events(
+            payload,
+            sport_key,
+            list(supported_markets),
+            base_url=base_url,
+            league_map=league_map,
+            allow_empty_markets=needs_details,
+        )
+        stats["events_normalized_count"] = len(events)
+        if needs_details and events:
+            workers = min(_purebet_market_workers(), len(events))
+            retries = _purebet_market_retries()
+            backoff = _purebet_retry_backoff()
+            stats["details_workers"] = workers
+            stats["details_requested"] = len(events)
+            event_map = {str(event.get("id")): event for event in events if event.get("id")}
+            semaphore = asyncio.Semaphore(max(1, workers))
+
+            async def _detail_job(event: dict) -> dict:
+                async with semaphore:
+                    return await _fetch_purebet_event_markets_async(
+                        client,
+                        base_url,
+                        event,
+                        list(supported_markets),
+                        headers,
+                        retries,
+                        backoff,
+                    )
+
+            tasks = [asyncio.create_task(_detail_job(event)) for event in events]
+            for task in asyncio.as_completed(tasks):
+                try:
+                    result = await task
+                except Exception as exc:
+                    stats["details_failed"] += 1
+                    if len(stats["details_error_samples"]) < 5:
+                        stats["details_error_samples"].append(str(exc))
+                    continue
+                stats["details_retries"] += int(result.get("retries_used") or 0)
+                event_id = result.get("event_id")
+                event_obj = event_map.get(str(event_id))
+                if event_obj is None:
+                    continue
+                error = result.get("error")
+                extra_markets = result.get("markets") or []
+                if error:
+                    stats["details_failed"] += 1
+                    if len(stats["details_error_samples"]) < 5:
+                        stats["details_error_samples"].append(str(error))
+                    continue
+                if not extra_markets:
+                    stats["details_empty"] += 1
+                    continue
+                stats["details_success"] += 1
+                bookmakers_list = event_obj.get("bookmakers")
+                if not isinstance(bookmakers_list, list) or not bookmakers_list:
+                    fallback_event_id = event_obj.get("id")
+                    fallback_event_url = _purebet_event_url(fallback_event_id)
+                    event_obj["bookmakers"] = [
+                        {
+                            "key": PUREBET_BOOK_KEY,
+                            "title": PUREBET_TITLE,
+                            "event_id": fallback_event_id,
+                            "event_url": fallback_event_url,
+                            "markets": [],
+                        }
+                    ]
+                    bookmakers_list = event_obj["bookmakers"]
+                book = bookmakers_list[0]
+                markets_list = book.get("markets")
+                if not isinstance(markets_list, list):
+                    markets_list = []
+                if any(m.get("key") == "h2h" for m in extra_markets):
+                    markets_list = [m for m in markets_list if m.get("key") != "h2h"]
+                markets_list.extend(extra_markets)
+                book["markets"] = markets_list
+    if sport_key:
+        events = [event for event in events if event.get("sport_key") == sport_key]
+    events = [
+        event
+        for event in events
+        if any(
+            isinstance(book, dict)
+            and isinstance(book.get("markets"), list)
+            and book.get("markets")
+            for book in (event.get("bookmakers") or [])
+        )
+    ]
+    if bookmakers:
+        allowed = {
+            str(book).strip().lower()
+            for book in bookmakers
+            if isinstance(book, str) and str(book).strip()
+        }
+        filtered = []
+        for event in events:
+            books = event.get("bookmakers") or []
+            if not isinstance(books, list):
+                continue
+            kept = [
+                book
+                for book in books
+                if (book.get("key") or "").strip().lower() in allowed
+                or (book.get("title") or "").strip().lower() in allowed
+            ]
+            if kept:
+                event["bookmakers"] = kept
+                filtered.append(event)
+        events = filtered
+    stats["events_returned_count"] = len(events)
+    fetch_events_async.last_stats = stats
+    return events
+
 PROVIDER_KEY = PUREBET_BOOK_KEY
 PROVIDER_TITLE = PUREBET_TITLE
 fetch_events.last_stats = {}
+fetch_events_async.last_stats = {}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from unittest.mock import patch
 
@@ -126,6 +127,48 @@ class PurebetMarketParsingTests(unittest.TestCase):
         books = events[0].get("bookmakers") or []
         self.assertEqual(len(books), 1)
         self.assertEqual((books[0].get("key") or "").strip().lower(), "purebet")
+
+    def test_fetch_events_async_supports_file_source(self) -> None:
+        sample_events = [
+            {
+                "id": "evt-1",
+                "sport_key": "soccer_epl",
+                "home_team": "Home FC",
+                "away_team": "Away FC",
+                "commence_time": "2026-03-10T12:00:00Z",
+                "bookmakers": [
+                    {
+                        "key": "purebet",
+                        "title": "Purebet",
+                        "markets": [
+                            {
+                                "key": "h2h",
+                                "outcomes": [
+                                    {"name": "Home FC", "price": 2.0},
+                                    {"name": "Away FC", "price": 2.0},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        with (
+            patch.object(purebet, "PUREBET_SOURCE", "file"),
+            patch.object(purebet, "_load_event_list", return_value=sample_events),
+        ):
+            events = asyncio.run(
+                purebet.fetch_events_async(
+                    sport_key="soccer_epl",
+                    markets=["h2h"],
+                    regions=["eu"],
+                    bookmakers=["PureBet"],
+                )
+            )
+
+        self.assertEqual(len(events), 1)
+        stats = purebet.fetch_events_async.last_stats
+        self.assertEqual(stats.get("events_returned_count"), 1)
 
 
 if __name__ == "__main__":

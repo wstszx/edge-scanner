@@ -1,35 +1,42 @@
 from __future__ import annotations
 
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Awaitable, Callable, Dict, List, Optional, Sequence
 
 from .betdex import PROVIDER_TITLE as BETDEX_TITLE
 from .betdex import fetch_events as fetch_betdex_events
+from .betdex import fetch_events_async as fetch_betdex_events_async
 from .bookmaker_xyz import PROVIDER_TITLE as BOOKMAKER_XYZ_TITLE
 from .bookmaker_xyz import fetch_events as fetch_bookmaker_xyz_events
+from .bookmaker_xyz import fetch_events_async as fetch_bookmaker_xyz_events_async
 from .polymarket import PROVIDER_TITLE as POLYMARKET_TITLE
 from .polymarket import fetch_events as fetch_polymarket_events
+from .polymarket import fetch_events_async as fetch_polymarket_events_async
 from .purebet import PROVIDER_TITLE as PUREBET_TITLE
 from .purebet import fetch_events as fetch_purebet_events
+from .purebet import fetch_events_async as fetch_purebet_events_async
 from .dexsport_io import PROVIDER_TITLE as DEXSPORT_IO_TITLE
 from .dexsport_io import fetch_events as fetch_dexsport_io_events
+from .dexsport_io import fetch_events_async as fetch_dexsport_io_events_async
 from .sportbet_one import PROVIDER_TITLE as SPORTBET_ONE_TITLE
 from .sportbet_one import fetch_events as fetch_sportbet_one_events
+from .sportbet_one import fetch_events_async as fetch_sportbet_one_events_async
 from .sx_bet import PROVIDER_TITLE as SX_BET_TITLE
 from .sx_bet import fetch_events as fetch_sx_bet_events
+from .sx_bet import fetch_events_async as fetch_sx_bet_events_async
 
 ProviderFetcher = Callable[
     [str, Sequence[str], Sequence[str], Optional[Sequence[str]]],
-    List[dict],
+    List[dict] | Awaitable[List[dict]],
 ]
 
 PROVIDER_FETCHERS: Dict[str, ProviderFetcher] = {
-    "purebet": fetch_purebet_events,
-    "betdex": fetch_betdex_events,
-    "bookmaker_xyz": fetch_bookmaker_xyz_events,
-    "sx_bet": fetch_sx_bet_events,
-    "polymarket": fetch_polymarket_events,
-    "dexsport_io": fetch_dexsport_io_events,
-    "sportbet_one": fetch_sportbet_one_events,
+    "purebet": fetch_purebet_events_async,
+    "betdex": fetch_betdex_events_async,
+    "bookmaker_xyz": fetch_bookmaker_xyz_events_async,
+    "sx_bet": fetch_sx_bet_events_async,
+    "polymarket": fetch_polymarket_events_async,
+    "dexsport_io": fetch_dexsport_io_events_async,
+    "sportbet_one": fetch_sportbet_one_events_async,
 }
 
 PROVIDER_TITLES: Dict[str, str] = {

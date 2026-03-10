@@ -110,6 +110,99 @@ class TestSxBetSegmentation(unittest.TestCase):
         self.assertEqual(stake_map.get("m1"), (2.5, 2.0))
         self.assertEqual(stake_map.get("m2"), (None, None))
 
+    def test_numeric_type_h2h_alias_infers_market_key(self) -> None:
+        market = {
+            "type": 226,
+            "teamOneName": "Home Team",
+            "teamTwoName": "Away Team",
+            "outcomeOneName": "Home Team",
+            "outcomeTwoName": "Away Team",
+            "bestOddsOutcomeOne": 2.02,
+            "bestOddsOutcomeTwo": 1.95,
+            "marketHash": "mh-1",
+        }
+        normalized = sx_bet._normalize_fixture_market(
+            market=market,
+            requested_markets={"h2h"},
+            home_team="Home Team",
+            away_team="Away Team",
+        )
+        self.assertIsNotNone(normalized)
+        self.assertEqual(normalized.get("market_key"), "h2h")
+
+    def test_markets_active_mainline_filter_preserves_scope_without_mainline(self) -> None:
+        rows = [
+            {
+                "sportId": 1,
+                "sportXeventId": "evt-1",
+                "teamOneName": "Home Team",
+                "teamTwoName": "Away Team",
+                "gameTime": 1770000000,
+                "type": 342,
+                "line": -3.5,
+                "mainLine": False,
+                "outcomeOneName": "Home Team -3.5",
+                "outcomeTwoName": "Away Team +3.5",
+                "marketHash": "spread-1",
+            }
+        ]
+        fixtures, meta = sx_bet._build_fixtures_from_markets_active(
+            rows=rows,
+            sport_id=1,
+            only_main_line=True,
+        )
+        self.assertEqual(len(fixtures), 1)
+        fixture_markets = fixtures[0].get("markets") or []
+        self.assertEqual(len(fixture_markets), 1)
+        self.assertEqual(meta.get("markets_rows_main_line_filtered"), 0)
+
+    def test_auto_fixture_loader_falls_back_to_summary_when_markets_active_fails(self) -> None:
+        with (
+            patch("providers.sx_bet._load_upcoming_fixtures_markets_active", side_effect=sx_bet.ProviderError("boom")),
+            patch(
+                "providers.sx_bet._load_upcoming_fixtures_summary",
+                return_value=([{"eventId": "evt-1", "teamOne": "A", "teamTwo": "B", "gameTime": 1770000000}], {"fixture_source": "summary"}),
+            ),
+            patch("providers.sx_bet._fixture_source_mode", return_value="auto"),
+        ):
+            fixtures, meta = sx_bet._load_upcoming_fixtures(
+                sport_id=1,
+                base_token="usdc",
+                retries=0,
+                backoff_seconds=0.0,
+            )
+        self.assertEqual(len(fixtures), 1)
+        self.assertTrue(meta.get("fallback_used"))
+        self.assertIn("boom", str(meta.get("fallback_reason")))
+
+    def test_active_league_ids_are_cached_between_calls(self) -> None:
+        sx_bet.LEAGUES_CACHE["expires_at"] = 0.0
+        sx_bet.LEAGUES_CACHE["entries"] = {}
+        payload = {
+            "status": "success",
+            "data": [
+                {"leagueId": 1, "sportId": 1},
+                {"leagueId": 2, "sportId": 1},
+                {"leagueId": 999, "sportId": 2},
+            ],
+        }
+        with patch("providers.sx_bet._request_json", return_value=(payload, 0)) as mocked_request:
+            league_ids_first, retries_first = sx_bet._load_active_league_ids(
+                sport_id=1,
+                retries=0,
+                backoff_seconds=0.0,
+            )
+            league_ids_second, retries_second = sx_bet._load_active_league_ids(
+                sport_id=1,
+                retries=0,
+                backoff_seconds=0.0,
+            )
+        self.assertEqual(league_ids_first, [1, 2])
+        self.assertEqual(league_ids_second, [1, 2])
+        self.assertEqual(retries_first, 0)
+        self.assertEqual(retries_second, 0)
+        self.assertEqual(mocked_request.call_count, 1)
+
 
 class TestPolymarketDepth(unittest.TestCase):
     def test_book_depth_uses_asks_notional(self) -> None:

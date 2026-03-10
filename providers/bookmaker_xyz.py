@@ -1,6 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import asyncio
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -11,7 +13,10 @@ import time
 from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.parse import quote
 
+import httpx
 import requests
+
+from ._async_http import get_shared_client, request_json, request_text
 
 PROVIDER_KEY = "bookmaker_xyz"
 PROVIDER_TITLE = "bookmaker.xyz"
@@ -33,9 +38,17 @@ BOOKMAKER_XYZ_MAX_PAGES_RAW = os.getenv("BOOKMAKER_XYZ_MAX_PAGES", "6").strip()
 BOOKMAKER_XYZ_TIMEOUT_RAW = os.getenv("BOOKMAKER_XYZ_TIMEOUT_SECONDS", "25").strip()
 BOOKMAKER_XYZ_RETRIES_RAW = os.getenv("BOOKMAKER_XYZ_RETRIES", "2").strip()
 BOOKMAKER_XYZ_RETRY_BACKOFF_RAW = os.getenv("BOOKMAKER_XYZ_RETRY_BACKOFF", "0.5").strip()
-BOOKMAKER_XYZ_CACHE_TTL_RAW = os.getenv("BOOKMAKER_XYZ_CACHE_TTL", "45").strip()
+BOOKMAKER_XYZ_CACHE_TTL_RAW = os.getenv("BOOKMAKER_XYZ_CACHE_TTL", "12").strip()
 BOOKMAKER_XYZ_DICT_CACHE_TTL_RAW = os.getenv("BOOKMAKER_XYZ_DICT_CACHE_TTL", "21600").strip()
+BOOKMAKER_XYZ_DICT_DISK_CACHE_CLEANUP_SECONDS_RAW = os.getenv(
+    "BOOKMAKER_XYZ_DICT_DISK_CACHE_CLEANUP_SECONDS",
+    "300",
+).strip()
 BOOKMAKER_XYZ_LOOKBACK_SECONDS_RAW = os.getenv("BOOKMAKER_XYZ_LOOKBACK_SECONDS", "7200").strip()
+BOOKMAKER_XYZ_DICT_DISK_CACHE_DIR = os.getenv(
+    "BOOKMAKER_XYZ_DICT_DISK_CACHE_DIR",
+    os.path.join("data", "bookmaker_xyz_dict_cache"),
+).strip()
 BOOKMAKER_XYZ_INCLUDE_LIVE = os.getenv("BOOKMAKER_XYZ_INCLUDE_LIVE", "1").strip().lower() not in {
     "0",
     "false",
@@ -155,6 +168,9 @@ DICTIONARY_CACHE: Dict[str, object] = {
     "data": None,
     "source": "",
 }
+DICTIONARY_DISK_CACHE_STATE: Dict[str, float] = {
+    "last_cleanup_at": 0.0,
+}
 SCAN_CACHE_LOCK = threading.RLock()
 SCAN_CACHE_CONTEXT: Dict[str, object] = {
     "active": False,
@@ -163,6 +179,7 @@ SCAN_CACHE_CONTEXT: Dict[str, object] = {
     "conditions": None,
     "conditions_meta": {},
 }
+SCAN_CACHE_ASYNC_LOCK: Optional[asyncio.Lock] = None
 
 
 def enable_scan_cache() -> None:
@@ -181,6 +198,13 @@ def disable_scan_cache() -> None:
         SCAN_CACHE_CONTEXT["dictionary_meta"] = {}
         SCAN_CACHE_CONTEXT["conditions"] = None
         SCAN_CACHE_CONTEXT["conditions_meta"] = {}
+
+
+def _scan_cache_async_lock() -> asyncio.Lock:
+    global SCAN_CACHE_ASYNC_LOCK
+    if SCAN_CACHE_ASYNC_LOCK is None:
+        SCAN_CACHE_ASYNC_LOCK = asyncio.Lock()
+    return SCAN_CACHE_ASYNC_LOCK
 
 
 class ProviderError(Exception):
@@ -317,6 +341,27 @@ def _retrying_get(url: str, retries: int, backoff_seconds: float, timeout: int) 
     raise ProviderError("bookmaker.xyz request failed")
 
 
+async def _retrying_get_async(
+    client: httpx.AsyncClient,
+    url: str,
+    retries: int,
+    backoff_seconds: float,
+    timeout: int,
+) -> Tuple[str, int]:
+    return await request_text(
+        client,
+        "GET",
+        url,
+        headers=_headers(),
+        timeout=float(timeout),
+        retries=retries,
+        backoff_seconds=backoff_seconds,
+        error_cls=ProviderError,
+        network_error_prefix="bookmaker.xyz network error",
+        status_error_message=lambda status_code: f"bookmaker.xyz request failed ({status_code})",
+    )
+
+
 def _retrying_graphql(
     url: str,
     query: str,
@@ -368,6 +413,38 @@ def _retrying_graphql(
     if last_error:
         raise last_error
     raise ProviderError("bookmaker.xyz GraphQL failed")
+
+
+async def _retrying_graphql_async(
+    client: httpx.AsyncClient,
+    url: str,
+    query: str,
+    variables: Dict[str, object],
+    retries: int,
+    backoff_seconds: float,
+    timeout: int,
+) -> Tuple[dict, int]:
+    payload, attempt = await request_json(
+        client,
+        "POST",
+        url,
+        json_payload={"query": query, "variables": variables},
+        headers={"Content-Type": "application/json", "Accept": "application/json", **_headers()},
+        timeout=float(timeout),
+        retries=retries,
+        backoff_seconds=backoff_seconds,
+        error_cls=ProviderError,
+        network_error_prefix="bookmaker.xyz GraphQL network error",
+        parse_error_message="Failed to parse bookmaker.xyz GraphQL response",
+        status_error_message=lambda status_code: f"bookmaker.xyz GraphQL failed ({status_code})",
+    )
+    if isinstance(payload, dict) and isinstance(payload.get("errors"), list) and payload["errors"]:
+        first = payload["errors"][0]
+        message = _normalize_text(first.get("message") if isinstance(first, dict) else first)
+        raise ProviderError(f"bookmaker.xyz GraphQL error: {message or 'unknown error'}")
+    if not isinstance(payload, dict):
+        raise ProviderError("bookmaker.xyz GraphQL response is invalid")
+    return payload, attempt
 
 
 def _parse_chain_ids() -> List[int]:
@@ -488,13 +565,116 @@ def _parse_dictionaries_via_node(x_object_literal: str, timeout: int) -> dict:
         return payload
 
 
+def _dictionary_disk_cache_path(source_url: object) -> str:
+    base_dir = _normalize_text(BOOKMAKER_XYZ_DICT_DISK_CACHE_DIR)
+    if not base_dir:
+        return ""
+    token = hashlib.sha256(_normalize_text(source_url).encode("utf-8")).hexdigest()[:24]
+    if not token:
+        return ""
+    return os.path.join(base_dir, f"{token}.json")
+
+
+def _dictionary_disk_cache_ttl_seconds() -> int:
+    return _int_or_default(BOOKMAKER_XYZ_DICT_CACHE_TTL_RAW, 21600, min_value=0)
+
+
+def _dictionary_disk_cache_cleanup_seconds() -> int:
+    return _int_or_default(BOOKMAKER_XYZ_DICT_DISK_CACHE_CLEANUP_SECONDS_RAW, 300, min_value=0)
+
+
+def _prune_dictionary_disk_cache(force: bool = False) -> None:
+    base_dir = _normalize_text(BOOKMAKER_XYZ_DICT_DISK_CACHE_DIR)
+    if not base_dir or not os.path.isdir(base_dir):
+        return
+    now = time.time()
+    with SCAN_CACHE_LOCK:
+        last_cleanup_at = float(DICTIONARY_DISK_CACHE_STATE.get("last_cleanup_at", 0.0) or 0.0)
+        if not force and (now - last_cleanup_at) < _dictionary_disk_cache_cleanup_seconds():
+            return
+        DICTIONARY_DISK_CACHE_STATE["last_cleanup_at"] = now
+    ttl = _dictionary_disk_cache_ttl_seconds()
+    stale_before = now - ttl if ttl > 0 else now
+    try:
+        entries = os.listdir(base_dir)
+    except OSError:
+        return
+    for name in entries:
+        if not name.endswith(".json"):
+            continue
+        cache_path = os.path.join(base_dir, name)
+        try:
+            modified_at = os.path.getmtime(cache_path)
+        except OSError:
+            continue
+        if ttl <= 0 or modified_at < stale_before:
+            try:
+                os.remove(cache_path)
+            except OSError:
+                continue
+
+
+def _load_dictionaries_from_disk_cache(source_url: object) -> Optional[dict]:
+    cache_path = _dictionary_disk_cache_path(source_url)
+    if not cache_path or not os.path.exists(cache_path):
+        return None
+    ttl = _dictionary_disk_cache_ttl_seconds()
+    if ttl <= 0:
+        return None
+    _prune_dictionary_disk_cache()
+    try:
+        modified_at = os.path.getmtime(cache_path)
+    except OSError:
+        return None
+    if (time.time() - modified_at) > ttl:
+        try:
+            os.remove(cache_path)
+        except OSError:
+            pass
+        return None
+    try:
+        with open(cache_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    dictionaries = payload.get("dictionaries")
+    if not isinstance(dictionaries, dict):
+        return None
+    return dictionaries
+
+
+def _persist_dictionaries_to_disk_cache(source_url: object, dictionaries: dict) -> None:
+    cache_path = _dictionary_disk_cache_path(source_url)
+    if not cache_path or not isinstance(dictionaries, dict):
+        return
+    try:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        temp_path = f"{cache_path}.tmp"
+        payload = {
+            "saved_at": dt.datetime.now(dt.timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "source_url": _normalize_text(source_url),
+            "dictionaries": dictionaries,
+        }
+        with open(temp_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+        os.replace(temp_path, cache_path)
+        _prune_dictionary_disk_cache()
+    except OSError:
+        return
+
+
 def _load_dictionaries(
     retries: int,
     backoff_seconds: float,
     timeout: int,
 ) -> Tuple[Optional[dict], dict]:
     now = time.time()
-    ttl = _int_or_default(BOOKMAKER_XYZ_DICT_CACHE_TTL_RAW, 21600, min_value=0)
+    ttl = _dictionary_disk_cache_ttl_seconds()
     cache_valid = ttl > 0 and now < float(DICTIONARY_CACHE.get("expires_at", 0.0))
     cached_data = DICTIONARY_CACHE.get("data")
     if cache_valid and isinstance(cached_data, dict):
@@ -509,10 +689,89 @@ def _load_dictionaries(
         if not asset_path:
             raise ProviderError("Failed to detect bookmaker.xyz const asset path")
         const_url = _public_base().rstrip("/") + asset_path
+        cached_disk = _load_dictionaries_from_disk_cache(const_url)
+        if isinstance(cached_disk, dict):
+            DICTIONARY_CACHE["data"] = cached_disk
+            DICTIONARY_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+            DICTIONARY_CACHE["source"] = const_url
+            meta.update({"cache": "disk_hit", "source": const_url, "retries_used": retries_used})
+            return cached_disk, meta
         const_js, attempt = _retrying_get(const_url, retries, backoff_seconds, timeout)
         retries_used += attempt
         x_object_literal = _extract_x_object_literal(const_js)
         dictionaries = _parse_dictionaries_via_node(x_object_literal, timeout=timeout)
+        _persist_dictionaries_to_disk_cache(const_url, dictionaries)
+        DICTIONARY_CACHE["data"] = dictionaries
+        DICTIONARY_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+        DICTIONARY_CACHE["source"] = const_url
+        meta.update({"source": const_url, "retries_used": retries_used})
+        return dictionaries, meta
+    except Exception as exc:
+        cached = DICTIONARY_CACHE.get("data")
+        if isinstance(cached, dict):
+            meta.update(
+                {
+                    "cache": "stale",
+                    "source": DICTIONARY_CACHE.get("source", ""),
+                    "error": str(exc),
+                    "retries_used": retries_used,
+                }
+            )
+            return cached, meta
+        meta.update({"error": str(exc), "retries_used": retries_used})
+        return None, meta
+
+
+async def _load_dictionaries_async(
+    client: httpx.AsyncClient,
+    retries: int,
+    backoff_seconds: float,
+    timeout: int,
+) -> Tuple[Optional[dict], dict]:
+    now = time.time()
+    ttl = _dictionary_disk_cache_ttl_seconds()
+    cache_valid = ttl > 0 and now < float(DICTIONARY_CACHE.get("expires_at", 0.0))
+    cached_data = DICTIONARY_CACHE.get("data")
+    if cache_valid and isinstance(cached_data, dict):
+        return cached_data, {"cache": "hit", "source": DICTIONARY_CACHE.get("source", "")}
+
+    meta = {"cache": "miss", "source": "", "error": ""}
+    retries_used = 0
+    try:
+        home_html, attempt = await _retrying_get_async(
+            client,
+            _home_url(),
+            retries,
+            backoff_seconds,
+            timeout,
+        )
+        retries_used += attempt
+        asset_path = _extract_const_asset_path(home_html)
+        if not asset_path:
+            raise ProviderError("Failed to detect bookmaker.xyz const asset path")
+        const_url = _public_base().rstrip("/") + asset_path
+        cached_disk = await asyncio.to_thread(_load_dictionaries_from_disk_cache, const_url)
+        if isinstance(cached_disk, dict):
+            DICTIONARY_CACHE["data"] = cached_disk
+            DICTIONARY_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+            DICTIONARY_CACHE["source"] = const_url
+            meta.update({"cache": "disk_hit", "source": const_url, "retries_used": retries_used})
+            return cached_disk, meta
+        const_js, attempt = await _retrying_get_async(
+            client,
+            const_url,
+            retries,
+            backoff_seconds,
+            timeout,
+        )
+        retries_used += attempt
+        x_object_literal = _extract_x_object_literal(const_js)
+        dictionaries = await asyncio.to_thread(
+            _parse_dictionaries_via_node,
+            x_object_literal,
+            timeout,
+        )
+        await asyncio.to_thread(_persist_dictionaries_to_disk_cache, const_url, dictionaries)
         DICTIONARY_CACHE["data"] = dictionaries
         DICTIONARY_CACHE["expires_at"] = now + ttl if ttl > 0 else now
         DICTIONARY_CACHE["source"] = const_url
@@ -548,7 +807,7 @@ def _load_conditions_snapshot(
     page_size: int,
     max_pages: int,
 ) -> Tuple[List[dict], dict]:
-    ttl = _int_or_default(BOOKMAKER_XYZ_CACHE_TTL_RAW, 45, min_value=0)
+    ttl = _int_or_default(BOOKMAKER_XYZ_CACHE_TTL_RAW, 12, min_value=0)
     now = time.time()
     cache_valid = ttl > 0 and now < float(CONDITIONS_CACHE.get("expires_at", 0.0))
     cached_conditions = CONDITIONS_CACHE.get("conditions")
@@ -585,6 +844,87 @@ def _load_conditions_snapshot(
                 "orderDirection": "desc",
             }
             payload, retries_used = _retrying_graphql(
+                endpoint,
+                GRAPHQL_CONDITIONS_QUERY,
+                variables,
+                retries=retries,
+                backoff_seconds=backoff_seconds,
+                timeout=timeout,
+            )
+            total_retries_used += retries_used
+            pages_fetched += 1
+            page_items = (
+                payload.get("data", {}).get("conditions")
+                if isinstance(payload.get("data"), dict)
+                else []
+            )
+            if not isinstance(page_items, list):
+                break
+            valid_page_items = [item for item in page_items if isinstance(item, dict)]
+            for item in valid_page_items:
+                item["__chain_id"] = chain_id
+                all_conditions.append(item)
+            if len(valid_page_items) < page_size:
+                break
+
+    meta = {
+        "cache": "miss",
+        "pages_fetched": pages_fetched,
+        "retries_used": total_retries_used,
+        "chains_queried": chains_queried,
+    }
+    CONDITIONS_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+    CONDITIONS_CACHE["conditions"] = all_conditions
+    CONDITIONS_CACHE["meta"] = meta
+    return all_conditions, meta
+
+
+async def _load_conditions_snapshot_async(
+    client: httpx.AsyncClient,
+    retries: int,
+    backoff_seconds: float,
+    timeout: int,
+    page_size: int,
+    max_pages: int,
+) -> Tuple[List[dict], dict]:
+    ttl = _int_or_default(BOOKMAKER_XYZ_CACHE_TTL_RAW, 12, min_value=0)
+    now = time.time()
+    cache_valid = ttl > 0 and now < float(CONDITIONS_CACHE.get("expires_at", 0.0))
+    cached_conditions = CONDITIONS_CACHE.get("conditions")
+    if cache_valid and isinstance(cached_conditions, list):
+        meta = dict(CONDITIONS_CACHE.get("meta") or {})
+        meta["cache"] = "hit"
+        return cached_conditions, meta
+
+    lookback_seconds = _int_or_default(BOOKMAKER_XYZ_LOOKBACK_SECONDS_RAW, 7200, min_value=0)
+    min_starts_at = int(time.time()) - lookback_seconds
+    game_state_filter = ["Prematch", "Live"] if BOOKMAKER_XYZ_INCLUDE_LIVE else ["Prematch"]
+    where_filter = {
+        "state": "Active",
+        "game_": {
+            "state_in": game_state_filter,
+            "startsAt_gt": str(min_starts_at),
+        },
+    }
+
+    all_conditions: List[dict] = []
+    total_retries_used = 0
+    pages_fetched = 0
+    chains_queried: List[int] = []
+
+    for chain_id in _parse_chain_ids():
+        endpoint = _graph_endpoint_for_chain(chain_id)
+        chains_queried.append(chain_id)
+        for page in range(max_pages):
+            variables = {
+                "first": page_size,
+                "skip": page * page_size,
+                "where": where_filter,
+                "orderBy": "conditionId",
+                "orderDirection": "desc",
+            }
+            payload, retries_used = await _retrying_graphql_async(
+                client,
                 endpoint,
                 GRAPHQL_CONDITIONS_QUERY,
                 variables,
@@ -1093,7 +1433,12 @@ def _load_file_events(path: str) -> List[dict]:
     return [item for item in payload if isinstance(item, dict)]
 
 
-def fetch_events(
+def _set_last_stats(stats: dict) -> None:
+    fetch_events.last_stats = stats
+    fetch_events_async.last_stats = stats
+
+
+async def fetch_events_async(
     sport_key: str,
     markets: Sequence[str],
     regions: Sequence[str],
@@ -1116,7 +1461,7 @@ def fetch_events(
         "dictionary_cache": "miss",
         "dictionary_loaded": False,
     }
-    fetch_events.last_stats = stats
+    _set_last_stats(stats)
 
     requested_markets = _requested_market_keys(markets)
     if not requested_markets:
@@ -1131,7 +1476,7 @@ def fetch_events(
         events = _load_file_events(BOOKMAKER_XYZ_SAMPLE_PATH)
         stats["events_payload_count"] = len(events)
         stats["events_returned_count"] = len(events)
-        fetch_events.last_stats = stats
+        _set_last_stats(stats)
         return events
 
     if (BOOKMAKER_XYZ_SOURCE or "api").lower() != "api":
@@ -1143,40 +1488,57 @@ def fetch_events(
     page_size = _int_or_default(BOOKMAKER_XYZ_PAGE_SIZE_RAW, 400, min_value=1)
     max_pages = _int_or_default(BOOKMAKER_XYZ_MAX_PAGES_RAW, 6, min_value=1)
 
+    client = await get_shared_client(PROVIDER_KEY, timeout=float(timeout), follow_redirects=True)
     if bool(SCAN_CACHE_CONTEXT.get("active")):
         with SCAN_CACHE_LOCK:
             cached_dictionaries = SCAN_CACHE_CONTEXT.get("dictionaries")
             cached_dictionary_meta = dict(SCAN_CACHE_CONTEXT.get("dictionary_meta") or {})
-            if isinstance(cached_dictionaries, dict):
-                dictionaries = cached_dictionaries
-                dictionary_meta = {
-                    **cached_dictionary_meta,
-                    "cache": "scan_hit",
-                }
-            else:
-                dictionaries, dictionary_meta = _load_dictionaries(
-                    retries=retries,
-                    backoff_seconds=backoff,
-                    timeout=timeout,
-                )
-                SCAN_CACHE_CONTEXT["dictionaries"] = dictionaries
-                SCAN_CACHE_CONTEXT["dictionary_meta"] = dict(dictionary_meta or {})
+        if isinstance(cached_dictionaries, dict):
+            dictionaries = cached_dictionaries
+            dictionary_meta = {
+                **cached_dictionary_meta,
+                "cache": "scan_hit",
+            }
+        else:
+            async with _scan_cache_async_lock():
+                with SCAN_CACHE_LOCK:
+                    cached_dictionaries = SCAN_CACHE_CONTEXT.get("dictionaries")
+                    cached_dictionary_meta = dict(SCAN_CACHE_CONTEXT.get("dictionary_meta") or {})
+                if isinstance(cached_dictionaries, dict):
+                    dictionaries = cached_dictionaries
+                    dictionary_meta = {
+                        **cached_dictionary_meta,
+                        "cache": "scan_hit",
+                    }
+                else:
+                    dictionaries, dictionary_meta = await _load_dictionaries_async(
+                        client=client,
+                        retries=retries,
+                        backoff_seconds=backoff,
+                        timeout=timeout,
+                    )
+                    if True:
+                        with SCAN_CACHE_LOCK:
+                            SCAN_CACHE_CONTEXT["dictionaries"] = dictionaries
+                            SCAN_CACHE_CONTEXT["dictionary_meta"] = dict(dictionary_meta or {})
     else:
-        dictionaries, dictionary_meta = _load_dictionaries(
+        dictionaries, dictionary_meta = await _load_dictionaries_async(
+            client=client,
             retries=retries,
             backoff_seconds=backoff,
             timeout=timeout,
         )
-    stats["dictionary_cache"] = _normalize_text(dictionary_meta.get("cache") or "miss")
-    stats["dictionary_source"] = _normalize_text(dictionary_meta.get("source"))
-    stats["dictionary_error"] = _normalize_text(dictionary_meta.get("error"))
-    stats["retries_used"] += int(dictionary_meta.get("retries_used", 0) or 0)
-    stats["dictionary_loaded"] = isinstance(dictionaries, dict)
+    if True:
+        stats["dictionary_cache"] = _normalize_text(dictionary_meta.get("cache") or "miss")
+        stats["dictionary_source"] = _normalize_text(dictionary_meta.get("source"))
+        stats["dictionary_error"] = _normalize_text(dictionary_meta.get("error"))
+        stats["retries_used"] += int(dictionary_meta.get("retries_used", 0) or 0)
+        stats["dictionary_loaded"] = isinstance(dictionaries, dict)
 
-    if bool(SCAN_CACHE_CONTEXT.get("active")):
-        with SCAN_CACHE_LOCK:
-            cached_conditions = SCAN_CACHE_CONTEXT.get("conditions")
-            cached_conditions_meta = dict(SCAN_CACHE_CONTEXT.get("conditions_meta") or {})
+        if bool(SCAN_CACHE_CONTEXT.get("active")):
+            with SCAN_CACHE_LOCK:
+                cached_conditions = SCAN_CACHE_CONTEXT.get("conditions")
+                cached_conditions_meta = dict(SCAN_CACHE_CONTEXT.get("conditions_meta") or {})
             if isinstance(cached_conditions, list):
                 conditions = cached_conditions
                 payload_meta = {
@@ -1184,23 +1546,37 @@ def fetch_events(
                     "cache": "scan_hit",
                 }
             else:
-                conditions, payload_meta = _load_conditions_snapshot(
-                    retries=retries,
-                    backoff_seconds=backoff,
-                    timeout=timeout,
-                    page_size=page_size,
-                    max_pages=max_pages,
-                )
-                SCAN_CACHE_CONTEXT["conditions"] = conditions
-                SCAN_CACHE_CONTEXT["conditions_meta"] = dict(payload_meta or {})
-    else:
-        conditions, payload_meta = _load_conditions_snapshot(
-            retries=retries,
-            backoff_seconds=backoff,
-            timeout=timeout,
-            page_size=page_size,
-            max_pages=max_pages,
-        )
+                async with _scan_cache_async_lock():
+                    with SCAN_CACHE_LOCK:
+                        cached_conditions = SCAN_CACHE_CONTEXT.get("conditions")
+                        cached_conditions_meta = dict(SCAN_CACHE_CONTEXT.get("conditions_meta") or {})
+                    if isinstance(cached_conditions, list):
+                        conditions = cached_conditions
+                        payload_meta = {
+                            **cached_conditions_meta,
+                            "cache": "scan_hit",
+                        }
+                    else:
+                        conditions, payload_meta = await _load_conditions_snapshot_async(
+                            client=client,
+                            retries=retries,
+                            backoff_seconds=backoff,
+                            timeout=timeout,
+                            page_size=page_size,
+                            max_pages=max_pages,
+                        )
+                        with SCAN_CACHE_LOCK:
+                            SCAN_CACHE_CONTEXT["conditions"] = conditions
+                            SCAN_CACHE_CONTEXT["conditions_meta"] = dict(payload_meta or {})
+        else:
+            conditions, payload_meta = await _load_conditions_snapshot_async(
+                client=client,
+                retries=retries,
+                backoff_seconds=backoff,
+                timeout=timeout,
+                page_size=page_size,
+                max_pages=max_pages,
+            )
     stats["payload_cache"] = _normalize_text(payload_meta.get("cache") or "miss")
     stats["pages_fetched"] = int(payload_meta.get("pages_fetched", 0) or 0)
     stats["retries_used"] += int(payload_meta.get("retries_used", 0) or 0)
@@ -1215,8 +1591,28 @@ def fetch_events(
     )
     stats.update(normalize_stats)
     stats["events_returned_count"] = len(events_out)
-    fetch_events.last_stats = stats
+    _set_last_stats(stats)
     return events_out
+
+
+def fetch_events(
+    sport_key: str,
+    markets: Sequence[str],
+    regions: Sequence[str],
+    bookmakers: Optional[Sequence[str]] = None,
+) -> List[dict]:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            fetch_events_async(
+                sport_key,
+                markets,
+                regions,
+                bookmakers=bookmakers,
+            )
+        )
+    raise RuntimeError("fetch_events() cannot be used inside an active event loop; use await fetch_events_async()")
 
 
 fetch_events.last_stats = {
@@ -1224,3 +1620,5 @@ fetch_events.last_stats = {
     "source": BOOKMAKER_XYZ_SOURCE or "api",
     "events_returned_count": 0,
 }
+fetch_events_async.last_stats = dict(fetch_events.last_stats)
+

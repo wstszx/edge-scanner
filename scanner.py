@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import atexit
+import asyncio
+import contextvars
 import datetime as dt
 import concurrent.futures
 import difflib
+import inspect
 import itertools
 import json
 import math
@@ -209,10 +213,16 @@ PUREBET_FUZZY_THRESHOLD_RAW = os.getenv("PUREBET_FUZZY_MATCH_THRESHOLD", "0.85")
 PUREBET_MARKET_WORKERS_RAW = os.getenv("PUREBET_MARKET_WORKERS", "8").strip()
 PUREBET_MARKET_RETRIES_RAW = os.getenv("PUREBET_MARKET_RETRIES", "2").strip()
 PUREBET_RETRY_BACKOFF_RAW = os.getenv("PUREBET_RETRY_BACKOFF", "0.4").strip()
-PROVIDER_FETCH_MAX_WORKERS_RAW = os.getenv("PROVIDER_FETCH_MAX_WORKERS", "3").strip()
-SPORT_SCAN_MAX_WORKERS_RAW = os.getenv("SPORT_SCAN_MAX_WORKERS", "2").strip()
+PROVIDER_FETCH_MAX_WORKERS_RAW = os.getenv("PROVIDER_FETCH_MAX_WORKERS", "8").strip()
+SPORT_SCAN_MAX_WORKERS_RAW = os.getenv("SPORT_SCAN_MAX_WORKERS", "4").strip()
 PROVIDER_NETWORK_RETRY_ONCE_RAW = os.getenv("PROVIDER_NETWORK_RETRY_ONCE", "1").strip()
 PROVIDER_NETWORK_RETRY_DELAY_MS_RAW = os.getenv("PROVIDER_NETWORK_RETRY_DELAY_MS", "250").strip()
+PROVIDER_PROXY_MIRROR_DEDUPE = os.getenv("PROVIDER_PROXY_MIRROR_DEDUPE", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 PUREBET_MARKETS_ENABLED = os.getenv("PUREBET_MARKETS_ENABLED", "1").strip().lower() not in {
     "0",
     "false",
@@ -238,6 +248,10 @@ PUREBET_DEFAULT_LEAGUE_MAP = {
 }
 PUREBET_LEAGUE_MAP_RAW = os.getenv("PUREBET_LEAGUE_MAP", "").strip()
 PUREBET_SUPPORTED_MARKETS = {"h2h", "spreads", "totals"}
+PROXY_PROVIDER_MIRRORS = {
+    "dexsport_io": "bookmaker_xyz",
+    "sportbet_one": "bookmaker_xyz",
+}
 PUREBET_ACTIVE_LEAGUES_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
     "mapping": {},
@@ -252,6 +266,88 @@ class ScannerError(Exception):
     def __init__(self, message: str, status_code: Optional[int] = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+class _ScanAsyncRuntime:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._thread: Optional[threading.Thread] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._ready = threading.Event()
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread and self._thread.is_alive() and self._loop is not None:
+                return
+            self._ready.clear()
+            self._thread = threading.Thread(
+                target=self._run_loop,
+                name="scanner-async-runtime",
+                daemon=True,
+            )
+            self._thread.start()
+        self._ready.wait(timeout=2.0)
+        if self._loop is None:
+            raise RuntimeError("Scanner async runtime failed to start")
+
+    def submit(self, coroutine) -> dict:
+        self.start()
+        loop = self._loop
+        if loop is None:
+            raise RuntimeError("Scanner async runtime is unavailable")
+        future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+        return future.result()
+
+    def stop(self, timeout_seconds: float = 2.0) -> None:
+        with self._lock:
+            loop = self._loop
+            thread = self._thread
+        if loop is not None:
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except RuntimeError:
+                pass
+        if thread and thread.is_alive():
+            thread.join(timeout=max(0.0, float(timeout_seconds)))
+        with self._lock:
+            self._loop = None
+            self._thread = None
+            self._ready.clear()
+
+    def _run_loop(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        with self._lock:
+            self._loop = loop
+        self._ready.set()
+        try:
+            loop.run_forever()
+        finally:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                try:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception:
+                    pass
+            loop.close()
+            with self._lock:
+                self._loop = None
+
+
+_SCAN_ASYNC_RUNTIME = _ScanAsyncRuntime()
+
+
+def _get_scan_async_runtime() -> _ScanAsyncRuntime:
+    return _SCAN_ASYNC_RUNTIME
+
+
+def shutdown_scan_runtime() -> None:
+    _SCAN_ASYNC_RUNTIME.stop()
+
+
+atexit.register(shutdown_scan_runtime)
 
 
 def _iso_now() -> str:
@@ -613,7 +709,7 @@ _REQUEST_LOG_SENSITIVE_KEYS = {
 _REQUEST_TRACE_LOCK = threading.RLock()
 _REQUEST_TRACE_ACTIVE: List["_ScanRequestLogger"] = []
 _REQUEST_TRACE_PATCHED = False
-_REQUEST_TRACE_CONTEXT = threading.local()
+_REQUEST_TRACE_CONTEXT = contextvars.ContextVar("scan_request_logger", default=None)
 _REQUESTS_SESSION_REQUEST_ORIGINAL = requests.sessions.Session.request
 
 
@@ -832,15 +928,11 @@ def _active_request_loggers() -> List["_ScanRequestLogger"]:
 
 
 def _set_current_request_logger(logger: Optional["_ScanRequestLogger"]) -> None:
-    if logger is None:
-        if hasattr(_REQUEST_TRACE_CONTEXT, "logger"):
-            delattr(_REQUEST_TRACE_CONTEXT, "logger")
-        return
-    _REQUEST_TRACE_CONTEXT.logger = logger
+    _REQUEST_TRACE_CONTEXT.set(logger)
 
 
 def _current_request_logger() -> Optional["_ScanRequestLogger"]:
-    logger = getattr(_REQUEST_TRACE_CONTEXT, "logger", None)
+    logger = _REQUEST_TRACE_CONTEXT.get()
     if isinstance(logger, _ScanRequestLogger):
         return logger
     return None
@@ -904,13 +996,8 @@ def _activate_request_logger(logger: _ScanRequestLogger) -> None:
     with _REQUEST_TRACE_LOCK:
         for idx in range(len(_REQUEST_TRACE_ACTIVE) - 1, -1, -1):
             stale = _REQUEST_TRACE_ACTIVE[idx]
-            if stale.owner_thread_id != logger.owner_thread_id:
-                continue
-            _REQUEST_TRACE_ACTIVE.pop(idx)
-            try:
-                stale.close()
-            except Exception:
-                pass
+            if stale is logger:
+                _REQUEST_TRACE_ACTIVE.pop(idx)
         _REQUEST_TRACE_ACTIVE.append(logger)
 
 
@@ -928,18 +1015,49 @@ def _run_with_request_logger(
     logger: Optional["_ScanRequestLogger"],
     func,
     *args,
+    **kwargs,
 ):
     previous = _current_request_logger()
     _set_current_request_logger(logger)
     try:
-        return func(*args)
+        return func(*args, **kwargs)
     finally:
         _set_current_request_logger(previous)
 
 
-def _submit_with_request_logger(executor, func, *args):
+def _submit_with_request_logger(executor, func, *args, **kwargs):
     logger = _current_request_logger()
-    return executor.submit(_run_with_request_logger, logger, func, *args)
+    return executor.submit(_run_with_request_logger, logger, func, *args, **kwargs)
+
+
+async def _run_async_with_request_logger(
+    logger: Optional["_ScanRequestLogger"],
+    func,
+    *args,
+    **kwargs,
+):
+    previous = _current_request_logger()
+    _set_current_request_logger(logger)
+    try:
+        result = func(*args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+    finally:
+        _set_current_request_logger(previous)
+
+
+async def _call_with_request_logger_async(func, *args, **kwargs):
+    logger = _current_request_logger()
+    if inspect.iscoroutinefunction(func):
+        return await _run_async_with_request_logger(logger, func, *args, **kwargs)
+    return await asyncio.to_thread(_run_with_request_logger, logger, func, *args, **kwargs)
+
+
+async def _await_if_needed(value):
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 def _attach_request_log_info(result: dict, logger: _ScanRequestLogger) -> dict:
@@ -996,6 +1114,46 @@ def _normalize_provider_keys(provider_keys: Optional[Sequence[str]]) -> Optional
         normalized.append(key)
         seen.add(key)
     return normalized
+
+
+def _dedupe_proxy_provider_keys(
+    enabled_provider_keys: Sequence[str],
+    explicit_provider_keys: Optional[Sequence[str]] = None,
+) -> List[str]:
+    ordered = [str(key) for key in enabled_provider_keys if str(key) in PROVIDER_FETCHERS]
+    if not PROVIDER_PROXY_MIRROR_DEDUPE:
+        deduped: List[str] = []
+        seen = set()
+        for key in ordered:
+            if key in seen:
+                continue
+            deduped.append(key)
+            seen.add(key)
+        return deduped
+
+    explicit_set = {
+        str(key)
+        for key in (explicit_provider_keys or [])
+        if isinstance(key, str)
+    }
+    enabled_set = set(ordered)
+    for mirror_key, upstream_key in PROXY_PROVIDER_MIRRORS.items():
+        if mirror_key not in enabled_set:
+            continue
+        if upstream_key not in enabled_set:
+            continue
+        if mirror_key in explicit_set:
+            continue
+        enabled_set.remove(mirror_key)
+
+    deduped: List[str] = []
+    seen = set()
+    for key in ordered:
+        if key not in enabled_set or key in seen:
+            continue
+        deduped.append(key)
+        seen.add(key)
+    return deduped
 
 
 def _resolve_enabled_provider_keys(
@@ -1432,14 +1590,14 @@ def _provider_fetch_max_workers() -> int:
     try:
         return max(1, int(float(PROVIDER_FETCH_MAX_WORKERS_RAW)))
     except (TypeError, ValueError):
-        return 3
+        return 8
 
 
 def _sport_scan_max_workers() -> int:
     try:
         return max(1, int(float(SPORT_SCAN_MAX_WORKERS_RAW)))
     except (TypeError, ValueError):
-        return 2
+        return 4
 
 
 def _provider_network_retry_once_enabled() -> bool:
@@ -4073,7 +4231,7 @@ def _build_scan_timings(
     }
 
 
-def _fetch_provider_events_for_sport(
+async def _fetch_provider_events_for_sport(
     provider_key: str,
     sport_key: str,
     provider_markets: Sequence[str],
@@ -4090,7 +4248,8 @@ def _fetch_provider_events_for_sport(
         provider_error = "Provider fetcher is not callable"
     else:
         try:
-            provider_events = fetch_provider_events(
+            provider_events = await _call_with_request_logger_async(
+                fetch_provider_events,
                 sport_key,
                 provider_markets,
                 regions,
@@ -4111,7 +4270,7 @@ def _fetch_provider_events_for_sport(
     }
 
 
-def _scan_single_sport(
+async def _scan_single_sport(
     sport: dict,
     all_markets: bool,
     should_fetch_api: bool,
@@ -4206,7 +4365,8 @@ def _scan_single_sport(
         api_fetch_started_at = time.perf_counter()
         api_error = None
         try:
-            events, invalid_markets = fetch_odds_for_sport_multi_market(
+            events, invalid_markets = await _call_with_request_logger_async(
+                fetch_odds_for_sport_multi_market,
                 api_pool,
                 sport_key,
                 requested_markets,
@@ -4252,42 +4412,44 @@ def _scan_single_sport(
     ]
     if provider_markets and provider_keys_to_fetch:
         max_workers = min(_provider_fetch_max_workers(), len(provider_keys_to_fetch))
-        if max_workers <= 1:
-            for provider_key in provider_keys_to_fetch:
-                provider_results[provider_key] = _fetch_provider_events_for_sport(
+        async def _provider_job(provider_key: str) -> Tuple[str, dict]:
+            try:
+                result = await _fetch_provider_events_for_sport(
                     provider_key=provider_key,
                     sport_key=sport_key,
                     provider_markets=provider_markets,
                     regions=normalized_regions,
                     bookmakers=normalized_bookmakers,
                 )
-        else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    _submit_with_request_logger(
-                        executor,
-                        _fetch_provider_events_for_sport,
-                        provider_key,
-                        sport_key,
-                        provider_markets,
-                        normalized_regions,
-                        normalized_bookmakers,
-                    ): provider_key
-                    for provider_key in provider_keys_to_fetch
+            except Exception as exc:  # pragma: no cover - defensive
+                result = {
+                    "key": provider_key,
+                    "name": PROVIDER_TITLES.get(provider_key, provider_key),
+                    "events": [],
+                    "stats": {},
+                    "error": str(exc),
+                    "ms": 0.0,
                 }
-                for future in concurrent.futures.as_completed(futures):
-                    provider_key = futures[future]
-                    try:
-                        provider_results[provider_key] = future.result()
-                    except Exception as exc:  # pragma: no cover - defensive
-                        provider_results[provider_key] = {
-                            "key": provider_key,
-                            "name": PROVIDER_TITLES.get(provider_key, provider_key),
-                            "events": [],
-                            "stats": {},
-                            "error": str(exc),
-                            "ms": 0.0,
-                        }
+            return provider_key, result
+
+        if max_workers <= 1:
+            for provider_key in provider_keys_to_fetch:
+                resolved_key, result = await _provider_job(provider_key)
+                provider_results[resolved_key] = result
+        else:
+            provider_semaphore = asyncio.Semaphore(max_workers)
+
+            async def _limited_provider_job(provider_key: str) -> Tuple[str, dict]:
+                async with provider_semaphore:
+                    return await _provider_job(provider_key)
+
+            provider_tasks = [
+                asyncio.create_task(_limited_provider_job(provider_key))
+                for provider_key in provider_keys_to_fetch
+            ]
+            for task in asyncio.as_completed(provider_tasks):
+                resolved_key, result = await task
+                provider_results[resolved_key] = result
     for provider_key in enabled_provider_keys:
         if not provider_markets:
             break
@@ -4310,8 +4472,8 @@ def _scan_single_sport(
         ):
             retry_delay = _provider_network_retry_delay_seconds()
             if retry_delay > 0:
-                time.sleep(retry_delay)
-            retry_result = _fetch_provider_events_for_sport(
+                await asyncio.sleep(retry_delay)
+            retry_result = await _fetch_provider_events_for_sport(
                 provider_key=provider_key,
                 sport_key=sport_key,
                 provider_markets=provider_markets,
@@ -4554,7 +4716,7 @@ def _scan_single_sport(
     }
 
 
-def run_scan(
+async def run_scan_async(
     api_key: str | Sequence[str],
     sports: Optional[List[str]] = None,
     all_sports: bool = False,
@@ -4592,7 +4754,6 @@ def run_scan(
     requested_sport_keys = _normalize_requested_sport_keys(sports)
     requested_provider_keys = _normalize_provider_keys(include_providers) or []
     enabled_provider_keys = _resolve_enabled_provider_keys(include_purebet, include_providers)
-    enabled_provider_set = set(enabled_provider_keys)
     normalized_regions = _normalize_regions(regions)
     normalized_regions = _ensure_sharp_region(normalized_regions, sharp_book or DEFAULT_SHARP_BOOK)
     normalized_bookmakers = _normalize_bookmakers(bookmakers)
@@ -4600,9 +4761,16 @@ def run_scan(
     api_bookmakers = [
         book for book in normalized_bookmakers if resolve_provider_key(book) is None
     ]
+    explicit_provider_selection = set(requested_provider_keys) | set(provider_bookmaker_keys)
+    enabled_provider_set = set(enabled_provider_keys)
     if provider_bookmaker_keys:
         enabled_provider_set.update(provider_bookmaker_keys)
         enabled_provider_keys = [key for key in PROVIDER_FETCHERS if key in enabled_provider_set]
+    enabled_provider_keys = _dedupe_proxy_provider_keys(
+        enabled_provider_keys,
+        explicit_provider_keys=list(explicit_provider_selection),
+    )
+    enabled_provider_set = set(enabled_provider_keys)
     active_provider_scan_caches = _activate_provider_scan_caches(enabled_provider_keys)
     provider_target_sport_keys = set(requested_sport_keys) if enabled_provider_keys else set()
     provider_only_via_bookmakers = bool(normalized_bookmakers) and not api_bookmakers
@@ -4661,7 +4829,7 @@ def run_scan(
     if should_fetch_api:
         fetch_sports_started_at = time.perf_counter()
         try:
-            sports_list = fetch_sports(api_pool)
+            sports_list = await _call_with_request_logger_async(fetch_sports, api_pool)
             timing_steps.append(
                 {
                     "name": "fetch_sports",
@@ -4792,62 +4960,73 @@ def run_scan(
     sport_workers = min(_sport_scan_max_workers(), len(filtered)) if filtered else 1
     if sport_workers <= 1:
         for idx, sport in enumerate(filtered):
-            sport_results_by_index[idx] = _scan_single_sport(
-                sport=sport,
-                all_markets=all_markets,
-                should_fetch_api=should_fetch_api,
-                api_pool=api_pool,
-                normalized_regions=normalized_regions,
-                api_bookmakers=api_bookmakers,
-                provider_target_sport_keys=provider_target_sport_keys,
-                enabled_provider_keys=enabled_provider_keys,
-                normalized_bookmakers=normalized_bookmakers,
-                stake_amount=stake_amount,
-                commission_rate=commission_rate,
-                sharp_priority=sharp_priority,
-                min_edge_percent=min_edge_percent,
-                bankroll=bankroll,
-                kelly_fraction=kelly_fraction,
+            sport_results_by_index[idx] = await _await_if_needed(
+                _scan_single_sport(
+                    sport=sport,
+                    all_markets=all_markets,
+                    should_fetch_api=should_fetch_api,
+                    api_pool=api_pool,
+                    normalized_regions=normalized_regions,
+                    api_bookmakers=api_bookmakers,
+                    provider_target_sport_keys=provider_target_sport_keys,
+                    enabled_provider_keys=enabled_provider_keys,
+                    normalized_bookmakers=normalized_bookmakers,
+                    stake_amount=stake_amount,
+                    commission_rate=commission_rate,
+                    sharp_priority=sharp_priority,
+                    min_edge_percent=min_edge_percent,
+                    bankroll=bankroll,
+                    kelly_fraction=kelly_fraction,
+                )
             )
     else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=sport_workers) as executor:
-            futures = {
-                _submit_with_request_logger(
-                    executor,
-                    _scan_single_sport,
-                    sport,
-                    all_markets,
-                    should_fetch_api,
-                    api_pool,
-                    normalized_regions,
-                    api_bookmakers,
-                    provider_target_sport_keys,
-                    enabled_provider_keys,
-                    normalized_bookmakers,
-                    stake_amount,
-                    commission_rate,
-                    sharp_priority,
-                    min_edge_percent,
-                    bankroll,
-                    kelly_fraction,
-                ): idx
-                for idx, sport in enumerate(filtered)
-            }
-            for future in concurrent.futures.as_completed(futures):
-                idx = futures[future]
-                sport = filtered[idx]
+        sport_semaphore = asyncio.Semaphore(sport_workers)
+
+        async def _sport_job(idx: int, sport: dict) -> Tuple[int, Optional[dict], Optional[Exception]]:
+            async with sport_semaphore:
                 try:
-                    sport_results_by_index[idx] = future.result()
-                except Exception as exc:  # pragma: no cover - defensive
-                    sport_key = _normalize_line_component(sport.get("key"))
-                    sport_name = sport.get("title") or SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
-                    sport_errors.append(
-                        {
-                            "sport_key": sport_key,
-                            "sport": sport_name,
-                            "error": f"Sport worker failed: {exc}",
-                        }
+                    result = await _await_if_needed(
+                        _scan_single_sport(
+                            sport=sport,
+                            all_markets=all_markets,
+                            should_fetch_api=should_fetch_api,
+                            api_pool=api_pool,
+                            normalized_regions=normalized_regions,
+                            api_bookmakers=api_bookmakers,
+                            provider_target_sport_keys=provider_target_sport_keys,
+                            enabled_provider_keys=enabled_provider_keys,
+                            normalized_bookmakers=normalized_bookmakers,
+                            stake_amount=stake_amount,
+                            commission_rate=commission_rate,
+                            sharp_priority=sharp_priority,
+                            min_edge_percent=min_edge_percent,
+                            bankroll=bankroll,
+                            kelly_fraction=kelly_fraction,
+                        )
                     )
+                    return idx, result, None
+                except Exception as exc:  # pragma: no cover - defensive
+                    return idx, None, exc
+
+        sport_tasks = [
+            asyncio.create_task(_sport_job(idx, sport))
+            for idx, sport in enumerate(filtered)
+        ]
+        for task in asyncio.as_completed(sport_tasks):
+            idx, result, error = await task
+            sport = filtered[idx]
+            if error is None and isinstance(result, dict):
+                sport_results_by_index[idx] = result
+                continue
+            sport_key = _normalize_line_component(sport.get("key"))
+            sport_name = sport.get("title") or SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
+            sport_errors.append(
+                {
+                    "sport_key": sport_key,
+                    "sport": sport_name,
+                    "error": f"Sport worker failed: {error}",
+                }
+            )
 
     for idx in range(len(filtered)):
         result = sport_results_by_index.get(idx)
@@ -4995,6 +5174,48 @@ def run_scan(
         "custom_providers": provider_summaries,
         "timings": timings,
     })
+
+
+def run_scan(
+    api_key: str | Sequence[str],
+    sports: Optional[List[str]] = None,
+    all_sports: bool = False,
+    all_markets: bool = False,
+    stake_amount: float = DEFAULT_STAKE_AMOUNT,
+    regions: Optional[Sequence[str]] = None,
+    bookmakers: Optional[Sequence[str]] = None,
+    commission_rate: float = DEFAULT_COMMISSION,
+    sharp_book: str = DEFAULT_SHARP_BOOK,
+    min_edge_percent: float = MIN_EDGE_PERCENT,
+    bankroll: float = DEFAULT_BANKROLL,
+    kelly_fraction: float = DEFAULT_KELLY_FRACTION,
+    include_purebet: Optional[bool] = None,
+    include_providers: Optional[Sequence[str]] = None,
+) -> dict:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return _get_scan_async_runtime().submit(
+            run_scan_async(
+                api_key=api_key,
+                sports=sports,
+                all_sports=all_sports,
+                all_markets=all_markets,
+                stake_amount=stake_amount,
+                regions=regions,
+                bookmakers=bookmakers,
+                commission_rate=commission_rate,
+                sharp_book=sharp_book,
+                min_edge_percent=min_edge_percent,
+                bankroll=bankroll,
+                kelly_fraction=kelly_fraction,
+                include_purebet=include_purebet,
+                include_providers=include_providers,
+            )
+        )
+    raise RuntimeError("run_scan() cannot be used inside an active event loop; use await run_scan_async()")
+
+
 def _remove_vig(odds_a: float, odds_b: float) -> Tuple[float, float, float]:
     """Return fair odds for both sides plus vig percent."""
     if odds_a <= 1 or odds_b <= 1:

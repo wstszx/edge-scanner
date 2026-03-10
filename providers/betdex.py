@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import os
@@ -10,6 +11,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.parse import quote
 
 import requests
+
+from ._async_http import get_shared_client, request_json
 
 PROVIDER_KEY = "betdex"
 PROVIDER_TITLE = "BetDEX"
@@ -183,6 +186,31 @@ def _request_json(
         raise last_error
     raise ProviderError("BetDEX request failed")
 
+
+async def _request_json_async(
+    client: httpx.AsyncClient,
+    url: str,
+    params: Optional[object],
+    access_token: Optional[str],
+    retries: int,
+    backoff_seconds: float,
+    timeout: int,
+) -> Tuple[object, int]:
+    return await request_json(
+        client,
+        "GET",
+        url,
+        params=params,
+        headers=_headers(access_token),
+        timeout=float(timeout),
+        retries=retries,
+        backoff_seconds=backoff_seconds,
+        error_cls=ProviderError,
+        network_error_prefix="BetDEX network error",
+        parse_error_message="Failed to parse BetDEX response as JSON",
+        status_error_message=lambda status_code: f"BetDEX request failed ({status_code})",
+    )
+
 def _chunked(values: Sequence[str], size: int) -> List[List[str]]:
     out: List[List[str]] = []
     step = max(1, size)
@@ -292,6 +320,32 @@ def _fetch_access_token(retries: int, backoff_seconds: float, timeout: int) -> T
     return token, retries_used
 
 
+async def _fetch_access_token_async(
+    client: httpx.AsyncClient,
+    retries: int,
+    backoff_seconds: float,
+    timeout: int,
+) -> Tuple[str, int]:
+    payload, retries_used = await _request_json_async(
+        client,
+        _session_url(),
+        params=None,
+        access_token=None,
+        retries=retries,
+        backoff_seconds=backoff_seconds,
+        timeout=timeout,
+    )
+    if not isinstance(payload, dict):
+        raise ProviderError("BetDEX session endpoint returned an invalid payload")
+    sessions = payload.get("sessions")
+    if not isinstance(sessions, list) or not sessions or not isinstance(sessions[0], dict):
+        raise ProviderError("BetDEX session endpoint returned no sessions")
+    token = _normalize_text(sessions[0].get("accessToken"))
+    if not token:
+        raise ProviderError("BetDEX session endpoint returned an empty access token")
+    return token, retries_used
+
+
 def _fetch_events_dataset(
     token: str,
     subcategory_ids: Optional[Sequence[str]],
@@ -317,6 +371,81 @@ def _fetch_events_dataset(
             if subcategory:
                 params["subcategoryIds"] = subcategory
             payload, attempt = _request_json(
+                f"{_api_base()}/events",
+                params=params,
+                access_token=token,
+                retries=retries,
+                backoff_seconds=backoff_seconds,
+                timeout=timeout,
+            )
+            pages_fetched += 1
+            retries_used += attempt
+            if not isinstance(payload, dict):
+                break
+            page_events = payload.get("events") if isinstance(payload.get("events"), list) else []
+            for event in page_events:
+                if not isinstance(event, dict):
+                    continue
+                event_id = _normalize_text(event.get("id"))
+                if event_id and event_id not in events:
+                    events[event_id] = event
+            for group in payload.get("eventGroups") or []:
+                if not isinstance(group, dict):
+                    continue
+                group_id = _normalize_text(group.get("id"))
+                if group_id and group_id not in event_groups:
+                    event_groups[group_id] = group
+            for participant in payload.get("participants") or []:
+                if not isinstance(participant, dict):
+                    continue
+                participant_id = _normalize_text(participant.get("id"))
+                if participant_id and participant_id not in participants:
+                    participants[participant_id] = participant
+
+            page_meta = payload.get("_meta") if isinstance(payload.get("_meta"), dict) else {}
+            page_data = page_meta.get("_page") if isinstance(page_meta.get("_page"), dict) else {}
+            total_pages = _int_or_default(str(page_data.get("_totalPages") or "1"), 1, min_value=1)
+            if not page_events:
+                break
+            if len(page_events) < page_size:
+                break
+            if page + 1 >= total_pages:
+                break
+
+    return {
+        "events": list(events.values()),
+        "eventGroups": list(event_groups.values()),
+        "participants": list(participants.values()),
+    }, {"pages_fetched": pages_fetched, "retries_used": retries_used}
+
+
+async def _fetch_events_dataset_async(
+    client: httpx.AsyncClient,
+    token: str,
+    subcategory_ids: Optional[Sequence[str]],
+    retries: int,
+    backoff_seconds: float,
+    timeout: int,
+    page_size: int,
+    max_pages: int,
+) -> Tuple[dict, dict]:
+    events: Dict[str, dict] = {}
+    event_groups: Dict[str, dict] = {}
+    participants: Dict[str, dict] = {}
+    pages_fetched = 0
+    retries_used = 0
+
+    subcategories = [item for item in (subcategory_ids or []) if _normalize_text(item)]
+    if not subcategories:
+        subcategories = [None]
+
+    for subcategory in subcategories:
+        for page in range(max_pages):
+            params: Dict[str, object] = {"active": "true", "page": page, "size": page_size}
+            if subcategory:
+                params["subcategoryIds"] = subcategory
+            payload, attempt = await _request_json_async(
+                client,
                 f"{_api_base()}/events",
                 params=params,
                 access_token=token,
@@ -429,6 +558,72 @@ def _fetch_markets_dataset(
     }, {"pages_fetched": pages_fetched, "retries_used": retries_used}
 
 
+async def _fetch_markets_dataset_async(
+    client: httpx.AsyncClient,
+    token: str,
+    event_ids: Sequence[str],
+    retries: int,
+    backoff_seconds: float,
+    timeout: int,
+    batch_size: int,
+    page_size: int,
+    max_pages: int,
+    statuses: Sequence[str],
+) -> Tuple[dict, dict]:
+    markets: Dict[str, dict] = {}
+    outcomes: Dict[str, dict] = {}
+    pages_fetched = 0
+    retries_used = 0
+
+    for event_batch in _chunked(event_ids, batch_size):
+        for page in range(max_pages):
+            params = [("eventIds", event_id) for event_id in event_batch]
+            params.extend([("published", "true"), ("page", page), ("size", page_size)])
+            for status in statuses:
+                params.append(("statuses", status))
+            payload, attempt = await _request_json_async(
+                client,
+                f"{_api_base()}/markets",
+                params=params,
+                access_token=token,
+                retries=retries,
+                backoff_seconds=backoff_seconds,
+                timeout=timeout,
+            )
+            pages_fetched += 1
+            retries_used += attempt
+            if not isinstance(payload, dict):
+                break
+            page_markets = payload.get("markets") if isinstance(payload.get("markets"), list) else []
+            for market in page_markets:
+                if not isinstance(market, dict):
+                    continue
+                market_id = _normalize_text(market.get("id"))
+                if market_id and market_id not in markets:
+                    markets[market_id] = market
+            for outcome in payload.get("marketOutcomes") or []:
+                if not isinstance(outcome, dict):
+                    continue
+                outcome_id = _normalize_text(outcome.get("id"))
+                if outcome_id and outcome_id not in outcomes:
+                    outcomes[outcome_id] = outcome
+
+            page_meta = payload.get("_meta") if isinstance(payload.get("_meta"), dict) else {}
+            page_data = page_meta.get("_page") if isinstance(page_meta.get("_page"), dict) else {}
+            total_pages = _int_or_default(str(page_data.get("_totalPages") or "1"), 1, min_value=1)
+            if not page_markets:
+                break
+            if len(page_markets) < page_size:
+                break
+            if page + 1 >= total_pages:
+                break
+
+    return {
+        "markets": list(markets.values()),
+        "marketOutcomes": list(outcomes.values()),
+    }, {"pages_fetched": pages_fetched, "retries_used": retries_used}
+
+
 def _fetch_prices_by_market(
     token: str,
     market_ids: Sequence[str],
@@ -444,6 +639,59 @@ def _fetch_prices_by_market(
     for market_batch in _chunked(market_ids, batch_size):
         params = [("marketIds", market_id) for market_id in market_batch]
         payload, attempt = _request_json(
+            f"{_api_base()}/market-prices",
+            params=params,
+            access_token=token,
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+            timeout=timeout,
+        )
+        pages_fetched += 1
+        retries_used += attempt
+        if not isinstance(payload, dict):
+            continue
+        for entry in payload.get("prices") or []:
+            if not isinstance(entry, dict):
+                continue
+            market_id = _normalize_text(entry.get("marketId"))
+            rows = entry.get("prices")
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    side = _canonical_price_side(row.get("side"))
+                    if side == "for":
+                        side_counts["for"] += 1
+                    elif side == "against":
+                        side_counts["against"] += 1
+                    else:
+                        side_counts["unknown"] += 1
+            if market_id:
+                out[market_id] = entry
+    return out, {
+        "pages_fetched": pages_fetched,
+        "retries_used": retries_used,
+        "price_side_counts": side_counts,
+    }
+
+
+async def _fetch_prices_by_market_async(
+    client: httpx.AsyncClient,
+    token: str,
+    market_ids: Sequence[str],
+    retries: int,
+    backoff_seconds: float,
+    timeout: int,
+    batch_size: int,
+) -> Tuple[Dict[str, dict], dict]:
+    out: Dict[str, dict] = {}
+    pages_fetched = 0
+    retries_used = 0
+    side_counts = {"for": 0, "against": 0, "unknown": 0}
+    for market_batch in _chunked(market_ids, batch_size):
+        params = [("marketIds", market_id) for market_id in market_batch]
+        payload, attempt = await _request_json_async(
+            client,
             f"{_api_base()}/market-prices",
             params=params,
             access_token=token,
@@ -795,7 +1043,12 @@ def _normalize_file_events(events: Sequence[dict], sport_key: str, requested_mar
         output.append(normalized_event)
     return output
 
-def fetch_events(
+def _set_last_stats(stats: dict) -> None:
+    fetch_events.last_stats = stats
+    fetch_events_async.last_stats = stats
+
+
+async def fetch_events_async(
     sport_key: str,
     markets: Sequence[str],
     regions: Sequence[str],
@@ -820,7 +1073,7 @@ def fetch_events(
         "pages_fetched": 0,
         "retries_used": 0,
     }
-    fetch_events.last_stats = stats
+    _set_last_stats(stats)
 
     if not requested_markets:
         return []
@@ -836,7 +1089,7 @@ def fetch_events(
         stats["events_payload_count"] = len(payload)
         normalized = _normalize_file_events(payload, sport_key=sport_key, requested_markets=requested_markets)
         stats["events_returned_count"] = len(normalized)
-        fetch_events.last_stats = stats
+        _set_last_stats(stats)
         return normalized
     if source != "api":
         raise ProviderError("BetDEX provider supports BETDEX_SOURCE=api or BETDEX_SOURCE=file")
@@ -854,11 +1107,17 @@ def fetch_events(
 
     expected_subcategories = SPORT_SUBCATEGORY_DEFAULTS.get(sport_key, ())
     league_hints = SPORT_LEAGUE_HINTS.get(sport_key, ())
-
-    token, retries_used = _fetch_access_token(retries=retries, backoff_seconds=backoff, timeout=timeout)
+    client = await get_shared_client(PROVIDER_KEY, timeout=float(timeout), follow_redirects=True)
+    token, retries_used = await _fetch_access_token_async(
+        client,
+        retries=retries,
+        backoff_seconds=backoff,
+        timeout=timeout,
+    )
     stats["retries_used"] += retries_used
 
-    events_dataset, events_meta = _fetch_events_dataset(
+    events_dataset, events_meta = await _fetch_events_dataset_async(
+        client=client,
         token=token,
         subcategory_ids=expected_subcategories,
         retries=retries,
@@ -872,58 +1131,19 @@ def fetch_events(
     stats["events_payload_count"] = len(events_dataset.get("events", []))
 
     event_groups_by_id = {
-        _normalize_text(item.get("id")): item
-        for item in events_dataset.get("eventGroups", [])
-        if isinstance(item, dict) and _normalize_text(item.get("id"))
-    }
-    participants_by_id = {
-        _normalize_text(item.get("id")): item
-        for item in events_dataset.get("participants", [])
-        if isinstance(item, dict) and _normalize_text(item.get("id"))
-    }
-
-    filtered_events: List[dict] = []
-    for event in events_dataset.get("events", []):
-        if not isinstance(event, dict):
-            continue
-        if not event.get("active", True):
-            continue
-        if not _event_matches_sport(
-            event,
-            sport_key=sport_key,
-            event_groups_by_id=event_groups_by_id,
-            expected_subcategories=expected_subcategories,
-            league_hints=league_hints,
-            strict_subcategory=True,
-        ):
-            continue
-        filtered_events.append(event)
-
-    if not filtered_events and expected_subcategories:
-        all_events_dataset, all_events_meta = _fetch_events_dataset(
-            token=token,
-            subcategory_ids=None,
-            retries=retries,
-            backoff_seconds=backoff,
-            timeout=timeout,
-            page_size=events_page_size,
-            max_pages=events_max_pages,
-        )
-        stats["pages_fetched"] += int(all_events_meta.get("pages_fetched", 0) or 0)
-        stats["retries_used"] += int(all_events_meta.get("retries_used", 0) or 0)
-        if len(all_events_dataset.get("events", [])) > stats["events_payload_count"]:
-            stats["events_payload_count"] = len(all_events_dataset.get("events", []))
-        event_groups_by_id = {
             _normalize_text(item.get("id")): item
-            for item in all_events_dataset.get("eventGroups", [])
+            for item in events_dataset.get("eventGroups", [])
             if isinstance(item, dict) and _normalize_text(item.get("id"))
         }
+    if True:
         participants_by_id = {
             _normalize_text(item.get("id")): item
-            for item in all_events_dataset.get("participants", [])
+            for item in events_dataset.get("participants", [])
             if isinstance(item, dict) and _normalize_text(item.get("id"))
         }
-        for event in all_events_dataset.get("events", []):
+
+        filtered_events: List[dict] = []
+        for event in events_dataset.get("events", []):
             if not isinstance(event, dict):
                 continue
             if not event.get("active", True):
@@ -934,296 +1154,359 @@ def fetch_events(
                 event_groups_by_id=event_groups_by_id,
                 expected_subcategories=expected_subcategories,
                 league_hints=league_hints,
-                strict_subcategory=False,
+                strict_subcategory=True,
             ):
                 continue
             filtered_events.append(event)
 
-    if not filtered_events:
-        fetch_events.last_stats = stats
-        return []
+        if not filtered_events and expected_subcategories:
+            all_events_dataset, all_events_meta = await _fetch_events_dataset_async(
+                client=client,
+                token=token,
+                subcategory_ids=None,
+                retries=retries,
+                backoff_seconds=backoff,
+                timeout=timeout,
+                page_size=events_page_size,
+                max_pages=events_max_pages,
+            )
+            stats["pages_fetched"] += int(all_events_meta.get("pages_fetched", 0) or 0)
+            stats["retries_used"] += int(all_events_meta.get("retries_used", 0) or 0)
+            if len(all_events_dataset.get("events", [])) > stats["events_payload_count"]:
+                stats["events_payload_count"] = len(all_events_dataset.get("events", []))
+            event_groups_by_id = {
+                _normalize_text(item.get("id")): item
+                for item in all_events_dataset.get("eventGroups", [])
+                if isinstance(item, dict) and _normalize_text(item.get("id"))
+            }
+            participants_by_id = {
+                _normalize_text(item.get("id")): item
+                for item in all_events_dataset.get("participants", [])
+                if isinstance(item, dict) and _normalize_text(item.get("id"))
+            }
+            for event in all_events_dataset.get("events", []):
+                if not isinstance(event, dict):
+                    continue
+                if not event.get("active", True):
+                    continue
+                if not _event_matches_sport(
+                    event,
+                    sport_key=sport_key,
+                    event_groups_by_id=event_groups_by_id,
+                    expected_subcategories=expected_subcategories,
+                    league_hints=league_hints,
+                    strict_subcategory=False,
+                ):
+                    continue
+                filtered_events.append(event)
 
-    stats["events_sport_filtered_count"] = len(filtered_events)
+        if not filtered_events:
+            _set_last_stats(stats)
+            return []
 
-    event_ids = list(dict.fromkeys(_normalize_text(event.get("id")) for event in filtered_events if _normalize_text(event.get("id"))))
-    markets_dataset, markets_meta = _fetch_markets_dataset(
-        token=token,
-        event_ids=event_ids,
-        retries=retries,
-        backoff_seconds=backoff,
-        timeout=timeout,
-        batch_size=event_batch_size,
-        page_size=markets_page_size,
-        max_pages=markets_max_pages,
-        statuses=status_filters,
-    )
-    stats["pages_fetched"] += int(markets_meta.get("pages_fetched", 0) or 0)
-    stats["retries_used"] += int(markets_meta.get("retries_used", 0) or 0)
-    stats["markets_payload_count"] = len(markets_dataset.get("markets", []))
+        stats["events_sport_filtered_count"] = len(filtered_events)
 
-    outcomes_by_id = {
-        _normalize_text(item.get("id")): item
-        for item in markets_dataset.get("marketOutcomes", [])
-        if isinstance(item, dict) and _normalize_text(item.get("id"))
-    }
-
-    markets_by_event_id: Dict[str, List[dict]] = {}
-    market_ids: List[str] = []
-    for market in markets_dataset.get("markets", []):
-        if not isinstance(market, dict):
-            continue
-        if not market.get("published", True) or market.get("suspended", False):
-            continue
-        event_id = _doc_ref_first_id(market.get("event"))
-        market_id = _normalize_text(market.get("id"))
-        if not event_id or not market_id:
-            continue
-        markets_by_event_id.setdefault(event_id, []).append(market)
-        market_ids.append(market_id)
-    market_ids = list(dict.fromkeys(market_ids))
-
-    prices_by_market_id: Dict[str, dict] = {}
-    back_side = _back_price_side()
-    if market_ids:
-        prices_by_market_id, prices_meta = _fetch_prices_by_market(
+        event_ids = list(dict.fromkeys(_normalize_text(event.get("id")) for event in filtered_events if _normalize_text(event.get("id"))))
+        markets_dataset, markets_meta = await _fetch_markets_dataset_async(
+            client=client,
             token=token,
-            market_ids=market_ids,
+            event_ids=event_ids,
             retries=retries,
             backoff_seconds=backoff,
             timeout=timeout,
-            batch_size=price_batch_size,
+            batch_size=event_batch_size,
+            page_size=markets_page_size,
+            max_pages=markets_max_pages,
+            statuses=status_filters,
         )
-        stats["pages_fetched"] += int(prices_meta.get("pages_fetched", 0) or 0)
-        stats["retries_used"] += int(prices_meta.get("retries_used", 0) or 0)
-        side_counts = prices_meta.get("price_side_counts") if isinstance(prices_meta, dict) else {}
-        if isinstance(side_counts, dict):
-            stats["price_rows_for"] = int(side_counts.get("for", 0) or 0)
-            stats["price_rows_against"] = int(side_counts.get("against", 0) or 0)
-            stats["price_rows_unknown"] = int(side_counts.get("unknown", 0) or 0)
-    stats["prices_payload_count"] = len(prices_by_market_id)
+        stats["pages_fetched"] += int(markets_meta.get("pages_fetched", 0) or 0)
+        stats["retries_used"] += int(markets_meta.get("retries_used", 0) or 0)
+        stats["markets_payload_count"] = len(markets_dataset.get("markets", []))
 
-    event_by_id = {
-        _normalize_text(event.get("id")): event
-        for event in filtered_events
-        if isinstance(event, dict) and _normalize_text(event.get("id"))
-    }
+        outcomes_by_id = {
+            _normalize_text(item.get("id")): item
+            for item in markets_dataset.get("marketOutcomes", [])
+            if isinstance(item, dict) and _normalize_text(item.get("id"))
+        }
 
-    events_out: List[dict] = []
-    for event_id in event_ids:
-        event = event_by_id.get(event_id)
-        if not isinstance(event, dict):
-            continue
-        event_markets = markets_by_event_id.get(event_id, [])
-        if not event_markets:
-            continue
-        matchup = _extract_matchup(event, participants_by_id)
-        if not matchup:
-            continue
-        home_team, away_team = matchup
-        commence = _normalize_commence_time(event.get("expectedStartTime") or event.get("createdAt"))
-        if not commence:
-            continue
-
-        best_h2h: Optional[dict] = None
-        by_signature: Dict[str, dict] = {}
-
-        for market in event_markets:
+        markets_by_event_id: Dict[str, List[dict]] = {}
+        market_ids: List[str] = []
+        for market in markets_dataset.get("markets", []):
+            if not isinstance(market, dict):
+                continue
+            if not market.get("published", True) or market.get("suspended", False):
+                continue
+            event_id = _doc_ref_first_id(market.get("event"))
             market_id = _normalize_text(market.get("id"))
-            market_type = _market_type_id(market)
-            market_name = _normalize_text(market.get("name") or market.get("marketName"))
-            target_h2h_key = _scoped_market_key("h2h", market_type, market_name)
-            target_spread_key = _scoped_market_key("spreads", market_type, market_name)
-            target_total_key = _scoped_market_key("totals", market_type, market_name)
-            prices_by_outcome = _best_back_prices(
-                prices_by_market_id.get(market_id),
-                back_side=back_side,
+            if not event_id or not market_id:
+                continue
+            markets_by_event_id.setdefault(event_id, []).append(market)
+            market_ids.append(market_id)
+        market_ids = list(dict.fromkeys(market_ids))
+
+        prices_by_market_id: Dict[str, dict] = {}
+        back_side = _back_price_side()
+        if market_ids:
+            prices_by_market_id, prices_meta = await _fetch_prices_by_market_async(
+                client=client,
+                token=token,
+                market_ids=market_ids,
+                retries=retries,
+                backoff_seconds=backoff,
+                timeout=timeout,
+                batch_size=price_batch_size,
             )
+            stats["pages_fetched"] += int(prices_meta.get("pages_fetched", 0) or 0)
+            stats["retries_used"] += int(prices_meta.get("retries_used", 0) or 0)
+            side_counts = prices_meta.get("price_side_counts") if isinstance(prices_meta, dict) else {}
+            if isinstance(side_counts, dict):
+                stats["price_rows_for"] = int(side_counts.get("for", 0) or 0)
+                stats["price_rows_against"] = int(side_counts.get("against", 0) or 0)
+                stats["price_rows_unknown"] = int(side_counts.get("unknown", 0) or 0)
+        stats["prices_payload_count"] = len(prices_by_market_id)
 
-            outcomes = []
-            for outcome_id in _doc_ref_ids(market.get("marketOutcomes")):
-                outcome = outcomes_by_id.get(outcome_id)
-                price_row = prices_by_outcome.get(outcome_id) if isinstance(prices_by_outcome, dict) else None
-                price = _safe_float(price_row.get("price")) if isinstance(price_row, dict) else None
-                if not isinstance(outcome, dict) or price is None or price <= 1:
-                    continue
-                title = _clean_team_name(outcome.get("title"))
-                if not title:
-                    continue
-                stake_value = _safe_float(price_row.get("amount")) if isinstance(price_row, dict) else None
-                row = {"title": title, "price": round(float(price), 6)}
-                if stake_value is not None and stake_value > 0:
-                    row["stake"] = round(float(stake_value), 6)
-                outcomes.append(row)
+        event_by_id = {
+            _normalize_text(event.get("id")): event
+            for event in filtered_events
+            if isinstance(event, dict) and _normalize_text(event.get("id"))
+        }
 
-            if len(outcomes) < 2:
+        events_out: List[dict] = []
+        for event_id in event_ids:
+            event = event_by_id.get(event_id)
+            if not isinstance(event, dict):
+                continue
+            event_markets = markets_by_event_id.get(event_id, [])
+            if not event_markets:
+                continue
+            matchup = _extract_matchup(event, participants_by_id)
+            if not matchup:
+                continue
+            home_team, away_team = matchup
+            commence = _normalize_commence_time(event.get("expectedStartTime") or event.get("createdAt"))
+            if not commence:
                 continue
 
-            if target_h2h_key in requested_markets and len(outcomes) == 2:
-                if "HANDICAP" not in market_type and "OVER_UNDER" not in market_type:
-                    if "MONEYLINE" in market_type or "FULL_TIME_RESULT" in market_type or "MATCH_RESULT" in market_type:
-                        titles = {_normalize_token(item["title"]) for item in outcomes}
-                        if "draw" not in titles:
-                            out_by_token = {_normalize_token(item["title"]): item for item in outcomes}
-                            home_out = out_by_token.get(_normalize_token(home_team))
-                            away_out = out_by_token.get(_normalize_token(away_team))
-                            if home_out and away_out:
-                                h2h = {
-                                    "key": target_h2h_key,
-                                    "outcomes": [
-                                        {
-                                            "name": home_team,
-                                            "price": home_out["price"],
-                                            **({"stake": home_out["stake"]} if _safe_float(home_out.get("stake")) else {}),
-                                        },
-                                        {
-                                            "name": away_team,
-                                            "price": away_out["price"],
-                                            **({"stake": away_out["stake"]} if _safe_float(away_out.get("stake")) else {}),
-                                        },
-                                    ],
-                                }
-                            else:
-                                h2h = {
-                                    "key": target_h2h_key,
-                                    "outcomes": [
-                                        {
-                                            "name": outcomes[0]["title"],
-                                            "price": outcomes[0]["price"],
-                                            **({"stake": outcomes[0]["stake"]} if _safe_float(outcomes[0].get("stake")) else {}),
-                                        },
-                                        {
-                                            "name": outcomes[1]["title"],
-                                            "price": outcomes[1]["price"],
-                                            **({"stake": outcomes[1]["stake"]} if _safe_float(outcomes[1].get("stake")) else {}),
-                                        },
-                                    ],
-                                }
-                            if best_h2h is None or _score_market(h2h) > _score_market(best_h2h):
-                                best_h2h = h2h
+            best_h2h: Optional[dict] = None
+            by_signature: Dict[str, dict] = {}
 
-            if target_spread_key in requested_markets and len(outcomes) == 2 and "HANDICAP" in market_type:
-                value_a, value_b = _parse_market_value_pair(market.get("marketValue"))
-                spread_outcomes = []
-                for idx, outcome in enumerate(outcomes):
-                    name, point = _parse_spread_title(outcome["title"])
-                    if point is None:
-                        point = value_a if idx == 0 else value_b
-                    if point is None:
+            for market in event_markets:
+                market_id = _normalize_text(market.get("id"))
+                market_type = _market_type_id(market)
+                market_name = _normalize_text(market.get("name") or market.get("marketName"))
+                target_h2h_key = _scoped_market_key("h2h", market_type, market_name)
+                target_spread_key = _scoped_market_key("spreads", market_type, market_name)
+                target_total_key = _scoped_market_key("totals", market_type, market_name)
+                prices_by_outcome = _best_back_prices(
+                    prices_by_market_id.get(market_id),
+                    back_side=back_side,
+                )
+
+                outcomes = []
+                for outcome_id in _doc_ref_ids(market.get("marketOutcomes")):
+                    outcome = outcomes_by_id.get(outcome_id)
+                    price_row = prices_by_outcome.get(outcome_id) if isinstance(prices_by_outcome, dict) else None
+                    price = _safe_float(price_row.get("price")) if isinstance(price_row, dict) else None
+                    if not isinstance(outcome, dict) or price is None or price <= 1:
                         continue
-                    spread_outcomes.append(
-                        {
-                            "name": name or (home_team if idx == 0 else away_team),
+                    title = _clean_team_name(outcome.get("title"))
+                    if not title:
+                        continue
+                    stake_value = _safe_float(price_row.get("amount")) if isinstance(price_row, dict) else None
+                    row = {"title": title, "price": round(float(price), 6)}
+                    if stake_value is not None and stake_value > 0:
+                        row["stake"] = round(float(stake_value), 6)
+                    outcomes.append(row)
+
+                if len(outcomes) < 2:
+                    continue
+
+                if target_h2h_key in requested_markets and len(outcomes) == 2:
+                    if "HANDICAP" not in market_type and "OVER_UNDER" not in market_type:
+                        if "MONEYLINE" in market_type or "FULL_TIME_RESULT" in market_type or "MATCH_RESULT" in market_type:
+                            titles = {_normalize_token(item["title"]) for item in outcomes}
+                            if "draw" not in titles:
+                                out_by_token = {_normalize_token(item["title"]): item for item in outcomes}
+                                home_out = out_by_token.get(_normalize_token(home_team))
+                                away_out = out_by_token.get(_normalize_token(away_team))
+                                if home_out and away_out:
+                                    h2h = {
+                                        "key": target_h2h_key,
+                                        "outcomes": [
+                                            {
+                                                "name": home_team,
+                                                "price": home_out["price"],
+                                                **({"stake": home_out["stake"]} if _safe_float(home_out.get("stake")) else {}),
+                                            },
+                                            {
+                                                "name": away_team,
+                                                "price": away_out["price"],
+                                                **({"stake": away_out["stake"]} if _safe_float(away_out.get("stake")) else {}),
+                                            },
+                                        ],
+                                    }
+                                else:
+                                    h2h = {
+                                        "key": target_h2h_key,
+                                        "outcomes": [
+                                            {
+                                                "name": outcomes[0]["title"],
+                                                "price": outcomes[0]["price"],
+                                                **({"stake": outcomes[0]["stake"]} if _safe_float(outcomes[0].get("stake")) else {}),
+                                            },
+                                            {
+                                                "name": outcomes[1]["title"],
+                                                "price": outcomes[1]["price"],
+                                                **({"stake": outcomes[1]["stake"]} if _safe_float(outcomes[1].get("stake")) else {}),
+                                            },
+                                        ],
+                                    }
+                                if best_h2h is None or _score_market(h2h) > _score_market(best_h2h):
+                                    best_h2h = h2h
+
+                if target_spread_key in requested_markets and len(outcomes) == 2 and "HANDICAP" in market_type:
+                    value_a, value_b = _parse_market_value_pair(market.get("marketValue"))
+                    spread_outcomes = []
+                    for idx, outcome in enumerate(outcomes):
+                        name, point = _parse_spread_title(outcome["title"])
+                        if point is None:
+                            point = value_a if idx == 0 else value_b
+                        if point is None:
+                            continue
+                        spread_outcomes.append(
+                            {
+                                "name": name or (home_team if idx == 0 else away_team),
+                                "price": outcome["price"],
+                                "point": round(float(point), 6),
+                                **({"stake": outcome["stake"]} if _safe_float(outcome.get("stake")) else {}),
+                            }
+                        )
+                    if len(spread_outcomes) == 2:
+                        spread = {"key": target_spread_key, "outcomes": spread_outcomes}
+                        sig = _market_signature(spread)
+                        prev = by_signature.get(sig)
+                        if prev is None or _score_market(spread) > _score_market(prev):
+                            by_signature[sig] = spread
+
+                if target_total_key in requested_markets and len(outcomes) == 2 and "OVER_UNDER" in market_type:
+                    market_total = _parse_market_value_single(market.get("marketValue"))
+                    totals = {}
+                    for outcome in outcomes:
+                        side, point = _parse_total_title(outcome["title"])
+                        if not side:
+                            continue
+                        if point is None:
+                            point = market_total
+                        if point is None:
+                            continue
+                        totals[side] = {
+                            "name": side,
                             "price": outcome["price"],
                             "point": round(float(point), 6),
                             **({"stake": outcome["stake"]} if _safe_float(outcome.get("stake")) else {}),
                         }
-                    )
-                if len(spread_outcomes) == 2:
-                    spread = {"key": target_spread_key, "outcomes": spread_outcomes}
-                    sig = _market_signature(spread)
-                    prev = by_signature.get(sig)
-                    if prev is None or _score_market(spread) > _score_market(prev):
-                        by_signature[sig] = spread
+                    if "Over" in totals and "Under" in totals:
+                        if abs(float(totals["Over"]["point"]) - float(totals["Under"]["point"])) <= 1e-6:
+                            total_market = {"key": target_total_key, "outcomes": [totals["Over"], totals["Under"]]}
+                            sig = _market_signature(total_market)
+                            prev = by_signature.get(sig)
+                            if prev is None or _score_market(total_market) > _score_market(prev):
+                                by_signature[sig] = total_market
 
-            if target_total_key in requested_markets and len(outcomes) == 2 and "OVER_UNDER" in market_type:
-                market_total = _parse_market_value_single(market.get("marketValue"))
-                totals = {}
-                for outcome in outcomes:
-                    side, point = _parse_total_title(outcome["title"])
-                    if not side:
-                        continue
-                    if point is None:
-                        point = market_total
-                    if point is None:
-                        continue
-                    totals[side] = {
-                        "name": side,
-                        "price": outcome["price"],
-                        "point": round(float(point), 6),
-                        **({"stake": outcome["stake"]} if _safe_float(outcome.get("stake")) else {}),
-                    }
-                if "Over" in totals and "Under" in totals:
-                    if abs(float(totals["Over"]["point"]) - float(totals["Under"]["point"])) <= 1e-6:
-                        total_market = {"key": target_total_key, "outcomes": [totals["Over"], totals["Under"]]}
-                        sig = _market_signature(total_market)
+                if len(outcomes) == 2:
+                    dynamic_key = None
+                    for alias in _market_aliases_for_type(market_type, market_name):
+                        if (
+                            alias == "h2h"
+                            or alias.startswith("h2h_")
+                            or alias == "spreads"
+                            or alias.startswith("spreads_")
+                            or alias == "totals"
+                            or alias.startswith("totals_")
+                        ):
+                            continue
+                        if alias in requested_markets:
+                            dynamic_key = alias
+                            break
+                    if dynamic_key:
+                        value_a, value_b = _parse_market_value_pair(market.get("marketValue"))
+                        shared_value = _parse_market_value_single(market.get("marketValue"))
+                        dynamic_outcomes = []
+                        for idx, outcome in enumerate(outcomes):
+                            row = {
+                                "name": outcome["title"],
+                                "price": outcome["price"],
+                            }
+                            if _safe_float(outcome.get("stake")):
+                                row["stake"] = outcome["stake"]
+                            _, title_point = _parse_spread_title(outcome["title"])
+                            point = title_point
+                            if point is None and value_a is not None and value_b is not None:
+                                point = value_a if idx == 0 else value_b
+                            if point is None:
+                                point = shared_value
+                            if point is not None:
+                                row["point"] = round(float(point), 6)
+                            dynamic_outcomes.append(row)
+                        dynamic_market = {"key": dynamic_key, "outcomes": dynamic_outcomes}
+                        sig = _market_signature(dynamic_market)
                         prev = by_signature.get(sig)
-                        if prev is None or _score_market(total_market) > _score_market(prev):
-                            by_signature[sig] = total_market
+                        if prev is None or _score_market(dynamic_market) > _score_market(prev):
+                            by_signature[sig] = dynamic_market
 
-            if len(outcomes) == 2:
-                dynamic_key = None
-                for alias in _market_aliases_for_type(market_type, market_name):
-                    if (
-                        alias == "h2h"
-                        or alias.startswith("h2h_")
-                        or alias == "spreads"
-                        or alias.startswith("spreads_")
-                        or alias == "totals"
-                        or alias.startswith("totals_")
-                    ):
-                        continue
-                    if alias in requested_markets:
-                        dynamic_key = alias
-                        break
-                if dynamic_key:
-                    value_a, value_b = _parse_market_value_pair(market.get("marketValue"))
-                    shared_value = _parse_market_value_single(market.get("marketValue"))
-                    dynamic_outcomes = []
-                    for idx, outcome in enumerate(outcomes):
-                        row = {
-                            "name": outcome["title"],
-                            "price": outcome["price"],
+            market_list: List[dict] = []
+            if best_h2h is not None:
+                market_list.append(best_h2h)
+            market_list.extend(by_signature.values())
+
+            if not market_list:
+                continue
+
+            first_market_id = _normalize_text(event_markets[0].get("id")) if event_markets else ""
+
+            stats["events_with_market_count"] += 1
+            events_out.append(
+                {
+                    "id": event_id,
+                    "sport_key": sport_key,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "commence_time": commence,
+                    "bookmakers": [
+                        {
+                            "key": PROVIDER_KEY,
+                            "title": PROVIDER_TITLE,
+                            "event_id": event_id,
+                            "event_url": _event_url(event, event_groups_by_id, first_market_id),
+                            "markets": market_list,
                         }
-                        if _safe_float(outcome.get("stake")):
-                            row["stake"] = outcome["stake"]
-                        _, title_point = _parse_spread_title(outcome["title"])
-                        point = title_point
-                        if point is None and value_a is not None and value_b is not None:
-                            point = value_a if idx == 0 else value_b
-                        if point is None:
-                            point = shared_value
-                        if point is not None:
-                            row["point"] = round(float(point), 6)
-                        dynamic_outcomes.append(row)
-                    dynamic_market = {"key": dynamic_key, "outcomes": dynamic_outcomes}
-                    sig = _market_signature(dynamic_market)
-                    prev = by_signature.get(sig)
-                    if prev is None or _score_market(dynamic_market) > _score_market(prev):
-                        by_signature[sig] = dynamic_market
-
-        market_list: List[dict] = []
-        if best_h2h is not None:
-            market_list.append(best_h2h)
-        market_list.extend(by_signature.values())
-
-        if not market_list:
-            continue
-
-        first_market_id = _normalize_text(event_markets[0].get("id")) if event_markets else ""
-
-        stats["events_with_market_count"] += 1
-        events_out.append(
-            {
-                "id": event_id,
-                "sport_key": sport_key,
-                "home_team": home_team,
-                "away_team": away_team,
-                "commence_time": commence,
-                "bookmakers": [
-                    {
-                        "key": PROVIDER_KEY,
-                        "title": PROVIDER_TITLE,
-                        "event_id": event_id,
-                        "event_url": _event_url(event, event_groups_by_id, first_market_id),
-                        "markets": market_list,
-                    }
-                ],
-            }
-        )
+                    ],
+                }
+            )
 
     stats["events_returned_count"] = len(events_out)
-    fetch_events.last_stats = stats
+    _set_last_stats(stats)
     return events_out
+
+
+def fetch_events(
+    sport_key: str,
+    markets: Sequence[str],
+    regions: Sequence[str],
+    bookmakers: Optional[Sequence[str]] = None,
+) -> List[dict]:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            fetch_events_async(
+                sport_key,
+                markets,
+                regions,
+                bookmakers=bookmakers,
+            )
+        )
+    raise RuntimeError("fetch_events() cannot be used inside an active event loop; use await fetch_events_async()")
 
 
 fetch_events.last_stats = {
@@ -1242,3 +1525,4 @@ fetch_events.last_stats = {
     "pages_fetched": 0,
     "retries_used": 0,
 }
+fetch_events_async.last_stats = dict(fetch_events.last_stats)

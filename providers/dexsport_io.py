@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 from typing import List, Optional, Sequence
 
 from .bookmaker_xyz import fetch_events as fetch_bookmaker_xyz_events
+from .bookmaker_xyz import fetch_events_async as fetch_bookmaker_xyz_events_async
 
 PROVIDER_KEY = "dexsport_io"
 PROVIDER_TITLE = "Dexsport.io"
@@ -129,10 +131,53 @@ def fetch_events(
     return events
 
 
+async def fetch_events_async(
+    sport_key: str,
+    markets: Sequence[str],
+    regions: Sequence[str],
+    bookmakers: Optional[Sequence[str]] = None,
+) -> List[dict]:
+    _ = regions  # Reserved for future region-specific routing.
+    stats = {
+        "provider": PROVIDER_KEY,
+        "source": DEXSPORT_SOURCE or "bookmaker_xyz",
+        "proxy_provider": "bookmaker_xyz",
+        "events_returned_count": 0,
+        "selected": _is_selected(bookmakers),
+    }
+    fetch_events_async.last_stats = stats
+
+    if not _requested_market_keys(markets):
+        return []
+    if not stats["selected"]:
+        return []
+
+    source = (DEXSPORT_SOURCE or "bookmaker_xyz").lower()
+    if source == "file":
+        events = await asyncio.to_thread(_load_file_events, DEXSPORT_SAMPLE_PATH)
+    elif source in {"bookmaker_xyz", "api"}:
+        events = await fetch_bookmaker_xyz_events_async(
+            sport_key,
+            markets,
+            regions,
+            bookmakers=["bookmaker_xyz"],
+        )
+        upstream_stats = dict(getattr(fetch_bookmaker_xyz_events_async, "last_stats", {}) or {})
+        if upstream_stats:
+            stats["upstream"] = upstream_stats
+    else:
+        raise ProviderError("Dexsport provider supports DEXSPORT_SOURCE=bookmaker_xyz, api, or file")
+
+    events = _tag_provider(events)
+    stats["events_returned_count"] = len(events)
+    fetch_events_async.last_stats = stats
+    return events
+
+
 fetch_events.last_stats = {
     "provider": PROVIDER_KEY,
     "source": DEXSPORT_SOURCE or "bookmaker_xyz",
     "proxy_provider": "bookmaker_xyz",
     "events_returned_count": 0,
 }
-
+fetch_events_async.last_stats = dict(fetch_events.last_stats)

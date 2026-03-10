@@ -8,9 +8,11 @@ class ScanInputValidationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = app_module.app.test_client()
         self._env_save_scan = app_module.ENV_SAVE_SCAN
+        self._background_started = app_module._BACKGROUND_SERVICES_STARTED
 
     def tearDown(self) -> None:
         app_module.ENV_SAVE_SCAN = self._env_save_scan
+        app_module._BACKGROUND_SERVICES_STARTED = self._background_started
 
     def test_scan_rejects_invalid_json_payload(self) -> None:
         response = self.client.post(
@@ -100,6 +102,39 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(len(history_payload.get("opportunities") or []), 1)
         self.assertEqual(len(history_payload.get("middles") or []), 1)
         self.assertEqual(len(history_payload.get("plus_ev") or []), 1)
+
+    def test_index_prewarms_background_services(self) -> None:
+        with patch.object(app_module, "_start_background_provider_services") as mocked_start:
+            response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        mocked_start.assert_called_once_with(wait_timeout=0.0)
+
+    def test_provider_runtime_returns_status_payload(self) -> None:
+        runtime_payload = {
+            "enabled": True,
+            "started": True,
+            "ready": True,
+            "status": {"market_connected": True},
+        }
+        with (
+            patch.object(app_module, "_start_background_provider_services") as mocked_start,
+            patch.object(app_module, "_provider_runtime_status", return_value=runtime_payload),
+        ):
+            response = self.client.get("/provider-runtime/polymarket")
+        self.assertEqual(response.status_code, 200)
+        mocked_start.assert_called_once_with(wait_timeout=0.0)
+        payload = response.get_json() or {}
+        self.assertTrue(payload.get("success"))
+        self.assertEqual(payload.get("provider_key"), "polymarket")
+        self.assertTrue(payload.get("ready"))
+
+    def test_provider_runtime_rejects_unknown_provider(self) -> None:
+        with patch.object(app_module, "_start_background_provider_services") as mocked_start:
+            response = self.client.get("/provider-runtime/unknown")
+        self.assertEqual(response.status_code, 404)
+        mocked_start.assert_called_once_with(wait_timeout=0.0)
+        payload = response.get_json() or {}
+        self.assertFalse(payload.get("success"))
 
 
 if __name__ == "__main__":

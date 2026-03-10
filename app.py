@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import argparse
 import json
 import logging
@@ -59,6 +60,8 @@ from history import get_history_manager  # noqa: E402
 from notifier import get_notifier  # noqa: E402
 
 app = Flask(__name__)
+_BACKGROUND_SERVICES_LOCK = threading.Lock()
+_BACKGROUND_SERVICES_STARTED = False
 
 
 @app.route("/favicon.ico")
@@ -230,6 +233,46 @@ def _cross_provider_report_path() -> Optional[Path]:
     return base_dir / token
 
 
+def _start_background_provider_services(wait_timeout: Optional[float] = None) -> None:
+    global _BACKGROUND_SERVICES_STARTED
+    with _BACKGROUND_SERVICES_LOCK:
+        if _BACKGROUND_SERVICES_STARTED:
+            return
+        try:
+            from providers.polymarket import ensure_realtime_started
+
+            ensure_realtime_started(wait_timeout=wait_timeout)
+        except Exception:
+            logging.warning("Failed to prewarm provider background services", exc_info=True)
+            return
+        _BACKGROUND_SERVICES_STARTED = True
+
+
+def _stop_background_provider_services() -> None:
+    global _BACKGROUND_SERVICES_STARTED
+    with _BACKGROUND_SERVICES_LOCK:
+        try:
+            from providers.polymarket import stop_realtime
+
+            stop_realtime()
+        except Exception:
+            logging.warning("Failed to stop provider background services", exc_info=True)
+        finally:
+            _BACKGROUND_SERVICES_STARTED = False
+
+
+def _provider_runtime_status(provider_key: str) -> Optional[dict]:
+    key = resolve_provider_key(provider_key)
+    if key != "polymarket":
+        return None
+    from providers.polymarket import realtime_status
+
+    return realtime_status()
+
+
+atexit.register(_stop_background_provider_services)
+
+
 def _extract_opportunity_list(payload: object) -> list[dict]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
@@ -242,6 +285,7 @@ def _extract_opportunity_list(payload: object) -> list[dict]:
 
 @app.route("/")
 def index() -> str:
+    _start_background_provider_services(wait_timeout=0.0)
     return render_template(
         "index.html",
         default_sports=DEFAULT_SPORT_OPTIONS,
@@ -281,6 +325,7 @@ def index() -> str:
 
 @app.route("/scan", methods=["POST"])
 def scan() -> tuple:
+    _start_background_provider_services(wait_timeout=0.0)
     raw_body = request.get_data(cache=True, as_text=False)
     if raw_body:
         try:
@@ -514,6 +559,23 @@ def provider_snapshot(provider_key: str) -> tuple:
     )
 
 
+@app.route("/provider-runtime/<provider_key>", methods=["GET"])
+def provider_runtime(provider_key: str) -> tuple:
+    _start_background_provider_services(wait_timeout=0.0)
+    status = _provider_runtime_status(provider_key)
+    if status is None:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": f"No runtime status is available for provider '{provider_key}'",
+                }
+            ),
+            404,
+        )
+    return jsonify({"success": True, "provider_key": resolve_provider_key(provider_key), **status}), 200
+
+
 @app.route("/cross-provider-report", methods=["GET"])
 def cross_provider_report() -> tuple:
     report_path = _cross_provider_report_path()
@@ -584,6 +646,7 @@ def main() -> None:
     args = parser.parse_args()
 
     ensure_data_dir()
+    _start_background_provider_services()
     port = _choose_port(args.port)
     if port > 0:
         timer = threading.Timer(1.0, open_browser, args=(port,))
@@ -593,6 +656,7 @@ def main() -> None:
     try:
         app.run(port=port or 0, debug=False)
     finally:
+        _stop_background_provider_services()
         if timer:
             timer.cancel()
 

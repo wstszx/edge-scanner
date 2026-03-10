@@ -1,15 +1,20 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import asyncio
 import concurrent.futures
 import datetime as dt
 import json
 import os
 import re
+import threading
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
 from urllib.parse import quote
 
+import httpx
 import requests
+
+from ._async_http import get_shared_client, request_json
 
 PROVIDER_KEY = "polymarket"
 PROVIDER_TITLE = "Polymarket"
@@ -25,8 +30,8 @@ POLYMARKET_RETRIES_RAW = os.getenv("POLYMARKET_RETRIES", "2").strip()
 POLYMARKET_RETRY_BACKOFF_RAW = os.getenv("POLYMARKET_RETRY_BACKOFF", "0.5").strip()
 POLYMARKET_TIMEOUT_RAW = os.getenv("POLYMARKET_TIMEOUT_SECONDS", "20").strip()
 POLYMARKET_SPORT_TAG_CACHE_TTL_RAW = os.getenv("POLYMARKET_SPORT_TAG_CACHE_TTL", "600").strip()
-POLYMARKET_EVENTS_CACHE_TTL_RAW = os.getenv("POLYMARKET_EVENTS_CACHE_TTL", "60").strip()
-POLYMARKET_CLOB_BOOK_CACHE_TTL_RAW = os.getenv("POLYMARKET_CLOB_BOOK_CACHE_TTL", "20").strip()
+POLYMARKET_EVENTS_CACHE_TTL_RAW = os.getenv("POLYMARKET_EVENTS_CACHE_TTL", "12").strip()
+POLYMARKET_CLOB_BOOK_CACHE_TTL_RAW = os.getenv("POLYMARKET_CLOB_BOOK_CACHE_TTL", "4").strip()
 POLYMARKET_CLOB_MAX_BOOKS_RAW = os.getenv("POLYMARKET_CLOB_MAX_BOOKS", "300").strip()
 POLYMARKET_CLOB_BOOK_WORKERS_RAW = os.getenv("POLYMARKET_CLOB_BOOK_WORKERS", "8").strip()
 POLYMARKET_USER_AGENT = os.getenv(
@@ -39,6 +44,76 @@ POLYMARKET_USER_AGENT = os.getenv(
 POLYMARKET_BEARER_TOKEN = os.getenv("POLYMARKET_BEARER_TOKEN", "").strip()
 POLYMARKET_API_KEY = os.getenv("POLYMARKET_API_KEY", "").strip()
 POLYMARKET_COOKIE = os.getenv("POLYMARKET_COOKIE", "").strip()
+POLYMARKET_WS_ENABLED = os.getenv("POLYMARKET_WS_ENABLED", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+POLYMARKET_MARKET_WS_ENABLED = os.getenv("POLYMARKET_MARKET_WS_ENABLED", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+POLYMARKET_SPORTS_WS_ENABLED = os.getenv("POLYMARKET_SPORTS_WS_ENABLED", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+POLYMARKET_MARKET_WS_URL = os.getenv(
+    "POLYMARKET_MARKET_WS_URL",
+    "wss://ws-subscriptions-clob.polymarket.com/ws/market",
+).strip()
+POLYMARKET_SPORTS_WS_URL = os.getenv(
+    "POLYMARKET_SPORTS_WS_URL",
+    "wss://sports-api.polymarket.com/ws",
+).strip()
+POLYMARKET_WS_WARMUP_MS_RAW = os.getenv("POLYMARKET_WS_WARMUP_MS", "250").strip()
+POLYMARKET_WS_BOOK_MAX_AGE_SECONDS_RAW = os.getenv(
+    "POLYMARKET_WS_BOOK_MAX_AGE_SECONDS",
+    "30",
+).strip()
+POLYMARKET_WS_CONNECT_TIMEOUT_RAW = os.getenv("POLYMARKET_WS_CONNECT_TIMEOUT_SECONDS", "15").strip()
+POLYMARKET_WS_RECONNECT_MAX_DELAY_RAW = os.getenv("POLYMARKET_WS_RECONNECT_MAX_DELAY_SECONDS", "15").strip()
+POLYMARKET_WS_STARTUP_WAIT_SECONDS_RAW = os.getenv("POLYMARKET_WS_STARTUP_WAIT_SECONDS", "1.5").strip()
+POLYMARKET_REALTIME_SHARED_DIR = os.getenv(
+    "POLYMARKET_REALTIME_SHARED_DIR",
+    os.path.join("data", "polymarket_realtime"),
+).strip()
+POLYMARKET_REALTIME_OWNER_STALE_SECONDS_RAW = os.getenv(
+    "POLYMARKET_REALTIME_OWNER_STALE_SECONDS",
+    "30",
+).strip()
+POLYMARKET_REALTIME_SNAPSHOT_FLUSH_SECONDS_RAW = os.getenv(
+    "POLYMARKET_REALTIME_SNAPSHOT_FLUSH_SECONDS",
+    "1.0",
+).strip()
+POLYMARKET_REALTIME_SHARED_READ_TTL_MS_RAW = os.getenv(
+    "POLYMARKET_REALTIME_SHARED_READ_TTL_MS",
+    "500",
+).strip()
+POLYMARKET_REALTIME_CLEANUP_SECONDS_RAW = os.getenv(
+    "POLYMARKET_REALTIME_CLEANUP_SECONDS",
+    "30",
+).strip()
+POLYMARKET_REALTIME_SUBSCRIPTION_TTL_SECONDS_RAW = os.getenv(
+    "POLYMARKET_REALTIME_SUBSCRIPTION_TTL_SECONDS",
+    "900",
+).strip()
+POLYMARKET_REALTIME_SPORT_RESULT_TTL_SECONDS_RAW = os.getenv(
+    "POLYMARKET_REALTIME_SPORT_RESULT_TTL_SECONDS",
+    "10800",
+).strip()
+POLYMARKET_REALTIME_MAX_BOOK_ENTRIES_RAW = os.getenv(
+    "POLYMARKET_REALTIME_MAX_BOOK_ENTRIES",
+    "4000",
+).strip()
+POLYMARKET_REALTIME_MAX_SPORT_RESULTS_RAW = os.getenv(
+    "POLYMARKET_REALTIME_MAX_SPORT_RESULTS",
+    "2000",
+).strip()
 
 SPORT_TAG_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
@@ -52,6 +127,10 @@ CLOB_BOOK_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
     "entries": {},
 }
+SPORT_TAG_CACHE_ASYNC_LOCK: Optional[asyncio.Lock] = None
+EVENTS_CACHE_ASYNC_LOCK: Optional[asyncio.Lock] = None
+REALTIME_MANAGER: Optional["PolymarketRealtimeManager"] = None
+REALTIME_MANAGER_LOCK = threading.Lock()
 
 SPORT_ALIASES: Dict[str, Sequence[str]] = {
     "americanfootball_nfl": ("nfl", "american-football"),
@@ -77,6 +156,34 @@ class ProviderError(Exception):
         self.status_code = status_code
 
 
+def _sport_tag_cache_async_lock() -> asyncio.Lock:
+    global SPORT_TAG_CACHE_ASYNC_LOCK
+    if SPORT_TAG_CACHE_ASYNC_LOCK is None:
+        SPORT_TAG_CACHE_ASYNC_LOCK = asyncio.Lock()
+    return SPORT_TAG_CACHE_ASYNC_LOCK
+
+
+def _events_cache_async_lock() -> asyncio.Lock:
+    global EVENTS_CACHE_ASYNC_LOCK
+    if EVENTS_CACHE_ASYNC_LOCK is None:
+        EVENTS_CACHE_ASYNC_LOCK = asyncio.Lock()
+    return EVENTS_CACHE_ASYNC_LOCK
+
+
+def _websocket_realtime_enabled() -> bool:
+    return bool(POLYMARKET_WS_ENABLED) and (
+        bool(POLYMARKET_MARKET_WS_ENABLED) or bool(POLYMARKET_SPORTS_WS_ENABLED)
+    )
+
+
+def _market_websocket_enabled() -> bool:
+    return bool(POLYMARKET_WS_ENABLED) and bool(POLYMARKET_MARKET_WS_ENABLED)
+
+
+def _sports_websocket_enabled() -> bool:
+    return bool(POLYMARKET_WS_ENABLED) and bool(POLYMARKET_SPORTS_WS_ENABLED)
+
+
 def _int_or_default(value: str, default: int, min_value: int = 0) -> int:
     try:
         return max(min_value, int(float(value)))
@@ -89,6 +196,76 @@ def _float_or_default(value: str, default: float, min_value: float = 0.0) -> flo
         return max(min_value, float(value))
     except (TypeError, ValueError):
         return default
+
+
+def _ws_warmup_seconds() -> float:
+    return _float_or_default(POLYMARKET_WS_WARMUP_MS_RAW, 250.0, min_value=0.0) / 1000.0
+
+
+def _ws_book_max_age_seconds() -> float:
+    return _float_or_default(POLYMARKET_WS_BOOK_MAX_AGE_SECONDS_RAW, 30.0, min_value=0.0)
+
+
+def _ws_connect_timeout_seconds() -> float:
+    return _float_or_default(POLYMARKET_WS_CONNECT_TIMEOUT_RAW, 15.0, min_value=1.0)
+
+
+def _ws_reconnect_max_delay_seconds() -> float:
+    return _float_or_default(POLYMARKET_WS_RECONNECT_MAX_DELAY_RAW, 15.0, min_value=1.0)
+
+
+def _ws_startup_wait_seconds() -> float:
+    return _float_or_default(POLYMARKET_WS_STARTUP_WAIT_SECONDS_RAW, 1.5, min_value=0.0)
+
+
+def _realtime_owner_stale_seconds() -> float:
+    return _float_or_default(POLYMARKET_REALTIME_OWNER_STALE_SECONDS_RAW, 30.0, min_value=1.0)
+
+
+def _realtime_snapshot_flush_seconds() -> float:
+    return _float_or_default(POLYMARKET_REALTIME_SNAPSHOT_FLUSH_SECONDS_RAW, 1.0, min_value=0.1)
+
+
+def _realtime_shared_read_ttl_seconds() -> float:
+    return _float_or_default(POLYMARKET_REALTIME_SHARED_READ_TTL_MS_RAW, 500.0, min_value=0.0) / 1000.0
+
+
+def _realtime_cleanup_seconds() -> float:
+    return _float_or_default(POLYMARKET_REALTIME_CLEANUP_SECONDS_RAW, 30.0, min_value=1.0)
+
+
+def _realtime_subscription_ttl_seconds() -> float:
+    return _float_or_default(POLYMARKET_REALTIME_SUBSCRIPTION_TTL_SECONDS_RAW, 900.0, min_value=30.0)
+
+
+def _realtime_sport_result_ttl_seconds() -> float:
+    return _float_or_default(POLYMARKET_REALTIME_SPORT_RESULT_TTL_SECONDS_RAW, 10800.0, min_value=60.0)
+
+
+def _realtime_max_book_entries() -> int:
+    return _int_or_default(POLYMARKET_REALTIME_MAX_BOOK_ENTRIES_RAW, 4000, min_value=100)
+
+
+def _realtime_max_sport_results() -> int:
+    return _int_or_default(POLYMARKET_REALTIME_MAX_SPORT_RESULTS_RAW, 2000, min_value=100)
+
+
+def _realtime_shared_dir() -> str:
+    return _normalize_text(POLYMARKET_REALTIME_SHARED_DIR)
+
+
+def _realtime_owner_path() -> str:
+    base_dir = _realtime_shared_dir()
+    if not base_dir:
+        return ""
+    return os.path.join(base_dir, "owner.json")
+
+
+def _realtime_snapshot_path() -> str:
+    base_dir = _realtime_shared_dir()
+    if not base_dir:
+        return ""
+    return os.path.join(base_dir, "snapshot.json")
 
 
 def _api_base() -> str:
@@ -166,6 +343,31 @@ def _request_json(
     raise ProviderError("Polymarket request failed")
 
 
+async def _request_json_async(
+    client: httpx.AsyncClient,
+    path: str,
+    params: Dict[str, object],
+    retries: int,
+    backoff_seconds: float,
+) -> Tuple[object, int]:
+    url = f"{_api_base()}/{path.lstrip('/')}"
+    timeout = _int_or_default(POLYMARKET_TIMEOUT_RAW, 20, min_value=1)
+    return await request_json(
+        client,
+        "GET",
+        url,
+        params=params,
+        headers=_headers(),
+        timeout=float(timeout),
+        retries=retries,
+        backoff_seconds=backoff_seconds,
+        error_cls=ProviderError,
+        network_error_prefix="Polymarket network error",
+        parse_error_message="Failed to parse Polymarket API response",
+        status_error_message=lambda status_code: f"Polymarket API request failed ({status_code})",
+    )
+
+
 def _request_clob_json(
     path: str,
     params: Dict[str, object],
@@ -205,6 +407,31 @@ def _request_clob_json(
     if last_error:
         raise last_error
     raise ProviderError("Polymarket CLOB request failed")
+
+
+async def _request_clob_json_async(
+    client: httpx.AsyncClient,
+    path: str,
+    params: Dict[str, object],
+    retries: int,
+    backoff_seconds: float,
+) -> Tuple[object, int]:
+    url = f"{_clob_base()}/{path.lstrip('/')}"
+    timeout = _int_or_default(POLYMARKET_TIMEOUT_RAW, 20, min_value=1)
+    return await request_json(
+        client,
+        "GET",
+        url,
+        params=params,
+        headers=_headers(),
+        timeout=float(timeout),
+        retries=retries,
+        backoff_seconds=backoff_seconds,
+        error_cls=ProviderError,
+        network_error_prefix="Polymarket CLOB network error",
+        parse_error_message="Failed to parse Polymarket CLOB response",
+        status_error_message=lambda status_code: f"Polymarket CLOB request failed ({status_code})",
+    )
 
 
 def _normalize_text(value: object) -> str:
@@ -389,6 +616,67 @@ def _load_sport_tag_mapping(retries: int, backoff_seconds: float) -> Dict[str, s
     return mapping
 
 
+async def _load_sport_tag_mapping_async(
+    client: httpx.AsyncClient,
+    retries: int,
+    backoff_seconds: float,
+) -> Dict[str, set]:
+    ttl = _int_or_default(POLYMARKET_SPORT_TAG_CACHE_TTL_RAW, 600, min_value=0)
+    now = time.time()
+    cache_valid = ttl > 0 and now < float(SPORT_TAG_CACHE.get("expires_at", 0.0))
+    cached_mapping = SPORT_TAG_CACHE.get("mapping")
+    if cache_valid and isinstance(cached_mapping, dict):
+        return cached_mapping
+
+    async with _sport_tag_cache_async_lock():
+        now = time.time()
+        cache_valid = ttl > 0 and now < float(SPORT_TAG_CACHE.get("expires_at", 0.0))
+        cached_mapping = SPORT_TAG_CACHE.get("mapping")
+        if cache_valid and isinstance(cached_mapping, dict):
+            return cached_mapping
+
+        payload, _ = await _request_json_async(
+            client,
+            "sports",
+            {},
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+        )
+        if not isinstance(payload, list):
+            raise ProviderError("Polymarket sports endpoint must return a JSON array")
+        raw_mapping: Dict[str, set] = {}
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            sport_token = _normalize_token(item.get("sport"))
+            if not sport_token:
+                continue
+            tag_values = str(item.get("tags") or "")
+            tag_ids = {
+                part.strip()
+                for part in tag_values.split(",")
+                if part and part.strip().isdigit()
+            }
+            tag_ids.discard("1")
+            tag_ids.discard("100639")
+            bucket = raw_mapping.setdefault(sport_token, set())
+            bucket.update(tag_ids)
+
+        tag_frequency: Dict[str, int] = {}
+        for tag_ids in raw_mapping.values():
+            for tag_id in tag_ids:
+                tag_frequency[tag_id] = tag_frequency.get(tag_id, 0) + 1
+
+        mapping: Dict[str, set] = {}
+        for sport_token, tag_ids in raw_mapping.items():
+            specific = {tag_id for tag_id in tag_ids if tag_frequency.get(tag_id, 0) <= 3}
+            mapping[sport_token] = specific or set(tag_ids)
+
+        SPORT_TAG_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+        SPORT_TAG_CACHE["mapping"] = mapping
+        return mapping
+
+
 def _event_tags(event: dict) -> Tuple[set, set]:
     tag_ids = set()
     tag_slugs = set()
@@ -536,6 +824,986 @@ def _book_ask_depth_notional(payload: object) -> Optional[float]:
     return round(total, 6)
 
 
+def _price_level_map(levels: object) -> Dict[str, float]:
+    mapping: Dict[str, float] = {}
+    if not isinstance(levels, list):
+        return mapping
+    for level in levels:
+        if not isinstance(level, dict):
+            continue
+        price = _safe_float(level.get("price"))
+        size = _safe_float(level.get("size"))
+        if price is None or size is None or price <= 0:
+            continue
+        mapping[f"{float(price):.10f}"] = max(0.0, float(size))
+    return mapping
+
+
+def _depth_from_level_map(levels: Dict[str, float]) -> Optional[float]:
+    total = 0.0
+    for price_key, size in (levels or {}).items():
+        price = _safe_float(price_key)
+        size_value = _safe_float(size)
+        if price is None or size_value is None or price <= 0 or size_value <= 0:
+            continue
+        total += float(price) * float(size_value)
+    if total <= 0:
+        return None
+    return round(total, 6)
+
+
+def _normalized_clob_token_ids(
+    token_ids: Sequence[str],
+) -> Tuple[List[str], int, int]:
+    unique_token_ids = list(
+        dict.fromkeys(_normalize_text(token_id) for token_id in token_ids if _normalize_text(token_id))
+    )
+    total_requested = len(unique_token_ids)
+    max_books = _int_or_default(POLYMARKET_CLOB_MAX_BOOKS_RAW, 300, min_value=1)
+    if len(unique_token_ids) > max_books:
+        unique_token_ids = unique_token_ids[:max_books]
+    truncated_count = max(0, total_requested - len(unique_token_ids))
+    return unique_token_ids, total_requested, truncated_count
+
+
+def _sports_result_slug(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("slug", "marketSlug", "eventSlug", "gameSlug"):
+        value = _normalize_text(payload.get(key))
+        if value:
+            return value
+    return ""
+
+
+def _sports_result_is_tradeable(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return True
+    if _flag_is_true(payload.get("ended")):
+        return False
+    if _flag_is_true(payload.get("closed")):
+        return False
+    if _flag_is_true(payload.get("archived")):
+        return False
+    status = _normalize_text(
+        payload.get("status")
+        or payload.get("gameStatus")
+        or payload.get("matchStatus")
+        or payload.get("state")
+    ).lower()
+    if status in {
+        "final",
+        "finished",
+        "full_time",
+        "full-time",
+        "ended",
+        "cancelled",
+        "canceled",
+        "postponed",
+        "abandoned",
+        "suspended_final",
+    }:
+        return False
+    return True
+
+
+def _read_json_file(path: object) -> Optional[dict]:
+    target = _normalize_text(path)
+    if not target or not os.path.exists(target):
+        return None
+    try:
+        with open(target, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _write_json_file_atomic(path: object, payload: dict) -> None:
+    target = _normalize_text(path)
+    if not target or not isinstance(payload, dict):
+        return
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    temp_path = f"{target}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+    os.replace(temp_path, target)
+
+
+def _remove_file_quietly(path: object) -> None:
+    target = _normalize_text(path)
+    if not target:
+        return
+    try:
+        os.remove(target)
+    except OSError:
+        return
+
+
+def _timestamp_to_iso(value: object) -> str:
+    timestamp = _safe_float(value)
+    if timestamp is None or timestamp <= 0:
+        return ""
+    try:
+        return (
+            dt.datetime.fromtimestamp(float(timestamp), tz=dt.timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    except (OSError, OverflowError, ValueError):
+        return ""
+
+
+def _shared_snapshot_is_fresh(age_seconds: object) -> bool:
+    age = _safe_float(age_seconds)
+    return age is not None and age <= _realtime_owner_stale_seconds()
+
+
+def _realtime_channel_is_ready(status: object, channel: str) -> bool:
+    if not isinstance(status, dict):
+        return False
+    if bool(status.get("shared_snapshot_stale")):
+        return False
+    if not bool(status.get(f"{channel}_connected")):
+        return False
+    age = _safe_float(status.get(f"{channel}_last_message_age_seconds"))
+    if age is None:
+        return True
+    max_age = _ws_book_max_age_seconds() if channel == "market" else _realtime_owner_stale_seconds()
+    return age <= max_age
+
+
+def _sport_result_payload_is_fresh(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    updated_at = _safe_float(payload.get("updated_at")) or 0.0
+    if updated_at <= 0:
+        return True
+    return (time.time() - updated_at) <= _realtime_sport_result_ttl_seconds()
+
+
+class PolymarketRealtimeManager:
+    def __init__(self) -> None:
+        self._thread: Optional[threading.Thread] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_ready = threading.Event()
+        self._state_lock = threading.RLock()
+        self._stop_requested = threading.Event()
+        self._owner_id = f"{os.getpid()}-{int(time.time() * 1000)}"
+        self._owner_active = False
+        self._market_ws = None
+        self._sports_ws = None
+        self._market_connected = False
+        self._sports_connected = False
+        self._market_books: Dict[str, dict] = {}
+        self._sports_results: Dict[str, dict] = {}
+        self._subscribed_asset_ids: Dict[str, float] = {}
+        self._messages_received = {"market": 0, "sports": 0}
+        self._connect_attempts = {"market": 0, "sports": 0}
+        self._last_errors = {"market": "", "sports": ""}
+        self._last_message_at = {"market": 0.0, "sports": 0.0}
+        self._last_owner_heartbeat_at = 0.0
+        self._last_snapshot_write_at = 0.0
+        self._last_cleanup_at = 0.0
+        self._shared_snapshot_cache = {
+            "loaded_at": 0.0,
+            "mtime": 0.0,
+            "payload": {},
+        }
+        self._started = False
+
+    def ensure_started(self) -> bool:
+        if not _websocket_realtime_enabled():
+            return False
+        with self._state_lock:
+            if self._started and self._thread and self._thread.is_alive():
+                return True
+        if not self._try_acquire_owner():
+            with self._state_lock:
+                self._owner_active = False
+            return False
+        with self._state_lock:
+            self._stop_requested.clear()
+            self._loop_ready.clear()
+            self._owner_active = True
+            self._thread = threading.Thread(
+                target=self._run_loop,
+                name="polymarket-ws",
+                daemon=True,
+            )
+            self._thread.start()
+            self._started = True
+        self._loop_ready.wait(timeout=2.0)
+        return self._loop is not None
+
+    def wait_until_ready(self, timeout_seconds: float) -> bool:
+        if timeout_seconds <= 0:
+            return False
+        deadline = time.time() + float(timeout_seconds)
+        while time.time() < deadline:
+            snapshot = self.snapshot()
+            if _market_websocket_enabled() and snapshot.get("market_connected"):
+                return True
+            if _sports_websocket_enabled() and snapshot.get("sports_connected"):
+                return True
+            time.sleep(0.05)
+        return False
+
+    def stop(self, timeout_seconds: float = 2.0) -> None:
+        with self._state_lock:
+            thread = self._thread
+        if not thread:
+            with self._state_lock:
+                self._started = False
+                self._loop = None
+                self._owner_active = False
+            self._release_owner()
+            return
+        self._stop_requested.set()
+        if thread.is_alive():
+            thread.join(timeout=max(0.0, float(timeout_seconds)))
+        with self._state_lock:
+            self._started = False
+            self._thread = None
+            self._loop = None
+            self._market_ws = None
+            self._sports_ws = None
+            self._market_connected = False
+            self._sports_connected = False
+            self._owner_active = False
+        self._release_owner()
+
+    def _try_acquire_owner(self) -> bool:
+        owner_path = _realtime_owner_path()
+        if not owner_path:
+            return False
+        now = time.time()
+        stale_after = _realtime_owner_stale_seconds()
+        payload = {
+            "owner_id": self._owner_id,
+            "pid": os.getpid(),
+            "heartbeat_at": now,
+            "saved_at": _timestamp_to_iso(now),
+        }
+        os.makedirs(os.path.dirname(owner_path), exist_ok=True)
+
+        def _create_owner_file() -> bool:
+            try:
+                fd = os.open(owner_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                return False
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+            except OSError:
+                return False
+            return True
+
+        if _create_owner_file():
+            return True
+        current = _read_json_file(owner_path) or {}
+        current_owner = _normalize_text(current.get("owner_id"))
+        if current_owner == self._owner_id:
+            self._refresh_owner_heartbeat(force=True)
+            return True
+        heartbeat_at = _safe_float(current.get("heartbeat_at")) or 0.0
+        if heartbeat_at > 0 and (now - heartbeat_at) <= stale_after:
+            return False
+        _remove_file_quietly(owner_path)
+        return _create_owner_file()
+
+    def _release_owner(self) -> None:
+        owner_path = _realtime_owner_path()
+        current = _read_json_file(owner_path) or {}
+        if _normalize_text(current.get("owner_id")) != self._owner_id:
+            return
+        _remove_file_quietly(owner_path)
+
+    def _refresh_owner_heartbeat(self, force: bool = False) -> None:
+        if not self._owner_active:
+            return
+        now = time.time()
+        if not force and (now - self._last_owner_heartbeat_at) < min(5.0, _realtime_owner_stale_seconds() / 2.0):
+            return
+        owner_path = _realtime_owner_path()
+        if not owner_path:
+            return
+        payload = {
+            "owner_id": self._owner_id,
+            "pid": os.getpid(),
+            "heartbeat_at": now,
+            "saved_at": _timestamp_to_iso(now),
+        }
+        try:
+            _write_json_file_atomic(owner_path, payload)
+        except OSError:
+            return
+        self._last_owner_heartbeat_at = now
+
+    def _load_shared_snapshot(self, force: bool = False) -> dict:
+        snapshot_path = _realtime_snapshot_path()
+        if not snapshot_path or not os.path.exists(snapshot_path):
+            return {}
+        try:
+            mtime = os.path.getmtime(snapshot_path)
+        except OSError:
+            return {}
+        now = time.time()
+        cached = self._shared_snapshot_cache
+        if (
+            not force
+            and float(cached.get("loaded_at") or 0.0) > 0
+            and (now - float(cached.get("loaded_at") or 0.0)) <= _realtime_shared_read_ttl_seconds()
+            and float(cached.get("mtime") or 0.0) == float(mtime)
+        ):
+            payload = cached.get("payload")
+            return payload if isinstance(payload, dict) else {}
+        payload = _read_json_file(snapshot_path) or {}
+        self._shared_snapshot_cache = {
+            "loaded_at": now,
+            "mtime": float(mtime),
+            "payload": payload,
+        }
+        return payload
+
+    def _local_status_payload(self) -> dict:
+        now = time.time()
+        book_ages = [
+            max(0.0, now - float(_safe_float(entry.get("updated_at")) or 0.0))
+            for entry in self._market_books.values()
+            if isinstance(entry, dict) and (_safe_float(entry.get("updated_at")) or 0.0) > 0
+        ]
+        result_ages = [
+            max(0.0, now - float(_safe_float(entry.get("updated_at")) or 0.0))
+            for entry in self._sports_results.values()
+            if isinstance(entry, dict) and (_safe_float(entry.get("updated_at")) or 0.0) > 0
+        ]
+        return {
+            "started": self._started,
+            "owner_active": self._owner_active,
+            "owner_id": self._owner_id,
+            "pid": os.getpid(),
+            "market_connected": self._market_connected,
+            "sports_connected": self._sports_connected,
+            "subscribed_assets": len(self._subscribed_asset_ids),
+            "market_books_cached": len(self._market_books),
+            "sports_results_cached": len(self._sports_results),
+            "market_messages_received": int(self._messages_received.get("market", 0) or 0),
+            "sports_messages_received": int(self._messages_received.get("sports", 0) or 0),
+            "market_connect_attempts": int(self._connect_attempts.get("market", 0) or 0),
+            "sports_connect_attempts": int(self._connect_attempts.get("sports", 0) or 0),
+            "market_last_error": _normalize_text(self._last_errors.get("market")),
+            "sports_last_error": _normalize_text(self._last_errors.get("sports")),
+            "market_last_message_at": _timestamp_to_iso(self._last_message_at.get("market")),
+            "sports_last_message_at": _timestamp_to_iso(self._last_message_at.get("sports")),
+            "market_last_message_age_seconds": round(max(0.0, now - float(self._last_message_at.get("market") or 0.0)), 2)
+            if float(self._last_message_at.get("market") or 0.0) > 0
+            else None,
+            "sports_last_message_age_seconds": round(max(0.0, now - float(self._last_message_at.get("sports") or 0.0)), 2)
+            if float(self._last_message_at.get("sports") or 0.0) > 0
+            else None,
+            "market_oldest_book_age_seconds": round(max(book_ages), 2) if book_ages else None,
+            "sports_oldest_result_age_seconds": round(max(result_ages), 2) if result_ages else None,
+            "snapshot_saved_at": _timestamp_to_iso(self._last_snapshot_write_at),
+            "cleanup_ran_at": _timestamp_to_iso(self._last_cleanup_at),
+        }
+
+    def _write_shared_snapshot(self, force: bool = False) -> None:
+        if not self._owner_active:
+            return
+        now = time.time()
+        if not force and (now - self._last_snapshot_write_at) < _realtime_snapshot_flush_seconds():
+            return
+        snapshot_path = _realtime_snapshot_path()
+        if not snapshot_path:
+            return
+        with self._state_lock:
+            payload = {
+                "saved_at": _timestamp_to_iso(now),
+                "status": self._local_status_payload(),
+                "market_books": {
+                    asset_id: {
+                        "asks": dict(entry.get("asks") or {}),
+                        "updated_at": entry.get("updated_at"),
+                    }
+                    for asset_id, entry in self._market_books.items()
+                    if isinstance(entry, dict)
+                },
+                "sports_results": {
+                    slug: dict(entry)
+                    for slug, entry in self._sports_results.items()
+                    if isinstance(entry, dict)
+                },
+            }
+        _write_json_file_atomic(snapshot_path, payload)
+        self._last_snapshot_write_at = now
+
+    def subscribe_assets(self, asset_ids: Sequence[str]) -> int:
+        normalized = [
+            token_id
+            for token_id in (_normalize_text(item) for item in asset_ids or [])
+            if token_id
+        ]
+        if not normalized:
+            return 0
+        if not self._owner_active:
+            self.ensure_started()
+        if not self._owner_active:
+            return 0
+        now = time.time()
+        with self._state_lock:
+            new_ids = [token_id for token_id in normalized if token_id not in self._subscribed_asset_ids]
+            for token_id in normalized:
+                self._subscribed_asset_ids[token_id] = now
+            loop = self._loop
+        if loop is not None and _market_websocket_enabled():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._send_market_subscription(new_ids),
+                    loop,
+                )
+            except Exception:
+                pass
+        return len(new_ids)
+
+    def wait_for_assets(self, asset_ids: Sequence[str], timeout_seconds: float) -> bool:
+        if timeout_seconds <= 0:
+            return False
+        deadline = time.time() + float(timeout_seconds)
+        token_ids = [token_id for token_id in (_normalize_text(item) for item in asset_ids or []) if token_id]
+        if not token_ids:
+            return False
+        while time.time() < deadline:
+            snapshot = self.get_depth_map(token_ids, max_age_seconds=_ws_book_max_age_seconds())
+            if snapshot:
+                return True
+            time.sleep(0.05)
+        return False
+
+    def get_depth_map(
+        self,
+        asset_ids: Sequence[str],
+        max_age_seconds: float,
+    ) -> Dict[str, Optional[float]]:
+        now = time.time()
+        depths: Dict[str, Optional[float]] = {}
+        missing: List[str] = []
+        with self._state_lock:
+            for asset_id in (_normalize_text(item) for item in asset_ids or []):
+                if not asset_id:
+                    continue
+                if self._owner_active:
+                    self._subscribed_asset_ids[asset_id] = now
+                entry = self._market_books.get(asset_id)
+                if not isinstance(entry, dict):
+                    missing.append(asset_id)
+                    continue
+                updated_at = _safe_float(entry.get("updated_at")) or 0.0
+                if max_age_seconds > 0 and updated_at > 0 and (now - updated_at) > max_age_seconds:
+                    missing.append(asset_id)
+                    continue
+                ask_levels = entry.get("asks")
+                if not isinstance(ask_levels, dict):
+                    missing.append(asset_id)
+                    continue
+                depth = _depth_from_level_map(ask_levels)
+                if depth is not None:
+                    depths[asset_id] = depth
+                else:
+                    missing.append(asset_id)
+        if missing:
+            shared_snapshot = self._load_shared_snapshot()
+            shared_books = shared_snapshot.get("market_books") if isinstance(shared_snapshot, dict) else {}
+            if isinstance(shared_books, dict):
+                for asset_id in missing:
+                    entry = shared_books.get(asset_id)
+                    if not isinstance(entry, dict):
+                        continue
+                    updated_at = _safe_float(entry.get("updated_at")) or 0.0
+                    if max_age_seconds > 0 and updated_at > 0 and (now - updated_at) > max_age_seconds:
+                        continue
+                    ask_levels = entry.get("asks")
+                    if not isinstance(ask_levels, dict):
+                        continue
+                    depth = _depth_from_level_map(ask_levels)
+                    if depth is not None:
+                        depths[asset_id] = depth
+        return depths
+
+    def get_sport_result(self, slug: object) -> Optional[dict]:
+        token = _normalize_text(slug)
+        if not token:
+            return None
+        with self._state_lock:
+            payload = self._sports_results.get(token)
+            if _sport_result_payload_is_fresh(payload):
+                return dict(payload)
+        shared_snapshot = self._load_shared_snapshot()
+        shared_results = shared_snapshot.get("sports_results") if isinstance(shared_snapshot, dict) else {}
+        if not isinstance(shared_results, dict):
+            return None
+        payload = shared_results.get(token)
+        return dict(payload) if _sport_result_payload_is_fresh(payload) else None
+
+    def snapshot(self) -> dict:
+        with self._state_lock:
+            status = self._local_status_payload()
+        if status.get("owner_active") or status.get("started"):
+            return status
+        shared_snapshot = self._load_shared_snapshot()
+        shared_status = shared_snapshot.get("status") if isinstance(shared_snapshot, dict) else {}
+        if isinstance(shared_status, dict) and shared_status:
+            saved_at = _normalize_text(shared_snapshot.get("saved_at"))
+            saved_dt = _parse_datetime_utc(saved_at)
+            age_seconds = None
+            if saved_dt is not None:
+                age_seconds = round(
+                    max(0.0, (dt.datetime.now(dt.timezone.utc) - saved_dt).total_seconds()),
+                    2,
+                )
+            snapshot_fresh = _shared_snapshot_is_fresh(age_seconds)
+            status.update(
+                {
+                    "shared_snapshot_loaded": True,
+                    "shared_snapshot_saved_at": saved_at,
+                    "shared_snapshot_age_seconds": age_seconds,
+                    "shared_snapshot_stale": not snapshot_fresh,
+                    "shared_owner_active": snapshot_fresh,
+                }
+            )
+            status.update(shared_status)
+            if not snapshot_fresh:
+                status["started"] = False
+                status["owner_active"] = False
+                status["market_connected"] = False
+                status["sports_connected"] = False
+            return status
+        return status
+
+    def _run_loop(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        with self._state_lock:
+            self._loop = loop
+        self._loop_ready.set()
+        try:
+            loop.run_until_complete(self._run_forever())
+        finally:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                try:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception:
+                    pass
+            loop.close()
+            with self._state_lock:
+                self._loop = None
+                self._market_ws = None
+                self._sports_ws = None
+                self._market_connected = False
+                self._sports_connected = False
+                self._started = False
+            self._release_owner()
+
+    async def _run_forever(self) -> None:
+        tasks = []
+        if _market_websocket_enabled():
+            tasks.append(asyncio.create_task(self._market_loop()))
+        if _sports_websocket_enabled():
+            tasks.append(asyncio.create_task(self._sports_loop()))
+        tasks.append(asyncio.create_task(self._maintenance_loop()))
+        try:
+            await self._wait_for_stop()
+        finally:
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _wait_for_stop(self) -> None:
+        while not self._stop_requested.is_set():
+            await asyncio.sleep(0.2)
+
+    async def _market_loop(self) -> None:
+        from websockets.asyncio.client import connect
+
+        delay = 1.0
+        while not self._stop_requested.is_set():
+            try:
+                subscribed = await self._wait_for_market_subscriptions()
+                if not subscribed:
+                    continue
+                with self._state_lock:
+                    self._connect_attempts["market"] = int(self._connect_attempts.get("market", 0) or 0) + 1
+                async with connect(
+                    POLYMARKET_MARKET_WS_URL,
+                    open_timeout=_ws_connect_timeout_seconds(),
+                    ping_interval=20.0,
+                    ping_timeout=20.0,
+                    close_timeout=5.0,
+                    max_queue=1000,
+                ) as websocket:
+                    with self._state_lock:
+                        self._market_ws = websocket
+                        self._market_connected = True
+                        self._last_errors["market"] = ""
+                    await self._send_market_subscription(subscribed)
+                    heartbeat_task = asyncio.create_task(self._market_heartbeat(websocket))
+                    delay = 1.0
+                    try:
+                        while not self._stop_requested.is_set():
+                            raw = await websocket.recv()
+                            await self._handle_market_message(raw)
+                    finally:
+                        heartbeat_task.cancel()
+                        await asyncio.gather(heartbeat_task, return_exceptions=True)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                with self._state_lock:
+                    self._market_connected = False
+                    self._market_ws = None
+                    self._last_errors["market"] = str(exc)
+                if self._stop_requested.is_set():
+                    break
+                await asyncio.sleep(delay)
+                delay = min(_ws_reconnect_max_delay_seconds(), delay * 2.0)
+
+    async def _sports_loop(self) -> None:
+        from websockets.asyncio.client import connect
+
+        delay = 1.0
+        while not self._stop_requested.is_set():
+            try:
+                with self._state_lock:
+                    self._connect_attempts["sports"] = int(self._connect_attempts.get("sports", 0) or 0) + 1
+                async with connect(
+                    POLYMARKET_SPORTS_WS_URL,
+                    open_timeout=_ws_connect_timeout_seconds(),
+                    ping_interval=20.0,
+                    ping_timeout=20.0,
+                    close_timeout=5.0,
+                    max_queue=1000,
+                ) as websocket:
+                    with self._state_lock:
+                        self._sports_ws = websocket
+                        self._sports_connected = True
+                        self._last_errors["sports"] = ""
+                    delay = 1.0
+                    while not self._stop_requested.is_set():
+                        raw = await websocket.recv()
+                        if isinstance(raw, str) and raw.strip().lower() == "ping":
+                            await websocket.send("pong")
+                            continue
+                        await self._handle_sports_message(raw)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                with self._state_lock:
+                    self._sports_connected = False
+                    self._sports_ws = None
+                    self._last_errors["sports"] = str(exc)
+                if self._stop_requested.is_set():
+                    break
+                await asyncio.sleep(delay)
+                delay = min(_ws_reconnect_max_delay_seconds(), delay * 2.0)
+
+    async def _wait_for_market_subscriptions(self) -> List[str]:
+        while not self._stop_requested.is_set():
+            with self._state_lock:
+                now = time.time()
+                subscribed = [
+                    asset_id
+                    for asset_id, last_requested_at in self._subscribed_asset_ids.items()
+                    if (now - float(last_requested_at or 0.0)) <= _realtime_subscription_ttl_seconds()
+                ]
+            if subscribed:
+                return subscribed
+            await asyncio.sleep(0.2)
+        return []
+
+    async def _market_heartbeat(self, websocket) -> None:
+        while not self._stop_requested.is_set():
+            await asyncio.sleep(10.0)
+            await websocket.send("PING")
+
+    async def _maintenance_loop(self) -> None:
+        while not self._stop_requested.is_set():
+            await asyncio.sleep(1.0)
+            with self._state_lock:
+                owner_active = self._owner_active
+            if not owner_active:
+                continue
+            self._refresh_owner_heartbeat()
+            now = time.time()
+            if (now - self._last_cleanup_at) >= _realtime_cleanup_seconds():
+                await self._prune_realtime_state()
+            self._write_shared_snapshot()
+
+    async def _prune_realtime_state(self) -> None:
+        now = time.time()
+        unsubscribe_ids: List[str] = []
+        with self._state_lock:
+            expired_assets = [
+                asset_id
+                for asset_id, last_requested_at in self._subscribed_asset_ids.items()
+                if (now - float(last_requested_at or 0.0)) > _realtime_subscription_ttl_seconds()
+            ]
+            for asset_id in expired_assets:
+                self._subscribed_asset_ids.pop(asset_id, None)
+            unsubscribe_ids.extend(expired_assets)
+
+            expired_books = [
+                asset_id
+                for asset_id, entry in self._market_books.items()
+                if (now - float(_safe_float(entry.get("updated_at")) or 0.0)) > _realtime_subscription_ttl_seconds()
+            ]
+            for asset_id in expired_books:
+                self._market_books.pop(asset_id, None)
+
+            expired_results = [
+                slug
+                for slug, entry in self._sports_results.items()
+                if (now - float(_safe_float(entry.get("updated_at")) or 0.0)) > _realtime_sport_result_ttl_seconds()
+            ]
+            for slug in expired_results:
+                self._sports_results.pop(slug, None)
+
+            if len(self._market_books) > _realtime_max_book_entries():
+                overflow = len(self._market_books) - _realtime_max_book_entries()
+                ordered = sorted(
+                    self._market_books.items(),
+                    key=lambda item: _safe_float((item[1] or {}).get("updated_at")) or 0.0,
+                )
+                for asset_id, _ in ordered[:overflow]:
+                    self._market_books.pop(asset_id, None)
+                    self._subscribed_asset_ids.pop(asset_id, None)
+                    unsubscribe_ids.append(asset_id)
+            if len(self._sports_results) > _realtime_max_sport_results():
+                overflow = len(self._sports_results) - _realtime_max_sport_results()
+                ordered = sorted(
+                    self._sports_results.items(),
+                    key=lambda item: _safe_float((item[1] or {}).get("updated_at")) or 0.0,
+                )
+                for slug, _ in ordered[:overflow]:
+                    self._sports_results.pop(slug, None)
+            self._last_cleanup_at = now
+        unsubscribe_ids = list(dict.fromkeys(_normalize_text(item) for item in unsubscribe_ids if _normalize_text(item)))
+        if unsubscribe_ids:
+            await self._send_market_unsubscribe(unsubscribe_ids)
+        with self._state_lock:
+            should_disconnect_market = self._market_connected and not self._subscribed_asset_ids
+            websocket = self._market_ws if should_disconnect_market else None
+        if websocket is not None:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+
+    async def _send_market_subscription(self, asset_ids: Sequence[str]) -> None:
+        if not asset_ids:
+            return
+        with self._state_lock:
+            websocket = self._market_ws
+            connected = self._market_connected
+        if websocket is None or not connected:
+            return
+        payload = {
+            "assets_ids": [
+                token_id
+                for token_id in (_normalize_text(item) for item in asset_ids)
+                if token_id
+            ],
+            "type": "market",
+            "custom_feature_enabled": True,
+        }
+        if not payload["assets_ids"]:
+            return
+        await websocket.send(json.dumps(payload, separators=(",", ":")))
+
+    async def _send_market_unsubscribe(self, asset_ids: Sequence[str]) -> None:
+        if not asset_ids:
+            return
+        with self._state_lock:
+            websocket = self._market_ws
+            connected = self._market_connected
+        if websocket is None or not connected:
+            return
+        payload = {
+            "assets_ids": [
+                token_id
+                for token_id in (_normalize_text(item) for item in asset_ids)
+                if token_id
+            ],
+            "type": "unsubscribe",
+        }
+        if not payload["assets_ids"]:
+            return
+        await websocket.send(json.dumps(payload, separators=(",", ":")))
+
+    async def _handle_market_message(self, raw: object) -> None:
+        messages = self._decode_ws_messages(raw)
+        if not messages:
+            return
+        now = time.time()
+        with self._state_lock:
+            self._messages_received["market"] = int(self._messages_received.get("market", 0) or 0) + len(messages)
+            self._last_message_at["market"] = now
+            for payload in messages:
+                if not isinstance(payload, dict):
+                    continue
+                event_type = _normalize_text(payload.get("event_type") or payload.get("type")).lower()
+                asset_id = _normalize_text(
+                    payload.get("asset_id")
+                    or payload.get("assetId")
+                    or payload.get("market")
+                    or payload.get("token_id")
+                    or payload.get("tokenId")
+                )
+                if not asset_id:
+                    continue
+                entry = self._market_books.setdefault(
+                    asset_id,
+                    {"bids": {}, "asks": {}, "updated_at": 0.0},
+                )
+                if event_type == "book":
+                    entry["bids"] = _price_level_map(payload.get("bids"))
+                    entry["asks"] = _price_level_map(payload.get("asks"))
+                elif event_type == "price_change":
+                    changes = payload.get("price_changes") if isinstance(payload.get("price_changes"), list) else []
+                    for change in changes:
+                        if not isinstance(change, dict):
+                            continue
+                        price = _safe_float(change.get("price"))
+                        size = _safe_float(change.get("size"))
+                        side = _normalize_text(change.get("side")).lower()
+                        if price is None:
+                            continue
+                        bucket = entry["asks"] if side == "sell" else entry["bids"] if side == "buy" else None
+                        if bucket is None:
+                            continue
+                        price_key = f"{float(price):.10f}"
+                        if size is None or size <= 0:
+                            bucket.pop(price_key, None)
+                        else:
+                            bucket[price_key] = float(size)
+                entry["updated_at"] = now
+
+    async def _handle_sports_message(self, raw: object) -> None:
+        messages = self._decode_ws_messages(raw)
+        if not messages:
+            return
+        now = time.time()
+        with self._state_lock:
+            self._messages_received["sports"] = int(self._messages_received.get("sports", 0) or 0) + len(messages)
+            self._last_message_at["sports"] = now
+            for payload in messages:
+                slug = _sports_result_slug(payload)
+                if not slug:
+                    continue
+                copied = dict(payload)
+                copied["updated_at"] = now
+                self._sports_results[slug] = copied
+
+    def _decode_ws_messages(self, raw: object) -> List[dict]:
+        payload = raw
+        if isinstance(raw, bytes):
+            try:
+                payload = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                return []
+        if isinstance(payload, str):
+            text = payload.strip()
+            if not text or text.lower() in {"ping", "pong"}:
+                return []
+            try:
+                payload = json.loads(text)
+            except ValueError:
+                return []
+        if isinstance(payload, dict):
+            return [payload]
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        return []
+
+
+def _get_realtime_manager() -> PolymarketRealtimeManager:
+    global REALTIME_MANAGER
+    with REALTIME_MANAGER_LOCK:
+        if REALTIME_MANAGER is None:
+            REALTIME_MANAGER = PolymarketRealtimeManager()
+        return REALTIME_MANAGER
+
+
+def ensure_realtime_started(wait_timeout: Optional[float] = None) -> dict:
+    if not _websocket_realtime_enabled():
+        return {
+            "enabled": False,
+            "started": False,
+            "ready": False,
+            "status": {},
+        }
+    manager = _get_realtime_manager()
+    started = manager.ensure_started()
+    wait_seconds = _ws_startup_wait_seconds() if wait_timeout is None else max(0.0, float(wait_timeout))
+    ready = manager.wait_until_ready(wait_seconds) if wait_seconds > 0 else False
+    status = manager.snapshot()
+    return {
+        "enabled": True,
+        "started": started,
+        "ready": ready,
+        "status": status,
+    }
+
+
+def stop_realtime(timeout_seconds: float = 2.0) -> None:
+    manager = _get_realtime_manager()
+    manager.stop(timeout_seconds=timeout_seconds)
+
+
+def realtime_status() -> dict:
+    if not _websocket_realtime_enabled():
+        return {
+            "enabled": False,
+            "started": False,
+            "ready": False,
+            "status": {},
+        }
+    manager = _get_realtime_manager()
+    status = manager.snapshot()
+    ready = bool(
+        (_market_websocket_enabled() and _realtime_channel_is_ready(status, "market"))
+        or (_sports_websocket_enabled() and _realtime_channel_is_ready(status, "sports"))
+    )
+    return {
+        "enabled": True,
+        "started": bool(status.get("started") or status.get("owner_active") or status.get("shared_owner_active")),
+        "ready": ready,
+        "status": status,
+    }
+
+
+def _apply_realtime_stats(stats: dict, snapshot: Optional[dict]) -> None:
+    if not isinstance(stats, dict) or not isinstance(snapshot, dict):
+        return
+    stats["realtime_market_connected"] = bool(snapshot.get("market_connected"))
+    stats["realtime_sports_connected"] = bool(snapshot.get("sports_connected"))
+    stats["realtime_owner_active"] = bool(snapshot.get("owner_active"))
+    stats["realtime_owner_id"] = _normalize_text(snapshot.get("owner_id"))
+    stats["realtime_market_subscribed_assets"] = int(snapshot.get("subscribed_assets", 0) or 0)
+    stats["realtime_market_messages_received"] = int(snapshot.get("market_messages_received", 0) or 0)
+    stats["realtime_sports_messages_received"] = int(snapshot.get("sports_messages_received", 0) or 0)
+    stats["realtime_market_books_cached"] = int(snapshot.get("market_books_cached", 0) or 0)
+    stats["realtime_sports_results_cached"] = int(snapshot.get("sports_results_cached", 0) or 0)
+    stats["realtime_market_last_message_age_seconds"] = snapshot.get("market_last_message_age_seconds")
+    stats["realtime_sports_last_message_age_seconds"] = snapshot.get("sports_last_message_age_seconds")
+    stats["realtime_shared_snapshot_loaded"] = bool(snapshot.get("shared_snapshot_loaded"))
+    stats["realtime_shared_snapshot_age_seconds"] = snapshot.get("shared_snapshot_age_seconds")
+
+
 def _load_clob_depth_map(
     token_ids: Sequence[str],
     retries: int,
@@ -548,7 +1816,7 @@ def _load_clob_depth_map(
         unique_token_ids = unique_token_ids[:max_books]
     truncated_count = max(0, total_requested - len(unique_token_ids))
 
-    ttl = _int_or_default(POLYMARKET_CLOB_BOOK_CACHE_TTL_RAW, 20, min_value=0)
+    ttl = _int_or_default(POLYMARKET_CLOB_BOOK_CACHE_TTL_RAW, 4, min_value=0)
     now = time.time()
     cache_valid = ttl > 0 and now < float(CLOB_BOOK_CACHE.get("expires_at", 0.0))
     cache_entries = CLOB_BOOK_CACHE.get("entries") if isinstance(CLOB_BOOK_CACHE.get("entries"), dict) else {}
@@ -607,6 +1875,106 @@ def _load_clob_depth_map(
                     books_fetched += 1
                     depth_by_token[resolved_token_id] = depth
                     cache_entries[resolved_token_id] = depth
+
+    CLOB_BOOK_CACHE["entries"] = cache_entries
+    CLOB_BOOK_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+
+    books_with_depth = sum(
+        1
+        for token_id in unique_token_ids
+        if token_id in depth_by_token and _safe_float(depth_by_token[token_id]) is not None
+    )
+    return depth_by_token, {
+        "token_count_requested": total_requested,
+        "token_count_considered": len(unique_token_ids),
+        "token_count_truncated": truncated_count,
+        "books_fetched": books_fetched,
+        "books_with_depth": books_with_depth,
+        "book_errors": book_errors,
+        "retries_used": retries_used,
+    }
+
+
+async def _load_clob_depth_map_async(
+    client: httpx.AsyncClient,
+    token_ids: Sequence[str],
+    retries: int,
+    backoff_seconds: float,
+) -> Tuple[Dict[str, Optional[float]], dict]:
+    unique_token_ids = list(
+        dict.fromkeys(_normalize_text(token_id) for token_id in token_ids if _normalize_text(token_id))
+    )
+    total_requested = len(unique_token_ids)
+    max_books = _int_or_default(POLYMARKET_CLOB_MAX_BOOKS_RAW, 300, min_value=1)
+    if len(unique_token_ids) > max_books:
+        unique_token_ids = unique_token_ids[:max_books]
+    truncated_count = max(0, total_requested - len(unique_token_ids))
+
+    ttl = _int_or_default(POLYMARKET_CLOB_BOOK_CACHE_TTL_RAW, 4, min_value=0)
+    now = time.time()
+    cache_valid = ttl > 0 and now < float(CLOB_BOOK_CACHE.get("expires_at", 0.0))
+    cache_entries = CLOB_BOOK_CACHE.get("entries") if isinstance(CLOB_BOOK_CACHE.get("entries"), dict) else {}
+
+    depth_by_token: Dict[str, Optional[float]] = {}
+    unresolved: List[str] = []
+    for token_id in unique_token_ids:
+        if cache_valid and token_id in cache_entries:
+            depth = _safe_float(cache_entries.get(token_id))
+            depth_by_token[token_id] = round(float(depth), 6) if depth is not None and depth > 0 else None
+        else:
+            unresolved.append(token_id)
+
+    retries_used = 0
+    books_fetched = 0
+    book_errors = 0
+    if unresolved:
+        max_workers = _int_or_default(POLYMARKET_CLOB_BOOK_WORKERS_RAW, 8, min_value=1)
+        worker_count = min(max_workers, len(unresolved))
+
+        async def _fetch_single_book(token_id: str) -> Tuple[str, Optional[float], int, bool]:
+            try:
+                payload, retry_count = await _request_clob_json_async(
+                    client,
+                    "book",
+                    {"token_id": token_id},
+                    retries=retries,
+                    backoff_seconds=backoff_seconds,
+                )
+            except ProviderError:
+                return token_id, None, 0, True
+            return token_id, _book_ask_depth_notional(payload), retry_count, False
+
+        if worker_count <= 1:
+            for token_id in unresolved:
+                resolved_token_id, depth, retry_count, had_error = await _fetch_single_book(token_id)
+                retries_used += retry_count
+                if had_error:
+                    depth_by_token[resolved_token_id] = None
+                    cache_entries[resolved_token_id] = None
+                    book_errors += 1
+                    continue
+                books_fetched += 1
+                depth_by_token[resolved_token_id] = depth
+                cache_entries[resolved_token_id] = depth
+        else:
+            semaphore = asyncio.Semaphore(worker_count)
+
+            async def _limited_fetch(token_id: str) -> Tuple[str, Optional[float], int, bool]:
+                async with semaphore:
+                    return await _fetch_single_book(token_id)
+
+            tasks = [asyncio.create_task(_limited_fetch(token_id)) for token_id in unresolved]
+            for task in asyncio.as_completed(tasks):
+                resolved_token_id, depth, retry_count, had_error = await task
+                retries_used += retry_count
+                if had_error:
+                    depth_by_token[resolved_token_id] = None
+                    cache_entries[resolved_token_id] = None
+                    book_errors += 1
+                    continue
+                books_fetched += 1
+                depth_by_token[resolved_token_id] = depth
+                cache_entries[resolved_token_id] = depth
 
     CLOB_BOOK_CACHE["entries"] = cache_entries
     CLOB_BOOK_CACHE["expires_at"] = now + ttl if ttl > 0 else now
@@ -837,7 +2205,7 @@ def _load_active_game_events(
     page_size: int,
     max_pages: int,
 ) -> Tuple[List[dict], dict]:
-    ttl = _int_or_default(POLYMARKET_EVENTS_CACHE_TTL_RAW, 60, min_value=0)
+    ttl = _int_or_default(POLYMARKET_EVENTS_CACHE_TTL_RAW, 12, min_value=0)
     now = time.time()
     cache_valid = ttl > 0 and now < float(EVENTS_CACHE.get("expires_at", 0.0))
     cached_events = EVENTS_CACHE.get("events")
@@ -882,7 +2250,76 @@ def _load_active_game_events(
     return all_events, {"pages_fetched": pages_fetched, "retries_used": total_retries, "cache": "miss"}
 
 
-def fetch_events(
+async def _load_active_game_events_async(
+    client: httpx.AsyncClient,
+    retries: int,
+    backoff_seconds: float,
+    page_size: int,
+    max_pages: int,
+) -> Tuple[List[dict], dict]:
+    ttl = _int_or_default(POLYMARKET_EVENTS_CACHE_TTL_RAW, 12, min_value=0)
+    now = time.time()
+    cache_valid = ttl > 0 and now < float(EVENTS_CACHE.get("expires_at", 0.0))
+    cached_events = EVENTS_CACHE.get("events")
+    if cache_valid and isinstance(cached_events, list):
+        return cached_events, {"pages_fetched": 0, "retries_used": 0, "cache": "hit"}
+
+    async with _events_cache_async_lock():
+        now = time.time()
+        cache_valid = ttl > 0 and now < float(EVENTS_CACHE.get("expires_at", 0.0))
+        cached_events = EVENTS_CACHE.get("events")
+        if cache_valid and isinstance(cached_events, list):
+            return cached_events, {"pages_fetched": 0, "retries_used": 0, "cache": "hit"}
+
+        all_events: List[dict] = []
+        total_retries = 0
+        pages_fetched = 0
+        offset = 0
+        now_iso = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        for _page in range(max_pages):
+            payload, retries_used = await _request_json_async(
+                client,
+                "events",
+                {
+                    "tag_id": POLYMARKET_GAME_TAG_ID or "100639",
+                    "active": "true",
+                    "closed": "false",
+                    "archived": "false",
+                    "end_date_min": now_iso,
+                    "order": "id",
+                    "ascending": "false",
+                    "limit": page_size,
+                    "offset": offset,
+                },
+                retries=retries,
+                backoff_seconds=backoff_seconds,
+            )
+            pages_fetched += 1
+            total_retries += retries_used
+            if not isinstance(payload, list):
+                raise ProviderError("Polymarket events endpoint must return a JSON array")
+            if not payload:
+                break
+            all_events.extend(item for item in payload if isinstance(item, dict))
+            if len(payload) < page_size:
+                break
+            offset += page_size
+
+        EVENTS_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+        EVENTS_CACHE["events"] = all_events
+        return all_events, {
+            "pages_fetched": pages_fetched,
+            "retries_used": total_retries,
+            "cache": "miss",
+        }
+
+
+def _set_last_stats(stats: dict) -> None:
+    fetch_events.last_stats = stats
+    fetch_events_async.last_stats = stats
+
+
+async def fetch_events_async(
     sport_key: str,
     markets: Sequence[str],
     regions: Sequence[str],
@@ -908,8 +2345,28 @@ def fetch_events(
         "pages_fetched": 0,
         "retries_used": 0,
         "payload_cache": "miss",
+        "realtime_ws_enabled": _websocket_realtime_enabled(),
+        "realtime_market_connected": False,
+        "realtime_sports_connected": False,
+        "realtime_market_books_hit": 0,
+        "realtime_market_books_missed": 0,
+        "realtime_market_books_pending": 0,
+        "realtime_market_new_subscriptions": 0,
+        "realtime_market_subscribed_assets": 0,
+        "realtime_market_messages_received": 0,
+        "realtime_market_books_cached": 0,
+        "realtime_market_last_message_age_seconds": None,
+        "realtime_sports_messages_received": 0,
+        "realtime_sports_results_cached": 0,
+        "realtime_sports_last_message_age_seconds": None,
+        "realtime_sports_state_hits": 0,
+        "realtime_sports_state_filtered_count": 0,
+        "realtime_owner_active": False,
+        "realtime_owner_id": "",
+        "realtime_shared_snapshot_loaded": False,
+        "realtime_shared_snapshot_age_seconds": None,
     }
-    fetch_events.last_stats = stats
+    _set_last_stats(stats)
 
     supported_markets = _requested_market_keys(markets)
     if not ({"h2h", "h2h_3_way", "btts", "both_teams_to_score"} & supported_markets):
@@ -925,16 +2382,30 @@ def fetch_events(
 
     retries = _int_or_default(POLYMARKET_RETRIES_RAW, 2, min_value=0)
     backoff = _float_or_default(POLYMARKET_RETRY_BACKOFF_RAW, 0.5, min_value=0.0)
+    timeout = _int_or_default(POLYMARKET_TIMEOUT_RAW, 20, min_value=1)
     page_size = _int_or_default(POLYMARKET_PAGE_SIZE_RAW, 200, min_value=1)
     max_pages = _int_or_default(POLYMARKET_MAX_PAGES_RAW, 8, min_value=1)
+    realtime_manager = _get_realtime_manager() if _websocket_realtime_enabled() else None
+    if realtime_manager is not None:
+        realtime_manager.ensure_started()
+        _apply_realtime_stats(stats, realtime_manager.snapshot())
 
-    sport_tag_mapping = _load_sport_tag_mapping(retries=retries, backoff_seconds=backoff)
-    payload, payload_meta = _load_active_game_events(
-        retries=retries,
-        backoff_seconds=backoff,
-        page_size=page_size,
-        max_pages=max_pages,
+    client = await get_shared_client(PROVIDER_KEY, timeout=float(timeout), follow_redirects=True)
+    sport_tag_mapping, payload_bundle = await asyncio.gather(
+        _load_sport_tag_mapping_async(
+            client=client,
+            retries=retries,
+            backoff_seconds=backoff,
+        ),
+        _load_active_game_events_async(
+            client=client,
+            retries=retries,
+            backoff_seconds=backoff,
+            page_size=page_size,
+            max_pages=max_pages,
+        ),
     )
+    payload, payload_meta = payload_bundle
     stats["payload_cache"] = payload_meta.get("cache", "miss")
     stats["pages_fetched"] += int(payload_meta.get("pages_fetched", 0) or 0)
     stats["retries_used"] += int(payload_meta.get("retries_used", 0) or 0)
@@ -944,110 +2415,168 @@ def fetch_events(
     stats["events_payload_count"] = len(payload)
     filtered_events: List[Tuple[dict, str, str]] = []
     clob_token_ids: List[str] = []
-    for event in payload:
-        if not isinstance(event, dict):
-            continue
-        if not _event_is_sports(event):
-            continue
-        stats["events_sports_count"] += 1
-        if not _event_matches_sport(event, sport_key, sport_tag_mapping):
-            continue
-        stats["events_sport_filtered_count"] += 1
-        if not _event_is_tradeable(event, now_utc):
-            stats["events_status_filtered_count"] += 1
-            continue
-
-        matchup = _extract_matchup(event)
-        if not matchup:
-            continue
-        home_team, away_team = matchup
-        stats["events_matchup_count"] += 1
-        filtered_events.append((event, home_team, away_team))
-
-        for market in (event.get("markets") or []):
-            if not isinstance(market, dict):
+    if True:
+        for event in payload:
+            if not isinstance(event, dict):
                 continue
-            if not _market_is_tradeable(market, now_utc):
+            if not _event_is_sports(event):
                 continue
-            outcomes = _parse_list(market.get("outcomes"))
-            prices = _parse_list(market.get("outcomePrices"))
-            if len(outcomes) != 2 or len(prices) != 2:
+            stats["events_sports_count"] += 1
+            if not _event_matches_sport(event, sport_key, sport_tag_mapping):
                 continue
-            clob_token_ids.extend(_parse_clob_token_ids(market.get("clobTokenIds"))[:2])
+            stats["events_sport_filtered_count"] += 1
+            if not _event_is_tradeable(event, now_utc):
+                stats["events_status_filtered_count"] += 1
+                continue
+            if realtime_manager is not None and _sports_websocket_enabled():
+                realtime_state = realtime_manager.get_sport_result(event.get("slug"))
+                if isinstance(realtime_state, dict):
+                    stats["realtime_sports_state_hits"] += 1
+                    if not _sports_result_is_tradeable(realtime_state):
+                        stats["events_status_filtered_count"] += 1
+                        stats["realtime_sports_state_filtered_count"] += 1
+                        continue
 
-    clob_depth_map: Dict[str, Optional[float]] = {}
-    if clob_token_ids:
-        clob_depth_map, clob_meta = _load_clob_depth_map(
-            token_ids=clob_token_ids,
-            retries=retries,
-            backoff_seconds=backoff,
-        )
-        stats["retries_used"] += int(clob_meta.get("retries_used", 0) or 0)
-        stats["clob_tokens_requested"] = int(clob_meta.get("token_count_requested", 0) or 0)
-        stats["clob_tokens_considered"] = int(clob_meta.get("token_count_considered", 0) or 0)
-        stats["clob_tokens_truncated"] = int(clob_meta.get("token_count_truncated", 0) or 0)
-        stats["clob_books_fetched"] = int(clob_meta.get("books_fetched", 0) or 0)
-        stats["clob_books_with_depth"] = int(clob_meta.get("books_with_depth", 0) or 0)
-        stats["clob_book_errors"] = int(clob_meta.get("book_errors", 0) or 0)
+            matchup = _extract_matchup(event)
+            if not matchup:
+                continue
+            home_team, away_team = matchup
+            stats["events_matchup_count"] += 1
+            filtered_events.append((event, home_team, away_team))
 
-    for event, home_team, away_team in filtered_events:
-        market_list = _pick_match_markets(
-            event,
-            home_team,
-            away_team,
-            supported_markets,
-            now_utc,
-            clob_depth_map=clob_depth_map,
-        )
-        if not market_list:
-            continue
-        stats["events_with_market_count"] += 1
+            for market in (event.get("markets") or []):
+                if not isinstance(market, dict):
+                    continue
+                if not _market_is_tradeable(market, now_utc):
+                    continue
+                outcomes = _parse_list(market.get("outcomes"))
+                prices = _parse_list(market.get("outcomePrices"))
+                if len(outcomes) != 2 or len(prices) != 2:
+                    continue
+                clob_token_ids.extend(_parse_clob_token_ids(market.get("clobTokenIds"))[:2])
 
-        commence = _normalize_commence_time(
-            event.get("startTime")
-        )
-        if not commence:
-            commence = _normalize_commence_time(
-                (event.get("markets") or [{}])[0].get("gameStartTime")
-                if isinstance(event.get("markets"), list) and event.get("markets")
-                else None
+        clob_depth_map: Dict[str, Optional[float]] = {}
+        if clob_token_ids:
+            normalized_token_ids, total_requested, truncated_count = _normalized_clob_token_ids(clob_token_ids)
+            stats["clob_tokens_requested"] = total_requested
+            stats["clob_tokens_considered"] = len(normalized_token_ids)
+            stats["clob_tokens_truncated"] = truncated_count
+            unresolved_token_ids = list(normalized_token_ids)
+            if realtime_manager is not None and _market_websocket_enabled():
+                stats["realtime_market_new_subscriptions"] = realtime_manager.subscribe_assets(normalized_token_ids)
+                warmup_seconds = _ws_warmup_seconds()
+                if unresolved_token_ids and warmup_seconds > 0:
+                    await asyncio.to_thread(
+                        realtime_manager.wait_for_assets,
+                        unresolved_token_ids,
+                        warmup_seconds,
+                    )
+                realtime_depth_map = realtime_manager.get_depth_map(
+                    normalized_token_ids,
+                    max_age_seconds=_ws_book_max_age_seconds(),
+                )
+                if realtime_depth_map:
+                    clob_depth_map.update(realtime_depth_map)
+                unresolved_token_ids = [
+                    token_id for token_id in normalized_token_ids if token_id not in clob_depth_map
+                ]
+                stats["realtime_market_books_hit"] = len(clob_depth_map)
+                stats["realtime_market_books_missed"] = len(unresolved_token_ids)
+                stats["realtime_market_books_pending"] = len(unresolved_token_ids)
+                _apply_realtime_stats(stats, realtime_manager.snapshot())
+            if unresolved_token_ids:
+                rest_depth_map, clob_meta = await _load_clob_depth_map_async(
+                    client=client,
+                    token_ids=unresolved_token_ids,
+                    retries=retries,
+                    backoff_seconds=backoff,
+                )
+                clob_depth_map.update(rest_depth_map)
+                stats["retries_used"] += int(clob_meta.get("retries_used", 0) or 0)
+                stats["clob_books_fetched"] = int(clob_meta.get("books_fetched", 0) or 0)
+                stats["clob_book_errors"] = int(clob_meta.get("book_errors", 0) or 0)
+            stats["clob_books_with_depth"] = sum(
+                1
+                for token_id in normalized_token_ids
+                if token_id in clob_depth_map and _safe_float(clob_depth_map[token_id]) is not None
             )
-        if not commence:
-            commence = _normalize_commence_time(
-                event.get("eventDate")
-                or event.get("startDate")
-                or event.get("creationDate")
-                or event.get("createdAt")
+
+        for event, home_team, away_team in filtered_events:
+            market_list = _pick_match_markets(
+                event,
+                home_team,
+                away_team,
+                supported_markets,
+                now_utc,
+                clob_depth_map=clob_depth_map,
             )
-        if not commence:
-            continue
+            if not market_list:
+                continue
+            stats["events_with_market_count"] += 1
 
-        event_id = _normalize_text(event.get("id") or event.get("slug"))
-        if not event_id:
-            continue
+            commence = _normalize_commence_time(event.get("startTime"))
+            if not commence:
+                commence = _normalize_commence_time(
+                    (event.get("markets") or [{}])[0].get("gameStartTime")
+                    if isinstance(event.get("markets"), list) and event.get("markets")
+                    else None
+                )
+            if not commence:
+                commence = _normalize_commence_time(
+                    event.get("eventDate")
+                    or event.get("startDate")
+                    or event.get("creationDate")
+                    or event.get("createdAt")
+                )
+            if not commence:
+                continue
 
-        events_out.append(
-            {
-                "id": event_id,
-                "sport_key": sport_key,
-                "home_team": home_team,
-                "away_team": away_team,
-                "commence_time": commence,
-                "bookmakers": [
-                    {
-                        "key": PROVIDER_KEY,
-                        "title": PROVIDER_TITLE,
-                        "event_id": event_id,
-                        "event_url": _event_url(event),
-                        "markets": market_list,
-                    }
-                ],
-            }
-        )
+            event_id = _normalize_text(event.get("id") or event.get("slug"))
+            if not event_id:
+                continue
+
+            events_out.append(
+                {
+                    "id": event_id,
+                    "sport_key": sport_key,
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "commence_time": commence,
+                    "bookmakers": [
+                        {
+                            "key": PROVIDER_KEY,
+                            "title": PROVIDER_TITLE,
+                            "event_id": event_id,
+                            "event_url": _event_url(event),
+                            "markets": market_list,
+                        }
+                    ],
+                }
+            )
 
     stats["events_returned_count"] = len(events_out)
-    fetch_events.last_stats = stats
+    _set_last_stats(stats)
     return events_out
+
+
+def fetch_events(
+    sport_key: str,
+    markets: Sequence[str],
+    regions: Sequence[str],
+    bookmakers: Optional[Sequence[str]] = None,
+) -> List[dict]:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            fetch_events_async(
+                sport_key,
+                markets,
+                regions,
+                bookmakers=bookmakers,
+            )
+        )
+    raise RuntimeError("fetch_events() cannot be used inside an active event loop; use await fetch_events_async()")
 
 
 fetch_events.last_stats = {
@@ -1055,3 +2584,5 @@ fetch_events.last_stats = {
     "source": POLYMARKET_SOURCE or "api",
     "events_returned_count": 0,
 }
+fetch_events_async.last_stats = dict(fetch_events.last_stats)
+

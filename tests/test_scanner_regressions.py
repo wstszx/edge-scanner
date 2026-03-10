@@ -1,4 +1,6 @@
+import asyncio
 import concurrent.futures
+import inspect
 import unittest
 from unittest.mock import patch
 
@@ -53,6 +55,127 @@ class ScannerRegressionTests(unittest.TestCase):
                 scanner._current_request_logger,
             )
             self.assertIs(future.result(), logger)
+
+    def test_fetch_provider_events_for_sport_accepts_async_fetcher(self) -> None:
+        async def _fake_fetcher(
+            sport_key: str,
+            markets: list[str],
+            regions: list[str],
+            bookmakers=None,
+        ):
+            _fake_fetcher.last_stats = {
+                "sport_key": sport_key,
+                "markets": list(markets),
+                "regions": list(regions),
+                "bookmakers": list(bookmakers or []),
+            }
+            return [{"id": "event-1"}]
+
+        _fake_fetcher.last_stats = {}
+
+        with patch.dict(scanner.PROVIDER_FETCHERS, {"sx_bet": _fake_fetcher}):
+            result = asyncio.run(
+                scanner._fetch_provider_events_for_sport(
+                    provider_key="sx_bet",
+                    sport_key="americanfootball_nfl",
+                    provider_markets=["h2h"],
+                    regions=["us"],
+                    bookmakers=["sx_bet"],
+                )
+            )
+
+        self.assertEqual(result.get("events"), [{"id": "event-1"}])
+        self.assertEqual(
+            result.get("stats"),
+            {
+                "sport_key": "americanfootball_nfl",
+                "markets": ["h2h"],
+                "regions": ["us"],
+                "bookmakers": ["sx_bet"],
+            },
+        )
+
+    def test_registered_provider_fetchers_use_async_entrypoints_for_migrated_providers(self) -> None:
+        self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["purebet"]))
+        self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["betdex"]))
+        self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["bookmaker_xyz"]))
+        self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["sx_bet"]))
+        self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["polymarket"]))
+        self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["dexsport_io"]))
+        self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["sportbet_one"]))
+
+    def test_dedupe_proxy_provider_keys_skips_mirrors_by_default(self) -> None:
+        deduped = scanner._dedupe_proxy_provider_keys(
+            ["bookmaker_xyz", "dexsport_io", "sportbet_one", "sx_bet"],
+            explicit_provider_keys=["sx_bet"],
+        )
+        self.assertIn("bookmaker_xyz", deduped)
+        self.assertIn("sx_bet", deduped)
+        self.assertNotIn("dexsport_io", deduped)
+        self.assertNotIn("sportbet_one", deduped)
+
+    def test_dedupe_proxy_provider_keys_keeps_explicit_mirror_selection(self) -> None:
+        deduped = scanner._dedupe_proxy_provider_keys(
+            ["bookmaker_xyz", "dexsport_io", "sportbet_one"],
+            explicit_provider_keys=["dexsport_io"],
+        )
+        self.assertIn("bookmaker_xyz", deduped)
+        self.assertIn("dexsport_io", deduped)
+        self.assertNotIn("sportbet_one", deduped)
+
+    def test_scan_single_sport_retries_async_provider_network_errors(self) -> None:
+        calls = {"count": 0}
+
+        async def _flaky_fetcher(
+            sport_key: str,
+            markets: list[str],
+            regions: list[str],
+            bookmakers=None,
+        ):
+            calls["count"] += 1
+            _flaky_fetcher.last_stats = {
+                "sport_key": sport_key,
+                "attempt": calls["count"],
+            }
+            if calls["count"] == 1:
+                raise RuntimeError("request timed out")
+            return []
+
+        _flaky_fetcher.last_stats = {}
+
+        with (
+            patch.dict(scanner.PROVIDER_FETCHERS, {"sx_bet": _flaky_fetcher}),
+            patch.dict(scanner.PROVIDER_TITLES, {"sx_bet": "SX Bet"}),
+            patch.object(scanner, "_provider_network_retry_delay_seconds", return_value=0.0),
+        ):
+            result = asyncio.run(
+                scanner._scan_single_sport(
+                    sport={"key": "americanfootball_nfl", "title": "NFL"},
+                    all_markets=False,
+                    should_fetch_api=False,
+                    api_pool=scanner.ApiKeyPool([]),
+                    normalized_regions=["us"],
+                    api_bookmakers=[],
+                    provider_target_sport_keys=["americanfootball_nfl"],
+                    enabled_provider_keys=["sx_bet"],
+                    normalized_bookmakers=["sx_bet"],
+                    stake_amount=100.0,
+                    commission_rate=0.0,
+                    sharp_priority=scanner._sharp_priority("pinnacle"),
+                    min_edge_percent=0.0,
+                    bankroll=1000.0,
+                    kelly_fraction=0.25,
+                )
+            )
+
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(result.get("sport_errors"), [])
+        provider_updates = result.get("provider_updates") or {}
+        self.assertIn("sx_bet", provider_updates)
+        provider_sports = provider_updates["sx_bet"].get("sports") or []
+        self.assertTrue(provider_sports)
+        stats = provider_sports[0].get("stats") or {}
+        self.assertTrue(stats.get("network_retry_recovered"))
 
     def test_collect_market_entries_accepts_three_way_h2h(self) -> None:
         game = {
@@ -786,6 +909,22 @@ class ScannerRegressionTests(unittest.TestCase):
 
         self.assertTrue(result.get("success"))
         self.assertEqual(captured_should_fetch_api, [False])
+
+    def test_run_scan_uses_persistent_async_runtime_for_sync_calls(self) -> None:
+        observed = {}
+
+        class _FakeRuntime:
+            def submit(self, coroutine):
+                observed["is_coroutine"] = inspect.iscoroutine(coroutine)
+                if inspect.iscoroutine(coroutine):
+                    coroutine.close()
+                return {"success": True, "source": "runtime"}
+
+        with patch.object(scanner, "_get_scan_async_runtime", return_value=_FakeRuntime()):
+            result = scanner.run_scan(api_key="dummy", sports=["americanfootball_nfl"])
+
+        self.assertEqual(result, {"success": True, "source": "runtime"})
+        self.assertTrue(observed.get("is_coroutine"))
 
     def test_run_scan_empty_results_include_plus_ev_shape(self) -> None:
         with patch.object(scanner, "fetch_sports", return_value=[]):
