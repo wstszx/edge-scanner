@@ -311,7 +311,7 @@
 
         <section class="card arbitrage-config" id="arbitrage-config">
           <div class="arbitrage-config-grid">
-            <div class="field">
+            <div class="field" id="arb-min-roi-field">
               <label class="field-label" data-i18n="arb_min_roi">Minimum Net ROI (%)</label>
               <input type="number" id="min-roi-input" min="-100" max="10" step="0.1" value="{{ default_min_roi }}" />
               <p class="helper" data-i18n="arb_min_roi_helper">Hide opportunities below this net ROI.</p>
@@ -326,6 +326,11 @@
                 <option value="time" data-i18n="sort_time" {% if default_arbitrage_sort=='time' %}selected{% endif %}>
                   Event time</option>
               </select>
+            </div>
+            <div class="field arb-quick-filter-field">
+              <label class="field-label" data-i18n="arb_quick_band">Quick ROI Bands</label>
+              <div id="arb-quick-bands" class="arb-quick-bands" role="group" aria-label="Quick ROI band filter"></div>
+              <p class="helper" data-i18n="arb_quick_band_helper">One-tap ROI buckets. A selected band overrides the minimum ROI input.</p>
             </div>
           </div>
         </section>
@@ -411,16 +416,57 @@
         <section id="arbitrage-panel">
           <div id="partial-warning" class="alert warning hidden"></div>
 
+          <section class="stats-row arb-stats-row hidden" id="arb-stats-row">
+            <div class="stat-card arb-stat-card arb-stat-card-primary">
+              <span class="stat-label" data-i18n="stat_arb_live_opportunities">Live Opportunities</span>
+              <span class="stat-value" id="arb-stat-count">0</span>
+            </div>
+            <div class="stat-card arb-stat-card">
+              <span class="stat-label" data-i18n="stat_arb_events">Events Covered</span>
+              <span class="stat-value" id="arb-stat-events">0</span>
+            </div>
+            <div class="stat-card arb-stat-card">
+              <span class="stat-label" data-i18n="stat_arb_avg_roi">Avg Net ROI</span>
+              <span class="stat-value" id="arb-stat-avg-roi">0%</span>
+            </div>
+            <div class="stat-card arb-stat-card">
+              <span class="stat-label" data-i18n="stat_arb_total_profit">Total Profit</span>
+              <span class="stat-value mono" id="arb-stat-profit">$0</span>
+            </div>
+          </section>
+
+          <section id="arb-summary-info" class="card summary-info arb-summary-card hidden"></section>
+
+          <section class="summary-grid arb-summary-grid hidden" id="arb-summary-grid">
+            <div class="card summary-card arb-summary-breakdown">
+              <div class="card-head">
+                <h3 data-i18n="by_roi_band">By ROI Band</h3>
+              </div>
+              <div id="arb-roi-bars" class="bar-list"></div>
+            </div>
+            <div class="card summary-card arb-summary-breakdown">
+              <div class="card-head">
+                <h3 data-i18n="by_sport">By Sport</h3>
+              </div>
+              <div id="arb-sport-bars" class="bar-list"></div>
+            </div>
+          </section>
+
           <div class="arbitrage-workspace">
             <section class="card results-card">
-              <div class="card-head">
-                <h3 data-i18n="opportunities_title">Opportunities</h3>
+              <div class="card-head arb-results-head">
+                <div class="arb-results-title">
+                  <h3 data-i18n="opportunities_title">Opportunities</h3>
+                  <p class="helper arb-results-subhead" data-i18n="arb_results_subhead">Review live spots, compare
+                    legs, and send one into the calculator.</p>
+                </div>
                 <div class="table-meta">
                   <span id="table-count">0 results</span>
                   <span class="muted" id="arb-sort-label" data-i18n="sorted_by_roi">Sorted by ROI</span>
                 </div>
               </div>
-              <div class="table-scroll">
+              <div id="arb-results-toolbar" class="arb-results-toolbar hidden"></div>
+              <div class="table-scroll arb-table-scroll">
                 <table id="results-table">
                   <thead>
                     <tr>
@@ -440,7 +486,18 @@
                   <tbody></tbody>
                 </table>
               </div>
-              <div id="table-empty" class="empty" data-i18n="empty_arbitrage">No arbitrage opportunities yet.</div>
+              <div id="arb-mobile-list" class="arb-mobile-list hidden"></div>
+              <div id="table-empty" class="empty arb-empty-state">
+                <span class="empty-kicker" data-i18n="opportunities_title">Opportunities</span>
+                <strong id="arb-empty-title" data-i18n="arb_empty_pre_scan_title">Run a scan to populate the
+                  board.</strong>
+                <p id="arb-empty-copy" data-i18n="arb_empty_pre_scan_copy">The arbitrage workspace will fill in once
+                  scan results arrive.</p>
+                <div id="arb-empty-actions" class="empty-actions hidden">
+                  <button type="button" class="secondary-btn" id="arb-empty-reset-btn"
+                    data-i18n="arb_empty_reset">Reset filters</button>
+                </div>
+              </div>
             </section>
 
             <aside class="card arb-calculator-card" id="arb-calculator">
@@ -450,14 +507,18 @@
               <div id="arb-calc-empty" class="empty" data-i18n="arb_calc_empty">Select an opportunity to open the
                 calculator.</div>
               <div id="arb-calc-body" class="arb-calc-body hidden">
-                <div class="arb-calc-context"
-                  style="display: flex; justify-content: space-between; align-items: flex-start;">
-                  <div>
-                    <p id="arb-calc-event" class="arb-calc-event"></p>
-                    <p id="arb-calc-market" class="helper"></p>
+                <div class="arb-calc-hero">
+                  <div class="arb-calc-context">
+                    <div class="arb-calc-context-copy">
+                      <span class="arb-calc-kicker" data-i18n="arb_calc_selected_kicker">Selected Opportunity</span>
+                      <p id="arb-calc-event" class="arb-calc-event"></p>
+                      <p id="arb-calc-market" class="helper"></p>
+                    </div>
+                    <button type="button" class="secondary-btn" id="arb-calc-open-btn"
+                      data-i18n="table_open">Open</button>
                   </div>
-                  <button type="button" class="secondary-btn" id="arb-calc-open-btn"
-                    data-i18n="table_open">Open</button>
+                  <div id="arb-calc-meta" class="arb-calc-meta"></div>
+                  <div id="arb-calc-badges" class="arb-calc-badges"></div>
                 </div>
 
                 <div class="arb-calc-total">
@@ -472,8 +533,17 @@
 
                 <div class="arb-calc-legs">
                   <section class="arb-calc-leg" id="arb-calc-leg-a">
-                    <h4 id="arb-calc-leg-a-title"></h4>
-                    <p class="helper" id="arb-calc-leg-a-book"></p>
+                    <div class="arb-calc-leg-head">
+                      <div class="arb-calc-leg-copy">
+                        <span class="arb-calc-leg-kicker" data-i18n="arb_calc_leg_1">Leg 1</span>
+                        <h4 id="arb-calc-leg-a-title"></h4>
+                      </div>
+                      <div class="arb-calc-leg-payout-group">
+                        <span class="status-label" data-i18n="arb_calc_payout">Payout</span>
+                        <span class="mono arb-calc-leg-payout" id="arb-calc-payout-a">-</span>
+                      </div>
+                    </div>
+                    <div class="arb-calc-leg-meta" id="arb-calc-leg-a-book"></div>
                     <div class="arb-calc-inputs">
                       <label>
                         <span data-i18n="arb_calc_odds">Odds</span>
@@ -487,13 +557,21 @@
                     <div class="arb-calc-leg-actions">
                       <button type="button" class="secondary-btn" id="arb-calc-base-a"
                         data-i18n="arb_calc_use_this_stake">Use This Stake</button>
-                      <span class="mono" id="arb-calc-payout-a">-</span>
                     </div>
                   </section>
 
                   <section class="arb-calc-leg" id="arb-calc-leg-b">
-                    <h4 id="arb-calc-leg-b-title"></h4>
-                    <p class="helper" id="arb-calc-leg-b-book"></p>
+                    <div class="arb-calc-leg-head">
+                      <div class="arb-calc-leg-copy">
+                        <span class="arb-calc-leg-kicker" data-i18n="arb_calc_leg_2">Leg 2</span>
+                        <h4 id="arb-calc-leg-b-title"></h4>
+                      </div>
+                      <div class="arb-calc-leg-payout-group">
+                        <span class="status-label" data-i18n="arb_calc_payout">Payout</span>
+                        <span class="mono arb-calc-leg-payout" id="arb-calc-payout-b">-</span>
+                      </div>
+                    </div>
+                    <div class="arb-calc-leg-meta" id="arb-calc-leg-b-book"></div>
                     <div class="arb-calc-inputs">
                       <label>
                         <span data-i18n="arb_calc_odds">Odds</span>
@@ -507,13 +585,21 @@
                     <div class="arb-calc-leg-actions">
                       <button type="button" class="secondary-btn" id="arb-calc-base-b"
                         data-i18n="arb_calc_use_this_stake">Use This Stake</button>
-                      <span class="mono" id="arb-calc-payout-b">-</span>
                     </div>
                   </section>
 
                   <section class="arb-calc-leg hidden" id="arb-calc-leg-c">
-                    <h4 id="arb-calc-leg-c-title"></h4>
-                    <p class="helper" id="arb-calc-leg-c-book"></p>
+                    <div class="arb-calc-leg-head">
+                      <div class="arb-calc-leg-copy">
+                        <span class="arb-calc-leg-kicker" data-i18n="arb_calc_leg_3">Leg 3</span>
+                        <h4 id="arb-calc-leg-c-title"></h4>
+                      </div>
+                      <div class="arb-calc-leg-payout-group">
+                        <span class="status-label" data-i18n="arb_calc_payout">Payout</span>
+                        <span class="mono arb-calc-leg-payout" id="arb-calc-payout-c">-</span>
+                      </div>
+                    </div>
+                    <div class="arb-calc-leg-meta" id="arb-calc-leg-c-book"></div>
                     <div class="arb-calc-inputs">
                       <label>
                         <span data-i18n="arb_calc_odds">Odds</span>
@@ -527,7 +613,6 @@
                     <div class="arb-calc-leg-actions">
                       <button type="button" class="secondary-btn" id="arb-calc-base-c"
                         data-i18n="arb_calc_use_this_stake">Use This Stake</button>
-                      <span class="mono" id="arb-calc-payout-c">-</span>
                     </div>
                   </section>
                 </div>
@@ -572,7 +657,7 @@
             </div>
           </section>
 
-          <section id="middles-summary-info" class="card summary-info hidden"></section>
+          <section id="middles-summary-info" class="card summary-info arb-summary-card middle-summary-card hidden"></section>
 
           <section class="summary-grid">
             <div class="card summary-card">
@@ -590,24 +675,25 @@
           </section>
 
           <section class="card results-card">
-            <div class="card-head">
-              <h3 data-i18n="middles_title">Middles</h3>
+            <div class="card-head arb-results-head">
+              <div class="arb-results-title">
+                <h3 data-i18n="middles_title">Middles</h3>
+                <p class="helper arb-results-subhead" data-i18n="middles_results_subhead">Track modeled middle zones,
+                  key numbers, and payoff skew in one board.</p>
+              </div>
               <div class="table-meta">
                 <span id="middles-table-count">0 results</span>
                 <span class="muted" id="middles-sort-label" data-i18n="sorted_by_ev">Sorted by EV</span>
               </div>
             </div>
-            <div class="table-scroll">
+            <div class="table-scroll mobile-card-table-scroll">
               <table id="middles-table">
                 <thead>
                   <tr>
                     <th data-i18n="table_ev">EV</th>
                     <th data-i18n="table_prob">Prob</th>
                     <th data-i18n="table_gap">Gap</th>
-                    <th data-i18n="table_sport">Sport</th>
                     <th data-i18n="table_event">Event</th>
-                    <th data-i18n="table_time">Time</th>
-                    <th data-i18n="table_market">Market</th>
                     <th data-i18n="table_side_a">Side A</th>
                     <th data-i18n="table_side_b">Side B</th>
                     <th data-i18n="table_middle">Middle</th>
@@ -618,11 +704,25 @@
                 <tbody></tbody>
               </table>
             </div>
-            <div id="middles-empty" class="empty" data-i18n="empty_middles">No middle opportunities meet your filters.
+            <div id="middles-mobile-list" class="arb-mobile-list hidden"></div>
+            <div id="middles-empty" class="empty panel-empty-state">
+              <span class="empty-kicker" data-i18n="middles_title">Middles</span>
+              <strong id="middles-empty-title" data-i18n="middle_empty_pre_scan_title">Run a scan to model middle zones.</strong>
+              <p id="middles-empty-copy" data-i18n="middle_empty_pre_scan_copy">Middle opportunities will appear here once scan data arrives.</p>
+              <div id="middles-empty-actions" class="empty-actions hidden">
+                <button type="button" class="secondary-btn" id="middles-empty-reset-btn" data-i18n="middle_empty_reset">Reset middle filters</button>
+              </div>
             </div>
           </section>
 
-          <section class="card middle-caveat">
+          <section class="card middle-caveat caveat-card caveat-middle-card">
+            <div class="caveat-head">
+              <div class="caveat-copy">
+                <span class="caveat-kicker" data-i18n="caveat_kicker">Risk Note</span>
+                <h3 data-i18n="caveat_middles_title">Variance First</h3>
+                <p class="helper" data-i18n="caveat_middles_subhead">Most middles lose small and win big only when the score lands inside the gap.</p>
+              </div>
+            </div>
             <p data-i18n-html="caveat_middles"><strong>Understanding Middles:</strong> Middles are high-variance plays.
               They typically lose small amounts and win big when the final score lands inside the gap. Probabilities are
               estimates based on historical scoring distributions (NFL key numbers like 3 &amp; 7 dramatically boost
@@ -650,7 +750,7 @@
             </div>
           </section>
 
-          <section id="plus-ev-summary-info" class="card summary-info hidden"></section>
+          <section id="plus-ev-summary-info" class="card summary-info arb-summary-card plus-summary-card hidden"></section>
 
           <section class="summary-grid">
             <div class="card summary-card">
@@ -668,24 +768,25 @@
           </section>
 
           <section class="card results-card">
-            <div class="card-head">
-              <h3 data-i18n="plus_ev_title">+EV Opportunities</h3>
+            <div class="card-head arb-results-head">
+              <div class="arb-results-title">
+                <h3 data-i18n="plus_ev_title">+EV Opportunities</h3>
+                <p class="helper arb-results-subhead" data-i18n="plus_results_subhead">Compare soft prices, fair odds,
+                  and Kelly sizing before the edge disappears.</p>
+              </div>
               <div class="table-meta">
                 <span id="plus-ev-table-count">0 results</span>
                 <span class="muted" id="plus-ev-sort-label" data-i18n="sorted_by_edge">Sorted by Edge</span>
               </div>
             </div>
-            <div class="table-scroll">
+            <div class="table-scroll mobile-card-table-scroll">
               <table id="plus-ev-table">
                 <thead>
                   <tr>
                     <th data-i18n="table_edge">Edge</th>
                     <th data-i18n="table_ev_100">EV ($100)</th>
                     <th data-i18n="table_kelly">Kelly</th>
-                    <th data-i18n="table_sport">Sport</th>
                     <th data-i18n="table_event">Event</th>
-                    <th data-i18n="table_time">Time</th>
-                    <th data-i18n="table_market">Market</th>
                     <th data-i18n="table_bet">Bet</th>
                     <th data-i18n="table_soft_odds">Soft Odds</th>
                     <th data-i18n="table_fair_odds">Fair Odds</th>
@@ -695,10 +796,25 @@
                 <tbody></tbody>
               </table>
             </div>
-            <div id="plus-ev-empty" class="empty" data-i18n="empty_plus_ev">No +EV bets at the current thresholds.</div>
+            <div id="plus-ev-mobile-list" class="arb-mobile-list hidden"></div>
+            <div id="plus-ev-empty" class="empty panel-empty-state">
+              <span class="empty-kicker" data-i18n="plus_ev_title">+EV Opportunities</span>
+              <strong id="plus-ev-empty-title" data-i18n="plus_empty_pre_scan_title">Run a scan to price +EV bets.</strong>
+              <p id="plus-ev-empty-copy" data-i18n="plus_empty_pre_scan_copy">Soft-book edges and Kelly sizing will show here once scan data arrives.</p>
+              <div id="plus-ev-empty-actions" class="empty-actions hidden">
+                <button type="button" class="secondary-btn" id="plus-ev-empty-reset-btn" data-i18n="plus_empty_reset">Reset +EV filters</button>
+              </div>
+            </div>
           </section>
 
-          <section class="card middle-caveat">
+          <section class="card middle-caveat caveat-card caveat-plus-card">
+            <div class="caveat-head">
+              <div class="caveat-copy">
+                <span class="caveat-kicker" data-i18n="caveat_kicker">Risk Note</span>
+                <h3 data-i18n="caveat_plus_ev_title">Edge Decays Fast</h3>
+                <p class="helper" data-i18n="caveat_plus_ev_subhead">A positive edge is still a high-variance bet, and stale prices disappear quickly.</p>
+              </div>
+            </div>
             <p data-i18n-html="caveat_plus_ev"><strong>Understanding +EV Betting:</strong> Sharp books (Pinnacle,
               Betfair, Matchbook) provide near "true" odds. When a soft book posts a higher price than fair value, the
               bet has positive expected value. +EV bets still lose roughly half the time—the edge shows up over many
@@ -854,14 +970,32 @@
     const stakeInput = document.getElementById('stake-input');
     const scanBtn = document.getElementById('scan-btn');
     const statusEl = document.getElementById('status');
-    const summaryEl = document.getElementById('summary-info');
+    const arbStatsRow = document.getElementById('arb-stats-row');
+    const arbSummaryInfo = document.getElementById('arb-summary-info');
+    const arbSummaryGrid = document.getElementById('arb-summary-grid');
+    const arbMinRoiField = document.getElementById('arb-min-roi-field');
+    const arbQuickBands = document.getElementById('arb-quick-bands');
+    const arbStatCount = document.getElementById('arb-stat-count');
+    const arbStatEvents = document.getElementById('arb-stat-events');
+    const arbStatAvgRoi = document.getElementById('arb-stat-avg-roi');
+    const arbStatProfit = document.getElementById('arb-stat-profit');
+    const arbRoiBars = document.getElementById('arb-roi-bars');
+    const arbSportBars = document.getElementById('arb-sport-bars');
+    const arbResultsToolbar = document.getElementById('arb-results-toolbar');
+    const arbMobileList = document.getElementById('arb-mobile-list');
     const resultsBody = document.querySelector('#results-table tbody');
     const emptyState = document.getElementById('table-empty');
+    const arbEmptyTitle = document.getElementById('arb-empty-title');
+    const arbEmptyCopy = document.getElementById('arb-empty-copy');
+    const arbEmptyActions = document.getElementById('arb-empty-actions');
+    const arbEmptyResetBtn = document.getElementById('arb-empty-reset-btn');
     const arbCalculator = document.getElementById('arb-calculator');
     const arbCalcEmpty = document.getElementById('arb-calc-empty');
     const arbCalcBody = document.getElementById('arb-calc-body');
     const arbCalcEvent = document.getElementById('arb-calc-event');
     const arbCalcMarket = document.getElementById('arb-calc-market');
+    const arbCalcMeta = document.getElementById('arb-calc-meta');
+    const arbCalcBadges = document.getElementById('arb-calc-badges');
     const arbCalcOpenBtn = document.getElementById('arb-calc-open-btn');
     const arbCalcTotalInput = document.getElementById('arb-calc-total-input');
     const arbCalcAutoSplitBtn = document.getElementById('arb-calc-auto-split');
@@ -969,9 +1103,14 @@
     const middleKeyBars = document.getElementById('middles-key-bars');
     const middleKeyCard = document.getElementById('middles-key-card');
     const middlesTableBody = document.querySelector('#middles-table tbody');
+    const middlesMobileList = document.getElementById('middles-mobile-list');
     const middlesTableCount = document.getElementById('middles-table-count');
     const middlesSortLabel = document.getElementById('middles-sort-label');
     const middlesEmpty = document.getElementById('middles-empty');
+    const middlesEmptyTitle = document.getElementById('middles-empty-title');
+    const middlesEmptyCopy = document.getElementById('middles-empty-copy');
+    const middlesEmptyActions = document.getElementById('middles-empty-actions');
+    const middlesEmptyResetBtn = document.getElementById('middles-empty-reset-btn');
     const sharpSelect = document.getElementById('sharp-book-select');
     const minEdgeInput = document.getElementById('min-edge-input');
     const bankrollInput = document.getElementById('bankroll-input');
@@ -985,9 +1124,14 @@
     const plusEvSportBars = document.getElementById('plus-ev-sport-bars');
     const plusEvEdgeBars = document.getElementById('plus-ev-edge-bars');
     const plusEvTableBody = document.querySelector('#plus-ev-table tbody');
+    const plusEvMobileList = document.getElementById('plus-ev-mobile-list');
     const plusEvTableCount = document.getElementById('plus-ev-table-count');
     const plusEvSortLabel = document.getElementById('plus-ev-sort-label');
     const plusEvEmpty = document.getElementById('plus-ev-empty');
+    const plusEvEmptyTitle = document.getElementById('plus-ev-empty-title');
+    const plusEvEmptyCopy = document.getElementById('plus-ev-empty-copy');
+    const plusEvEmptyActions = document.getElementById('plus-ev-empty-actions');
+    const plusEvEmptyResetBtn = document.getElementById('plus-ev-empty-reset-btn');
     const oddsToggle = document.getElementById('odds-toggle');
     const languageToggle = document.getElementById('language-toggle');
     const densityToggle = document.getElementById('density-toggle');
@@ -1014,6 +1158,7 @@
     let lastCommissionRate = defaultCommissionPercent / 100;
     let lastScanData = null;
     let activeTab = 'arbitrage';
+    let activeArbRoiBand = 'all';
     let oddsFormat = localStorage.getItem('edge-odds-format') || appConfig.defaultOddsFormat || 'decimal';
     let densityMode = localStorage.getItem('edge-density') || appConfig.defaultDensity || 'comfort';
     let isScanning = false;
@@ -1162,6 +1307,30 @@
 
         arb_min_roi: 'Minimum Net ROI (%)',
         arb_min_roi_helper: 'Hide opportunities below this net ROI.',
+        arb_quick_band: 'Quick ROI Bands',
+        arb_quick_band_helper: 'One-tap ROI buckets. A selected band overrides the minimum ROI input.',
+        arb_band_all: 'All',
+        arb_band_negative: '<0%',
+        arb_band_low: '0-1%',
+        arb_band_mid: '1-2%',
+        arb_band_high: '2%+',
+        arb_results_subhead: 'Review live spots, compare legs, and send one into the calculator.',
+        arb_results_selection_label: 'Selection',
+        arb_results_showing_label: 'Showing',
+        arb_results_filter_all: 'All ROI levels',
+        arb_results_filter_min: 'Min ROI {value}',
+        arb_results_filter_band: 'ROI band {band}',
+        arb_results_selection_value: '{event}',
+        arb_results_selection_hidden: 'Current pick is outside this filtered view.',
+        arb_results_selection_hint: 'Pick a row to sync the calculator.',
+        arb_empty_pre_scan_title: 'Run a scan to populate the board.',
+        arb_empty_pre_scan_copy: 'The arbitrage workspace will fill in once scan results arrive.',
+        arb_empty_scan_title: 'This scan returned no arbitrage.',
+        arb_empty_scan_copy: 'Try more bookmakers, regions, or markets, then scan again.',
+        arb_empty_filtered_title: 'Filters hid the current opportunities.',
+        arb_empty_filtered_band: 'The active {band} band is hiding the board. Clear it or widen your thresholds.',
+        arb_empty_filtered_min: 'Lower the minimum ROI below {value} or reset filters to widen the board.',
+        arb_empty_reset: 'Reset filters',
         middle_min_gap: 'Minimum Gap (points)',
         middle_min_gap_helper: 'Only show middles with at least this many points between the lines.',
         filters_label: 'Filters',
@@ -1187,6 +1356,10 @@
         kelly_quarter: 'Quarter Kelly',
         kelly_tenth: 'Tenth Kelly',
         stat_opportunities: 'Opportunities',
+        stat_arb_live_opportunities: 'Live Opportunities',
+        stat_arb_events: 'Events Covered',
+        stat_arb_avg_roi: 'Avg Net ROI',
+        stat_arb_total_profit: 'Total Profit',
         stat_events_scanned: 'Events Scanned',
         stat_sports: 'Sports',
         stat_api_calls: 'API Calls',
@@ -1227,6 +1400,8 @@
         opportunities_title: 'Opportunities',
         middles_title: 'Middles',
         plus_ev_title: '+EV Opportunities',
+        middles_results_subhead: 'Track modeled middle zones, key numbers, and payoff skew in one board.',
+        plus_results_subhead: 'Compare soft prices, fair odds, and Kelly sizing before the edge disappears.',
         sorted_by_roi: 'Sorted by ROI',
         sorted_by_ev: 'Sorted by EV',
         sorted_by_edge: 'Sorted by Edge',
@@ -1250,6 +1425,10 @@
         table_open: 'Open',
         arb_calc_title: 'Arbitrage Calculator',
         arb_calc_empty: 'Select an opportunity to open the calculator.',
+        arb_calc_selected_kicker: 'Selected Opportunity',
+        arb_calc_leg_1: 'Leg 1',
+        arb_calc_leg_2: 'Leg 2',
+        arb_calc_leg_3: 'Leg 3',
         arb_calc_total_stake: 'Total Stake ($)',
         arb_calc_apply_total: 'Auto Split',
         arb_calc_odds: 'Odds',
@@ -1260,6 +1439,11 @@
         arb_calc_min_payout: 'Min Payout',
         arb_calc_profit: 'Guaranteed Profit',
         arb_calc_roi: 'ROI',
+        arb_calc_profit_chip: 'Profit {profit}',
+        arb_calc_legs_chip: '{count} legs',
+        arb_calc_three_way_chip: '3-way',
+        arb_calc_exchange_mix: 'Exchange mix',
+        arb_calc_books_only: 'Books only',
         arb_calc_invalid: 'Enter valid decimal odds (>1.00) and stake values.',
         arb_calc_exceeds_max: 'Stake exceeds listed max: {items}',
         table_ev: 'EV',
@@ -1280,6 +1464,27 @@
         empty_arbitrage: 'No arbitrage opportunities yet.',
         empty_middles: 'No middle opportunities meet your filters.',
         empty_plus_ev: 'No +EV bets at the current thresholds.',
+        middle_empty_pre_scan_title: 'Run a scan to model middle zones.',
+        middle_empty_pre_scan_copy: 'Middle opportunities will appear here once scan data arrives.',
+        middle_empty_scan_title: 'This scan returned no middles.',
+        middle_empty_scan_copy: 'Try more sports or broader markets, then scan again.',
+        middle_empty_filtered_title: 'Filters hid the current middles.',
+        middle_empty_filtered_gap: 'Lower the minimum gap below {gap} points to widen the board.',
+        middle_empty_filtered_positive: 'The positive-EV filter is hiding the current middles. Turn it off or widen the scan.',
+        middle_empty_filtered_combo: 'Your positive-EV filter and {gap}-point gap floor are hiding the current middles.',
+        middle_empty_reset: 'Reset middle filters',
+        plus_empty_pre_scan_title: 'Run a scan to price +EV bets.',
+        plus_empty_pre_scan_copy: 'Soft-book edges and Kelly sizing will show here once scan data arrives.',
+        plus_empty_scan_title: 'This scan returned no +EV bets.',
+        plus_empty_scan_copy: 'Try more bookmakers or a wider market scope, then scan again.',
+        plus_empty_filtered_title: 'Thresholds hid the current +EV bets.',
+        plus_empty_filtered_copy: 'Lower the edge floor below {edge} to widen the board.',
+        plus_empty_reset: 'Reset +EV filters',
+        caveat_kicker: 'Risk Note',
+        caveat_middles_title: 'Variance First',
+        caveat_middles_subhead: 'Most middles lose small and win big only when the score lands inside the gap.',
+        caveat_plus_ev_title: 'Edge Decays Fast',
+        caveat_plus_ev_subhead: 'A positive edge is still a high-variance bet, and stale prices disappear quickly.',
         caveat_middles:
           '<strong>Understanding Middles:</strong> Middles are high-variance plays. They typically lose small amounts and win big when the final score lands inside the gap. Probabilities are estimates based on historical scoring distributions (NFL key numbers like 3 &amp; 7 dramatically boost EV). Treat the EV as guidance, not a guarantee, and stake responsibly.',
         caveat_plus_ev:
@@ -1289,13 +1494,38 @@
         summary_profit_staked: ' on {staked} staked',
         summary_commission: 'Exchange commission applied: {commission}.',
         summary_roi_note: 'ROI = return on total stake. 2% ROI means $2 profit on a $100 stake.',
+        arb_summary_kicker: 'Briefing',
+        arb_summary_filtered_stake: 'Filtered Stake',
+        arb_summary_best_profit: 'Best Profit',
+        arb_summary_commission_label: 'Commission',
+        arb_summary_counts: 'Filtered to {count} opportunities across {events} events in {sports} sports.',
+        arb_summary_avg_roi: 'Average net ROI: {roi}.',
+        arb_summary_top: 'Top spot: {context} | {roi} net ROI | {profit} profit.',
+        arb_summary_best_roi_chip: 'Best ROI {value}',
+        arb_summary_exchange_chip: 'With Exchange {count}',
+        arb_summary_three_way_chip: '3-way {count}',
+        arb_mobile_hint: 'Tap to adjust stakes',
         filters_applied: 'Showing {shown} of {total} opportunities after filters.',
         middle_summary_counts: 'Middles matching filters: {count}, with {positive} positive EV.',
         middle_summary_avg: 'Average EV: {avg}{best}',
         middle_summary_best: ' | Best: {event}',
+        middle_summary_kicker: 'Briefing',
+        middle_summary_positive_chip: 'Positive EV {count}',
+        middle_summary_best_chip: 'Best EV {value}',
+        middle_summary_positive_rate: 'Positive Rate',
+        middle_summary_gap_floor: 'Gap Floor',
+        middle_summary_key_hits: 'Key Hits',
+        middle_summary_gap_scope: 'Minimum gap filter: {gap} points.',
         middle_spreads_only: 'Spreads only',
         plus_summary: '+EV bets: {count} | Average edge {avg}{best}',
         plus_summary_best: ' | Best: {event}',
+        plus_summary_kicker: 'Briefing',
+        plus_summary_best_chip: 'Best Edge {value}',
+        plus_summary_total_chip: 'Total EV {value}',
+        plus_summary_threshold: 'Edge Floor',
+        plus_summary_bankroll: 'Bankroll',
+        plus_summary_kelly_fraction: 'Kelly Fraction',
+        plus_summary_config: 'Sizing view: {bankroll} bankroll with {fraction} Kelly and a {edge} edge floor.',
         results_count: '{count} results',
         results_profit: '{count} results | {profit} profit',
         partial_results: '<strong>Partial results:</strong> Failed to fetch odds for {details}.',
@@ -1389,6 +1619,30 @@
         tab_plus_ev: '+EV',
         arb_min_roi: '最小净 ROI (%)',
         arb_min_roi_helper: '隐藏低于该净 ROI 的机会。',
+        arb_quick_band: '快捷 ROI 分段',
+        arb_quick_band_helper: '一键按 ROI 区间筛选。选中分段后将优先于最小 ROI 输入。',
+        arb_band_all: '全部',
+        arb_band_negative: '<0%',
+        arb_band_low: '0-1%',
+        arb_band_mid: '1-2%',
+        arb_band_high: '2%+',
+        arb_results_subhead: '先看机会，再比对下注腿，最后把目标送进右侧计算器。',
+        arb_results_selection_label: '当前选中',
+        arb_results_showing_label: '当前显示',
+        arb_results_filter_all: '全部 ROI',
+        arb_results_filter_min: '最小 ROI {value}',
+        arb_results_filter_band: 'ROI 分段 {band}',
+        arb_results_selection_value: '{event}',
+        arb_results_selection_hidden: '当前已选机会不在这个筛选视图内。',
+        arb_results_selection_hint: '点一行结果即可同步到计算器。',
+        arb_empty_pre_scan_title: '先运行一次扫描来填充套利看板。',
+        arb_empty_pre_scan_copy: '扫描结果返回后，这里会自动显示可操作的套利机会。',
+        arb_empty_scan_title: '这次扫描没有返回套利机会。',
+        arb_empty_scan_copy: '可以尝试增加书商、区域或盘口后再扫描一次。',
+        arb_empty_filtered_title: '当前筛选把机会都隐藏了。',
+        arb_empty_filtered_band: '已启用的 {band} 分段挡住了当前结果，清除它或放宽阈值后再看。',
+        arb_empty_filtered_min: '把最小 ROI 降到 {value} 以下，或直接重置筛选来放宽视图。',
+        arb_empty_reset: '重置筛选',
         middle_min_gap: '最小间隔（分）',
         middle_min_gap_helper: '仅显示盘口差至少达到该分数的中间盘。',
         filters_label: '筛选',
@@ -1414,6 +1668,10 @@
         kelly_quarter: '四分之一凯利',
         kelly_tenth: '十分之一凯利',
         stat_opportunities: '机会',
+        stat_arb_live_opportunities: '套利机会',
+        stat_arb_events: '覆盖赛事',
+        stat_arb_avg_roi: '平均净 ROI',
+        stat_arb_total_profit: '总利润',
         stat_events_scanned: '扫描赛事',
         stat_sports: '项目数',
         stat_api_calls: 'API 调用',
@@ -1454,6 +1712,8 @@
         opportunities_title: '机会',
         middles_title: '中间盘',
         plus_ev_title: '+EV 机会',
+        middles_results_subhead: '把模型中间区间、关键比分和盈亏偏态放到同一块看板里看。',
+        plus_results_subhead: '在优势消失前，对比软盘价格、公平赔率和 Kelly 建议下注。',
         sorted_by_roi: '按 ROI 排序',
         sorted_by_ev: '按 EV 排序',
         sorted_by_edge: '按 Edge 排序',
@@ -1477,6 +1737,10 @@
         table_open: '打开',
         arb_calc_title: '套利计算器',
         arb_calc_empty: '点击一条套利机会后在这里计算。',
+        arb_calc_selected_kicker: '当前机会',
+        arb_calc_leg_1: '第 1 腿',
+        arb_calc_leg_2: '第 2 腿',
+        arb_calc_leg_3: '第 3 腿',
         arb_calc_total_stake: '总下注金额 ($)',
         arb_calc_apply_total: '按总额拆分',
         arb_calc_odds: '赔率',
@@ -1487,6 +1751,11 @@
         arb_calc_min_payout: '最低返还',
         arb_calc_profit: '保底利润',
         arb_calc_roi: 'ROI',
+        arb_calc_profit_chip: '利润 {profit}',
+        arb_calc_legs_chip: '{count} 条腿',
+        arb_calc_three_way_chip: '三项盘',
+        arb_calc_exchange_mix: '含交易所',
+        arb_calc_books_only: '纯书商',
         arb_calc_invalid: '请输入有效十进制赔率（>1.00）和下注金额。',
         arb_calc_exceeds_max: '下注超过可下上限：{items}',
         table_ev: 'EV',
@@ -1507,6 +1776,27 @@
         empty_arbitrage: '暂无套利机会。',
         empty_middles: '没有符合筛选条件的中间盘。',
         empty_plus_ev: '当前阈值下暂无 +EV 投注。',
+        middle_empty_pre_scan_title: '先运行一次扫描来建模中间盘机会。',
+        middle_empty_pre_scan_copy: '扫描结果返回后，这里会显示可操作的中间盘机会。',
+        middle_empty_scan_title: '这次扫描没有返回中间盘机会。',
+        middle_empty_scan_copy: '可以尝试增加项目或放宽盘口范围后再扫描。',
+        middle_empty_filtered_title: '当前筛选把中间盘都隐藏了。',
+        middle_empty_filtered_gap: '把最小间隔降到 {gap} 分以下，可以放宽当前看板。',
+        middle_empty_filtered_positive: '正 EV 筛选挡住了当前中间盘机会，关闭它或放宽扫描范围后再看。',
+        middle_empty_filtered_combo: '正 EV 筛选和 {gap} 分最小间隔一起挡住了当前中间盘机会。',
+        middle_empty_reset: '重置中间盘筛选',
+        plus_empty_pre_scan_title: '先运行一次扫描来定价 +EV 投注。',
+        plus_empty_pre_scan_copy: '软盘优势和 Kelly 建议会在扫描结果返回后显示在这里。',
+        plus_empty_scan_title: '这次扫描没有返回 +EV 投注。',
+        plus_empty_scan_copy: '可以尝试增加书商或放宽盘口范围后再扫描。',
+        plus_empty_filtered_title: '当前阈值把 +EV 投注都隐藏了。',
+        plus_empty_filtered_copy: '把 Edge 下限降到 {edge} 以下，可以放宽当前看板。',
+        plus_empty_reset: '重置 +EV 筛选',
+        caveat_kicker: '风险提示',
+        caveat_middles_title: '先看波动性',
+        caveat_middles_subhead: '大多数中间盘会小亏，只有比分落入中间区间时才会放大收益。',
+        caveat_plus_ev_title: '优势衰减很快',
+        caveat_plus_ev_subhead: '正 Edge 依然有高波动，而且失真的价格通常持续不了太久。',
         caveat_middles:
           '<strong>理解中间盘：</strong>中间盘属于高波动玩法，大多数时候小亏，比分落在区间内时大赢。概率为历史分布估算（NFL 关键分差如 3、7 会显著提升 EV）。请将 EV 视为参考并谨慎下注。',
         caveat_plus_ev:
@@ -1516,13 +1806,38 @@
         summary_profit_staked: '（总下注 {staked}）',
         summary_commission: '已计入交易所手续费：{commission}。',
         summary_roi_note: 'ROI 为总下注回报率。2% ROI 意味着下注 $100 约盈利 $2。',
+        arb_summary_kicker: '摘要',
+        arb_summary_filtered_stake: '当前下注额',
+        arb_summary_best_profit: '最佳利润',
+        arb_summary_commission_label: '手续费',
+        arb_summary_counts: '当前筛选后共有 {count} 个机会，覆盖 {events} 场赛事、{sports} 个项目。',
+        arb_summary_avg_roi: '平均净 ROI：{roi}。',
+        arb_summary_top: '最佳机会：{context} | 净 ROI {roi} | 利润 {profit}。',
+        arb_summary_best_roi_chip: '最高 ROI {value}',
+        arb_summary_exchange_chip: '含交易所 {count}',
+        arb_summary_three_way_chip: '三项盘 {count}',
+        arb_mobile_hint: '点按后调整注码',
         filters_applied: '筛选后显示 {shown}/{total} 个机会。',
         middle_summary_counts: '符合筛选的中间盘：{count}，其中 {positive} 为正 EV。',
         middle_summary_avg: '平均 EV：{avg}{best}',
         middle_summary_best: ' | 最佳：{event}',
+        middle_summary_kicker: '摘要',
+        middle_summary_positive_chip: '正 EV {count}',
+        middle_summary_best_chip: '最佳 EV {value}',
+        middle_summary_positive_rate: '正 EV 占比',
+        middle_summary_gap_floor: '最小间隔',
+        middle_summary_key_hits: '关键分命中',
+        middle_summary_gap_scope: '当前最小间隔筛选：{gap} 分。',
         middle_spreads_only: '仅让分',
         plus_summary: '+EV 投注：{count} | 平均 Edge {avg}{best}',
         plus_summary_best: ' | 最佳：{event}',
+        plus_summary_kicker: '摘要',
+        plus_summary_best_chip: '最佳 Edge {value}',
+        plus_summary_total_chip: '总 EV {value}',
+        plus_summary_threshold: 'Edge 下限',
+        plus_summary_bankroll: '资金',
+        plus_summary_kelly_fraction: 'Kelly 比例',
+        plus_summary_config: '当前下注视图：资金 {bankroll}，Kelly {fraction}，Edge 下限 {edge}。',
         results_count: '{count} 条结果',
         results_profit: '{count} 条结果 | 利润 {profit}',
         partial_results: '<strong>部分结果：</strong>以下项目未能获取赔率：{details}。',
@@ -2595,6 +2910,7 @@
         allBookmakers: allBookmakersToggle ? allBookmakersToggle.checked : true,
         bookmakers,
         minRoi: minRoiInput ? minRoiInput.value : '',
+        arbRoiBand: activeArbRoiBand,
         arbitrageSort: arbitrageSortSelect ? arbitrageSortSelect.value : '',
         minGap: minGapInput ? minGapInput.value : '',
         positiveEvOnly: positiveEvToggle ? positiveEvToggle.checked : false,
@@ -2626,6 +2942,7 @@
       }
       setCheckboxGroup('bookmakers', settings.bookmakers);
       if (minRoiInput && settings.minRoi !== undefined) minRoiInput.value = settings.minRoi;
+      if (settings.arbRoiBand) activeArbRoiBand = settings.arbRoiBand;
       if (arbitrageSortSelect && settings.arbitrageSort) arbitrageSortSelect.value = settings.arbitrageSort;
       if (minGapInput && settings.minGap !== undefined) minGapInput.value = settings.minGap;
       if (positiveEvToggle && settings.positiveEvOnly !== undefined) positiveEvToggle.checked = settings.positiveEvOnly;
@@ -2782,8 +3099,17 @@
     });
 
     if (minRoiInput) {
-      minRoiInput.addEventListener('input', () => renderArbitrage());
-      minRoiInput.addEventListener('change', () => persistSettings());
+      const handleMinRoiInput = () => {
+        if (activeArbRoiBand !== 'all') {
+          activeArbRoiBand = 'all';
+        }
+        renderArbitrage();
+      };
+      minRoiInput.addEventListener('input', handleMinRoiInput);
+      minRoiInput.addEventListener('change', () => {
+        handleMinRoiInput();
+        persistSettings();
+      });
     }
     if (arbitrageSortSelect) arbitrageSortSelect.addEventListener('change', () => renderArbitrage());
     minGapInput.addEventListener('input', () => renderMiddles());
@@ -3381,7 +3707,12 @@
           timeValue,
         };
       });
+      renderArbQuickBandButtons(prepared);
+      if (arbMinRoiField) arbMinRoiField.classList.toggle('is-overridden', activeArbRoiBand !== 'all');
       const filtered = prepared.filter((item) => {
+        if (activeArbRoiBand !== 'all') {
+          return matchesArbitrageRoiBand(item.netRoi, activeArbRoiBand);
+        }
         if (item.netRoi < minRoi) return false;
         return true;
       });
@@ -3396,13 +3727,49 @@
             return (b.netRoi || 0) - (a.netRoi || 0);
         }
       });
+      const hasArbPayload = Boolean(arbData);
+      const stats = buildArbitrageStats(filtered);
+      if (arbStatsRow) arbStatsRow.classList.toggle('hidden', !hasArbPayload);
+      if (arbSummaryGrid) arbSummaryGrid.classList.toggle('hidden', !hasArbPayload);
+      if (arbStatCount) arbStatCount.textContent = String(stats.count);
+      if (arbStatEvents) arbStatEvents.textContent = String(stats.event_count);
+      if (arbStatAvgRoi) arbStatAvgRoi.textContent = formatPercent(stats.average_roi_percent);
+      if (arbStatProfit) arbStatProfit.textContent = formatCurrency(stats.total_profit);
+      if (hasArbPayload) {
+        renderBars(arbRoiBars, stats.by_roi_band, 'roi');
+        renderBars(arbSportBars, stats.by_sport, 'sport');
+      }
       let selectedVisible = false;
+      if (selectedArbKey) {
+        const selectedEntry = filtered.find((entry) => buildArbOpportunityKey(entry.opp) === selectedArbKey);
+        if (selectedEntry) {
+          selectedVisible = true;
+          selectedArbOpp = selectedEntry.opp;
+        }
+      }
+      renderArbitrageResultsToolbar({
+        hasPayload: hasArbPayload,
+        totalCount: prepared.length,
+        filteredCount: filtered.length,
+        minRoi,
+        selectedVisible,
+      });
       resultsBody.innerHTML = '';
+      if (arbMobileList) arbMobileList.innerHTML = '';
       tableCount.textContent = t('results_count', { count: filtered.length });
       if (!filtered.length) {
+        if (!hasArbPayload) {
+          renderArbitrageEmptyState('pre_scan');
+        } else if (!prepared.length) {
+          renderArbitrageEmptyState('scan');
+        } else {
+          renderArbitrageEmptyState('filtered', { minRoi });
+        }
         emptyState.classList.remove('hidden');
+        if (arbMobileList) arbMobileList.classList.add('hidden');
       } else {
         emptyState.classList.add('hidden');
+        if (arbMobileList) arbMobileList.classList.remove('hidden');
         let runningProfit = 0;
         filtered.forEach((entry) => {
           const opp = entry.opp;
@@ -3429,8 +3796,6 @@
           const hasOpenTargets = collectBookTargets(opp).length > 0;
           if (selectedArbKey && selectedArbKey === oppKey) {
             row.classList.add('arb-selected-row');
-            selectedVisible = true;
-            selectedArbOpp = opp;
           }
           row.innerHTML = `
             <td><span class="roi-badge">${formatPercent(netRoi)}</span>${netNegative ? `<span class="roi-warning" title="${t('net_roi_negative')}">⚠</span>` : ''}</td>
@@ -3438,13 +3803,13 @@
             <td class="profit-cell ${profitClass}">${calcNet ? formatProfit(profitValue) : '-'}</td>
             <td>${formatExchangeCell(opp)}</td>
             <td>${sportLabel}</td>
-            <td>${opp.event || ''}</td>
+            <td>${formatArbEventCell(opp, sportLabel)}</td>
             <td>${commence}</td>
             <td>${formatMarket(opp)}</td>
             <td>${formatOutcome(breakdown[0])}</td>
             <td>${formatOutcome(breakdown[1])}</td>
             <td>${formatOutcome(breakdown[2])}</td>`;
-          row.addEventListener('click', () => {
+          const activateOpportunity = () => {
             const wasSame = selectedArbKey === oppKey;
             selectedArbKey = oppKey;
             selectedArbOpp = opp;
@@ -3454,13 +3819,56 @@
               renderArbCalculator();
             }
             renderArbitrage();
-          });
+          };
+          row.addEventListener('click', activateOpportunity);
           row.addEventListener('keydown', (event) => {
             if (event.key !== 'Enter' && event.key !== ' ') return;
             event.preventDefault();
-            row.click();
+            activateOpportunity();
           });
           resultsBody.appendChild(row);
+          if (arbMobileList) {
+            const mobileCard = document.createElement('article');
+            mobileCard.className = `arb-mobile-card ${roiBandClass(netRoi)}`;
+            if (netNegative) mobileCard.classList.add('roi-negative');
+            if (opp.has_exchange) mobileCard.classList.add('has-exchange');
+            if (selectedArbKey && selectedArbKey === oppKey) {
+              mobileCard.classList.add('arb-mobile-card-selected');
+            }
+            const marketLabel = escapeHtml(formatMarket(opp));
+            const safeSport = escapeHtml(sportLabel);
+            const safeTime = escapeHtml(commence);
+            const outcomeCards = [breakdown[0], breakdown[1], breakdown[2]]
+              .filter(Boolean)
+              .map((item) => `<div class="arb-mobile-outcome">${formatOutcome(item)}</div>`)
+              .join('');
+            mobileCard.tabIndex = 0;
+            mobileCard.innerHTML = `
+              <div class="arb-mobile-card-head">
+                <div class="arb-mobile-primary">
+                  <span class="roi-badge">${formatPercent(netRoi)}</span>
+                  ${grossCell}
+                </div>
+                <strong class="profit-cell ${profitClass}">${calcNet ? formatProfit(profitValue) : '-'}</strong>
+              </div>
+              <div class="arb-mobile-card-body">
+                <p class="arb-mobile-event">${escapeHtml(opp.event || '')}</p>
+                <p class="arb-mobile-meta">${safeSport} · ${marketLabel}</p>
+                <p class="arb-mobile-meta">${safeTime}</p>
+              </div>
+              <div class="arb-mobile-outcomes">${outcomeCards}</div>
+              <div class="arb-mobile-card-foot">
+                <div class="arb-mobile-exchange">${formatExchangeCell(opp)}</div>
+                <span class="arb-mobile-hint">${t('arb_mobile_hint')}</span>
+              </div>`;
+            mobileCard.addEventListener('click', activateOpportunity);
+            mobileCard.addEventListener('keydown', (event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              activateOpportunity();
+            });
+            arbMobileList.appendChild(mobileCard);
+          }
         });
         tableCount.textContent = t('results_profit', {
           count: filtered.length,
@@ -3472,13 +3880,16 @@
       }
       if (scanOpportunities) scanOpportunities.textContent = String(filtered.length);
       const summary = arbData?.summary;
-      if (summary) {
-        const totalProfit = filtered.reduce((sum, item) => sum + (item.profitValue || 0), 0);
+      if (summary && stats.count > 0) {
         const totalStaked = filtered.reduce((sum, item) => sum + (item.calcNet?.total || 0), 0);
         const commissionPercent = formatCommissionPercent(lastCommissionRate);
         const totalCount = arbData.opportunities_count || opportunities.length;
-        const filtersActive = minRoi !== 0;
-        const profitText = `<strong>${formatCurrency(totalProfit)}</strong>`;
+        const filtersActive = minRoi !== 0 || activeArbRoiBand !== 'all';
+        const countText = `<strong>${stats.count}</strong>`;
+        const eventsText = `<strong>${stats.event_count}</strong>`;
+        const sportsText = `<strong>${stats.sport_count}</strong>`;
+        const avgRoiText = `<strong>${formatPercent(stats.average_roi_percent)}</strong>`;
+        const profitText = `<strong>${formatCurrency(stats.total_profit)}</strong>`;
         const stakedText = totalStaked
           ? t('summary_profit_staked', { staked: `<strong>${formatCurrency(totalStaked)}</strong>` })
           : '';
@@ -3486,17 +3897,65 @@
           filtersActive && totalCount !== filtered.length
             ? `<p class="helper">${t('filters_applied', { shown: filtered.length, total: totalCount })}</p>`
             : '';
-        summaryEl.classList.remove('hidden');
-        summaryEl.innerHTML = `
-          <h3>${t('summary_title')}</h3>
-          <p>${t('summary_profit', { profit: profitText, staked: stakedText })}</p>
-          <p>${t('summary_commission', { commission: commissionPercent })}</p>
-          <p class="helper">${t('summary_roi_note')}</p>
+        const bestContext = [escapeHtml(stats.best_event), escapeHtml(stats.best_market)]
+          .filter(Boolean)
+          .join(' · ');
+        const bestChipValue = formatPercent(stats.best_roi_percent);
+        const summaryChips = `
+          <div class="arb-summary-chip-row">
+            <span class="summary-chip">${t('arb_summary_best_roi_chip', { value: bestChipValue })}</span>
+            <span class="summary-chip">${t('arb_summary_exchange_chip', { count: stats.exchange_count })}</span>
+            ${stats.three_way_count ? `<span class="summary-chip">${t('arb_summary_three_way_chip', { count: stats.three_way_count })}</span>` : ''}
+          </div>`;
+        const summaryMetrics = `
+          <div class="arb-summary-metrics">
+            <div class="arb-summary-metric">
+              <span class="stat-label">${t('arb_summary_filtered_stake')}</span>
+              <strong class="mono">${formatCurrency(totalStaked)}</strong>
+            </div>
+            <div class="arb-summary-metric">
+              <span class="stat-label">${t('arb_summary_best_profit')}</span>
+              <strong class="mono">${formatCurrency(stats.best_profit)}</strong>
+            </div>
+            <div class="arb-summary-metric">
+              <span class="stat-label">${t('arb_summary_commission_label')}</span>
+              <strong>${commissionPercent}</strong>
+            </div>
+          </div>`;
+        const topSummary = bestContext
+          ? `<p>${t('arb_summary_top', {
+            context: bestContext,
+            roi: `<strong>${bestChipValue}</strong>`,
+            profit: `<strong>${formatCurrency(stats.best_profit)}</strong>`,
+          })}</p>`
+          : '';
+        arbSummaryInfo.classList.remove('hidden');
+        arbSummaryInfo.innerHTML = `
+          <div class="arb-summary-heading">
+            <div class="arb-summary-copy">
+              <span class="arb-summary-kicker">${t('arb_summary_kicker')}</span>
+              <h3>${t('summary_title')}</h3>
+              <p class="arb-summary-lead">${t('arb_summary_counts', {
+                count: countText,
+                events: eventsText,
+                sports: sportsText,
+              })}</p>
+            </div>
+            ${summaryChips}
+          </div>
+          ${summaryMetrics}
+          <div class="arb-summary-body">
+            <p>${t('summary_profit', { profit: profitText, staked: stakedText })}</p>
+            <p>${t('arb_summary_avg_roi', { roi: avgRoiText })}</p>
+            ${topSummary}
+            <p>${t('summary_commission', { commission: commissionPercent })}</p>
+            <p class="helper">${t('summary_roi_note')}</p>
+          </div>
           ${filtersNote}
         `;
       } else {
-        summaryEl.classList.add('hidden');
-        summaryEl.innerHTML = '';
+        arbSummaryInfo.classList.add('hidden');
+        arbSummaryInfo.innerHTML = '';
       }
     }
 
@@ -3848,6 +4307,8 @@
       if (!arbCalculatorState || !selectedArbOpp || legs.length < 2) {
         arbCalcEmpty.classList.remove('hidden');
         arbCalcBody.classList.add('hidden');
+        if (arbCalcMeta) arbCalcMeta.innerHTML = '';
+        if (arbCalcBadges) arbCalcBadges.innerHTML = '';
         arbCalcLegRefs.forEach((refs) => refs.section?.classList.add('hidden'));
         return;
       }
@@ -3867,15 +4328,36 @@
         item.stake >= 0
       );
 
+      const sportLabel = translateSportLabel(selectedArbOpp.sport_display || selectedArbOpp.sport || '');
+      const marketLabel = formatMarket(selectedArbOpp);
+      const startLabel = formatDateTime(selectedArbOpp.commence_time);
       arbCalcEvent.textContent = selectedArbOpp.event || '';
       arbCalcMarket.textContent = t('arb_calc_market_time', {
-        market: formatMarket(selectedArbOpp),
-        time: formatDateTime(selectedArbOpp.commence_time),
+        market: marketLabel,
+        time: startLabel,
       });
+      const hasExchange = Boolean(selectedArbOpp.has_exchange);
+      if (arbCalcMeta) {
+        const metaHtml = [
+          formatArbMetaPill(sportLabel),
+          formatArbMetaPill(marketLabel),
+          formatArbMetaPill(startLabel),
+        ].filter(Boolean).join('');
+        arbCalcMeta.innerHTML = metaHtml;
+        arbCalcMeta.classList.toggle('hidden', !metaHtml);
+      }
 
       if (arbCalcOpenBtn) {
         const hasOpenTargets = collectBookTargets(selectedArbOpp).length > 0;
         arbCalcOpenBtn.disabled = !hasOpenTargets;
+      }
+
+      if (arbCalcBadges) {
+        const legChip = legs.length >= 3 ? t('arb_calc_three_way_chip') : t('arb_calc_legs_chip', { count: legs.length });
+        arbCalcBadges.innerHTML = `
+          <span class="summary-chip arb-calc-badge">${legChip}</span>
+          <span class="summary-chip arb-calc-badge ${hasExchange ? 'exchange' : ''}">${t(hasExchange ? 'arb_calc_exchange_mix' : 'arb_calc_books_only')}</span>
+        `;
       }
 
       if (arbCalcTotalInput) arbCalcTotalInput.value = totalStake.toFixed(2);
@@ -3884,24 +4366,32 @@
         const leg = legs[idx];
         if (!leg) {
           refs.section?.classList.add('hidden');
-          if (refs.payoutEl) refs.payoutEl.textContent = `${t('arb_calc_payout')}: -`;
+          refs.section?.classList.remove('is-over-limit');
+          if (refs.info) {
+            refs.info.innerHTML = '';
+            refs.info.classList.add('hidden');
+          }
+          if (refs.payoutEl) refs.payoutEl.textContent = '-';
           return;
         }
         refs.section?.classList.remove('hidden');
         const point = leg.point !== undefined && leg.point !== null ? ` (${formatLine(leg.point)})` : '';
         if (refs.title) refs.title.textContent = `${leg.outcome || '-'}${point}`;
         const maxStake = Number(leg.maxStake);
-        const maxText = Number.isFinite(maxStake)
-          ? t('available_label', { amount: formatCurrency(maxStake) })
-          : '';
-        if (refs.info) refs.info.textContent = [leg.bookmaker, maxText].filter(Boolean).join(' | ');
+        const currentStake = Number(leg.stake || 0);
+        const metaHtml = formatArbCalcLegMeta(leg);
+        if (refs.info) {
+          refs.info.innerHTML = metaHtml;
+          refs.info.classList.toggle('hidden', !metaHtml);
+        }
+        refs.section?.classList.toggle('is-over-limit', Number.isFinite(maxStake) && currentStake > maxStake + 1e-9);
         if (refs.oddsInput) refs.oddsInput.value = leg.odds ? leg.odds.toFixed(2) : '';
-        if (refs.stakeInput) refs.stakeInput.value = roundMoney(leg.stake || 0).toFixed(2);
+        if (refs.stakeInput) refs.stakeInput.value = roundMoney(currentStake).toFixed(2);
       });
 
       if (!validInputs) {
         arbCalcLegRefs.forEach((refs, idx) => {
-          if (idx < legs.length && refs.payoutEl) refs.payoutEl.textContent = `${t('arb_calc_payout')}: -`;
+          if (idx < legs.length && refs.payoutEl) refs.payoutEl.textContent = '-';
         });
         arbCalcMinPayout.textContent = '-';
         arbCalcProfit.textContent = '-';
@@ -3919,13 +4409,22 @@
 
       arbCalcLegRefs.forEach((refs, idx) => {
         if (idx >= legs.length || !refs.payoutEl) return;
-        refs.payoutEl.textContent = `${t('arb_calc_payout')}: ${formatCurrency(payouts[idx])}`;
+        refs.payoutEl.textContent = formatCurrency(payouts[idx]);
       });
       arbCalcMinPayout.textContent = formatCurrency(minPayout);
       arbCalcProfit.textContent = formatCurrency(profit);
       arbCalcRoi.textContent = formatPercent(roi);
       arbCalcProfit.classList.toggle('gain', profit > 0);
       arbCalcProfit.classList.toggle('loss', profit < 0);
+      if (arbCalcBadges) {
+        const legChip = legs.length >= 3 ? t('arb_calc_three_way_chip') : t('arb_calc_legs_chip', { count: legs.length });
+        arbCalcBadges.innerHTML = `
+          <span class="summary-chip arb-calc-badge">${legChip}</span>
+          <span class="summary-chip arb-calc-badge ${hasExchange ? 'exchange' : ''}">${t(hasExchange ? 'arb_calc_exchange_mix' : 'arb_calc_books_only')}</span>
+          <span class="summary-chip arb-calc-badge ${roiBandClass(roi)}">${formatPercent(roi)}</span>
+          <span class="summary-chip arb-calc-badge ${profit > 0 ? 'gain' : profit < 0 ? 'loss' : ''}">${t('arb_calc_profit_chip', { profit: formatCurrency(profit) })}</span>
+        `;
+      }
 
       const exceeded = [];
       legs.forEach((leg) => {
@@ -3987,10 +4486,47 @@
         const positiveText = `<strong>${stats.positive_count}</strong>`;
         const avgText = `<strong>${formatPercent(stats.average_ev_percent)}</strong>`;
         const bestText = stats.best_event ? t('middle_summary_best', { event: stats.best_event }) : '';
+        const positiveRate = stats.count ? (stats.positive_count / stats.count) * 100 : 0;
+        const keyHits = Object.values(stats.key_numbers || {}).reduce((sum, value) => sum + (Number(value) || 0), 0);
+        const filtersNote =
+          (minGap > 0 || positiveOnly) && opportunities.length !== filtered.length
+            ? `<p class="helper">${t('filters_applied', { shown: filtered.length, total: opportunities.length })}</p>`
+            : '';
+        const summaryChips = `
+          <div class="arb-summary-chip-row">
+            <span class="summary-chip">${t('middle_summary_positive_chip', { count: stats.positive_count })}</span>
+            <span class="summary-chip">${t('middle_summary_best_chip', { value: formatPercent(stats.best_ev_percent) })}</span>
+          </div>`;
+        const summaryMetrics = `
+          <div class="arb-summary-metrics">
+            <div class="arb-summary-metric">
+              <span class="stat-label">${t('middle_summary_positive_rate')}</span>
+              <strong>${formatPercent(positiveRate)}</strong>
+            </div>
+            <div class="arb-summary-metric">
+              <span class="stat-label">${t('middle_summary_gap_floor')}</span>
+              <strong>${minGap.toFixed(1)}</strong>
+            </div>
+            <div class="arb-summary-metric">
+              <span class="stat-label">${t('middle_summary_key_hits')}</span>
+              <strong>${keyHits}</strong>
+            </div>
+          </div>`;
         middleSummaryInfo.innerHTML = `
-          <h3>${t('summary_title')}</h3>
-          <p>${t('middle_summary_counts', { count: countText, positive: positiveText })}</p>
-          <p>${t('middle_summary_avg', { avg: avgText, best: bestText })}</p>
+          <div class="arb-summary-heading">
+            <div class="arb-summary-copy">
+              <span class="arb-summary-kicker">${t('middle_summary_kicker')}</span>
+              <h3>${t('summary_title')}</h3>
+              <p class="arb-summary-lead">${t('middle_summary_counts', { count: countText, positive: positiveText })}</p>
+            </div>
+            ${summaryChips}
+          </div>
+          ${summaryMetrics}
+          <div class="arb-summary-body">
+            <p>${t('middle_summary_avg', { avg: avgText, best: bestText })}</p>
+            <p>${t('middle_summary_gap_scope', { gap: `<strong>${minGap.toFixed(1)}</strong>` })}</p>
+          </div>
+          ${filtersNote}
         `;
         renderBars(middleSportBars, stats.by_sport, 'sport');
         if (Object.keys(stats.key_numbers).length) {
@@ -4009,11 +4545,21 @@
       }
 
       middlesTableBody.innerHTML = '';
+      if (middlesMobileList) middlesMobileList.innerHTML = '';
       middlesTableCount.textContent = t('results_count', { count: filtered.length });
       if (!filtered.length) {
+        if (!data) {
+          renderMiddlesEmptyState('pre_scan');
+        } else if (!opportunities.length) {
+          renderMiddlesEmptyState('scan');
+        } else {
+          renderMiddlesEmptyState('filtered', { minGap, positiveOnly });
+        }
         middlesEmpty.classList.remove('hidden');
+        if (middlesMobileList) middlesMobileList.classList.add('hidden');
       } else {
         middlesEmpty.classList.add('hidden');
+        if (middlesMobileList) middlesMobileList.classList.remove('hidden');
         filtered.forEach((opp) => {
           const row = document.createElement('tr');
           const middleCalc = calculateMiddleProjection(opp, desiredStake);
@@ -4030,17 +4576,27 @@
             <td>${formatPercent(displayEvPercent)}${opp.has_exchange && typeof opp.gross_ev_percent === 'number' ? `<span class="ev-gross">${t('gross')} ${formatPercent(opp.gross_ev_percent)}</span>` : ''}</td>
             <td>${formatPercent(opp.probability_percent)}</td>
             <td>${formatGapCell(opp)}</td>
-            <td>${sportLabel}</td>
-            <td>${opp.event || ''}</td>
-            <td>${commence}</td>
-            <td>${marketLabel}</td>
+            <td>${formatTaggedEventCell(opp.event || '', [sportLabel, marketLabel], commence)}</td>
             <td>${formatMiddleSide(opp.side_a)}</td>
             <td>${formatMiddleSide(opp.side_b)}</td>
-            <td>${opp.middle_zone || ''}</td>
+            <td>${formatMiddleZoneCell(opp)}</td>
             <td class="profit-cell">${formatProfit(winBoth)}</td>
             <td class="profit-cell">${formatProfit(miss)}</td>
           `;
           middlesTableBody.appendChild(row);
+          if (middlesMobileList) {
+            const mobileCard = document.createElement('article');
+            mobileCard.innerHTML = renderMiddleMobileCard(opp, {
+              evPercent: displayEvPercent,
+              winBoth,
+              miss,
+              sportLabel,
+              marketLabel,
+              commence,
+            });
+            const card = mobileCard.firstElementChild;
+            if (card) middlesMobileList.appendChild(card);
+          }
         });
       }
     }
@@ -4083,9 +4639,48 @@
         const countText = `<strong>${stats.count}</strong>`;
         const avgText = `<strong>${formatPercent(stats.average_edge_percent)}</strong>`;
         const bestText = stats.best_event ? t('plus_summary_best', { event: stats.best_event }) : '';
+        const summaryChips = `
+          <div class="arb-summary-chip-row">
+            <span class="summary-chip">${t('plus_summary_best_chip', { value: formatPercent(stats.best_edge_percent) })}</span>
+            <span class="summary-chip">${t('plus_summary_total_chip', { value: formatCurrency(stats.total_ev_per_100) })}</span>
+          </div>`;
+        const summaryMetrics = `
+          <div class="arb-summary-metrics">
+            <div class="arb-summary-metric">
+              <span class="stat-label">${t('plus_summary_threshold')}</span>
+              <strong>${formatPercent(minEdge)}</strong>
+            </div>
+            <div class="arb-summary-metric">
+              <span class="stat-label">${t('plus_summary_bankroll')}</span>
+              <strong class="mono">${formatCurrency(bankroll)}</strong>
+            </div>
+            <div class="arb-summary-metric">
+              <span class="stat-label">${t('plus_summary_kelly_fraction')}</span>
+              <strong>${formatPercent(kellyFraction * 100)}</strong>
+            </div>
+          </div>`;
+        const filtersNote =
+          minEdge > 0 && opportunities.length !== filtered.length
+            ? `<p class="helper">${t('filters_applied', { shown: filtered.length, total: opportunities.length })}</p>`
+            : '';
         plusEvSummaryInfo.innerHTML = `
-          <h3>${t('summary_title')}</h3>
-          <p>${t('plus_summary', { count: countText, avg: avgText, best: bestText })}</p>
+          <div class="arb-summary-heading">
+            <div class="arb-summary-copy">
+              <span class="arb-summary-kicker">${t('plus_summary_kicker')}</span>
+              <h3>${t('summary_title')}</h3>
+              <p class="arb-summary-lead">${t('plus_summary', { count: countText, avg: avgText, best: bestText })}</p>
+            </div>
+            ${summaryChips}
+          </div>
+          ${summaryMetrics}
+          <div class="arb-summary-body">
+            <p>${t('plus_summary_config', {
+              bankroll: `<strong>${formatCurrency(bankroll)}</strong>`,
+              fraction: `<strong>${formatPercent(kellyFraction * 100)}</strong>`,
+              edge: `<strong>${formatPercent(minEdge)}</strong>`,
+            })}</p>
+          </div>
+          ${filtersNote}
         `;
         renderBars(plusEvSportBars, stats.by_sport, 'sport');
         renderBars(plusEvEdgeBars, stats.by_edge_band, 'roi');
@@ -4097,32 +4692,53 @@
       }
 
       plusEvTableBody.innerHTML = '';
+      if (plusEvMobileList) plusEvMobileList.innerHTML = '';
       plusEvTableCount.textContent = t('results_count', { count: filtered.length });
       if (!filtered.length) {
+        if (!plusData) {
+          renderPlusEvEmptyState('pre_scan');
+        } else if (!opportunities.length) {
+          renderPlusEvEmptyState('scan');
+        } else {
+          renderPlusEvEmptyState('filtered', { minEdge });
+        }
         plusEvEmpty.classList.remove('hidden');
+        if (plusEvMobileList) plusEvMobileList.classList.add('hidden');
         return;
       }
       plusEvEmpty.classList.add('hidden');
+      if (plusEvMobileList) plusEvMobileList.classList.remove('hidden');
       filtered.forEach((opp) => {
         const row = document.createElement('tr');
+        const edgeClass = evBandClass(opp.edge_percent || 0);
+        if (edgeClass) row.classList.add(edgeClass);
         if (opp.has_exchange) row.classList.add('has-exchange');
         const commence = formatDateTime(opp.commence_time);
         const kellyData = calculateKellyStake(oppTrueProb(opp), oppEffectiveOdds(opp), bankroll, kellyFraction);
         const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
+        const marketLabel = formatPlusMarket(opp);
         row.innerHTML = `
           <td>${formatEdgeCell(opp)}</td>
           <td class="profit-cell">${formatProfit(opp.ev_per_100 || 0)}</td>
           <td>${formatKellyCell(kellyData)}</td>
-          <td>${sportLabel}</td>
-          <td>${opp.event || ''}</td>
-          <td>${commence}</td>
-          <td>${formatPlusMarket(opp)}</td>
+          <td>${formatTaggedEventCell(opp.event || '', [sportLabel, marketLabel], commence)}</td>
           <td>${formatPlusBet(opp)}</td>
           <td>${formatOddsDisplay(opp.bet?.soft_odds)}</td>
           <td>${formatOddsDisplay(opp.sharp?.fair_odds)}</td>
           <td>${formatPercent(opp.sharp?.true_probability_percent)}</td>
         `;
         plusEvTableBody.appendChild(row);
+        if (plusEvMobileList) {
+          const mobileCard = document.createElement('article');
+          mobileCard.innerHTML = renderPlusEvMobileCard(opp, {
+            kellyData,
+            sportLabel,
+            marketLabel,
+            commence,
+          });
+          const card = mobileCard.firstElementChild;
+          if (card) plusEvMobileList.appendChild(card);
+        }
       });
     }
 
@@ -4165,7 +4781,15 @@
       const stake = kellyData.recommended || 0;
       const frac = kellyData.fractionPercent || 0;
       const rollText = t('kelly_roll', { percent: frac.toFixed(2) });
-      return `<div class="kelly-cell">${formatCurrency(stake)}<span class="mono">${rollText}</span></div>`;
+      const fullPercent = kellyData.fullPercent || 0;
+      return `
+        <div class="kelly-cell">
+          <strong class="kelly-primary mono">${formatCurrency(stake)}</strong>
+          <div class="kelly-secondary">
+            <span class="mono">${escapeHtml(rollText)}</span>
+            <span class="mono">${escapeHtml(t('kelly_full'))} ${fullPercent.toFixed(2)}%</span>
+          </div>
+        </div>`;
     }
 
     function formatPlusMarket(opp) {
@@ -4180,9 +4804,21 @@
     function formatPlusBet(opp) {
       if (!opp?.bet) return '';
       const exchangeBadge = opp.bet.is_exchange ? `<span class="exchange-badge">${t('exchange')}</span>` : '';
-      const book = opp.bet.soft_book ? ` @ ${opp.bet.soft_book}` : '';
       const point = opp.bet.point !== undefined && opp.bet.point !== null ? ` (${formatLine(opp.bet.point)})` : '';
-      return `<span class="outcome">${exchangeBadge}<strong>${opp.bet.outcome || ''}${point}</strong><span>${book}</span></span>`;
+      const bookBadge = opp.bet.soft_book ? `<span class="outcome-book">${escapeHtml(opp.bet.soft_book)}</span>` : '';
+      const effectiveNote =
+        opp.bet.is_exchange && opp.bet.effective_odds && opp.bet.effective_odds !== opp.bet.soft_odds
+          ? `<span class="mono net-note">${t('net_at', { odds: formatOddsDisplay(opp.bet.effective_odds) })}</span>`
+          : '';
+      return `
+        <span class="outcome">
+          ${exchangeBadge}
+          <span class="outcome-main">
+            <strong>${escapeHtml(opp.bet.outcome || '')}${escapeHtml(point)}</strong>
+          </span>
+          ${bookBadge ? `<span class="outcome-meta">${bookBadge}</span>` : ''}
+          ${effectiveNote}
+        </span>`;
     }
 
     function updateOddsToggle() {
@@ -4220,13 +4856,64 @@
           ? formatCurrency(Number(item.max_stake))
           : '-';
       const available = t('available_label', { amount: availableValue });
-      const book = item.bookmaker ? ` @ ${item.bookmaker}` : '';
       const exchangeBadge = item.is_exchange ? `<span class="exchange-badge">${t('exchange')}</span>` : '';
+      const bookBadge = item.bookmaker ? `<span class="outcome-book">${escapeHtml(item.bookmaker)}</span>` : '';
       const effectiveNote =
         item.is_exchange && item.effective_price && item.effective_price !== item.price
           ? `<span class="mono net-note">${t('net_at', { odds: formatOddsDisplay(item.effective_price) })}</span>`
           : '';
-      return `<span class="outcome">${exchangeBadge}<strong>${item.outcome || ''}${point}</strong><span>${available}${book}</span><span class="mono">@ ${formatOddsDisplay(item.price)}</span>${effectiveNote}</span>`;
+      return `
+        <span class="outcome">
+          ${exchangeBadge}
+          <span class="outcome-main">
+            <strong>${escapeHtml(item.outcome || '')}${escapeHtml(point)}</strong>
+            <span class="mono outcome-price">@ ${formatOddsDisplay(item.price)}</span>
+          </span>
+          <span class="outcome-meta">
+            ${bookBadge}
+            <span class="outcome-availability">${escapeHtml(available)}</span>
+          </span>
+          ${effectiveNote}
+        </span>`;
+    }
+
+    function formatTaggedEventCell(title, tags = [], detail = '') {
+      const renderedTags = (Array.isArray(tags) ? tags : [])
+        .filter(Boolean)
+        .map((label) => `<span class="arb-event-tag">${escapeHtml(label)}</span>`)
+        .join('');
+      return `
+        <div class="arb-event-cell">
+          <strong class="arb-event-title">${escapeHtml(title || '-')}</strong>
+          ${renderedTags ? `<div class="arb-event-meta">${renderedTags}</div>` : ''}
+          ${detail ? `<span class="arb-event-time mono">${escapeHtml(detail)}</span>` : ''}
+        </div>`;
+    }
+
+    function formatArbEventCell(opp, sportLabel) {
+      return formatTaggedEventCell(opp.event || '', [sportLabel, formatMarket(opp)]);
+    }
+
+    function formatArbCalcLegMeta(leg) {
+      if (!leg) return '';
+      const chips = [];
+      const maxStake = Number(leg.maxStake);
+      if (leg.bookmaker) {
+        chips.push(`<span class="arb-calc-leg-chip">${escapeHtml(leg.bookmaker)}</span>`);
+      }
+      if (leg.is_exchange) {
+        chips.push(`<span class="arb-calc-leg-chip exchange">${escapeHtml(t('exchange'))}</span>`);
+      }
+      if (Number.isFinite(maxStake)) {
+        chips.push(`<span class="arb-calc-leg-chip">${escapeHtml(t('available_label', { amount: formatCurrency(maxStake) }))}</span>`);
+      }
+      return chips.join('');
+    }
+
+    function formatArbMetaPill(label, extraClass = '') {
+      if (!label) return '';
+      const className = ['summary-chip', 'arb-meta-pill', extraClass].filter(Boolean).join(' ');
+      return `<span class="${className}">${escapeHtml(label)}</span>`;
     }
 
     function collectBookTargets(opp) {
@@ -4541,6 +5228,98 @@
       return `${value >= 0 ? '+' : '-'}${formatted}`;
     }
 
+    function formatMobileMetric(label, value, extraClass = '') {
+      const className = ['arb-mobile-metric', extraClass].filter(Boolean).join(' ');
+      return `
+        <div class="${className}">
+          <span class="status-label">${escapeHtml(label)}</span>
+          <div class="arb-mobile-metric-value">${value}</div>
+        </div>`;
+    }
+
+    function renderMiddleMobileCard(opp, context = {}) {
+      const evPercent = Number(context.evPercent ?? opp?.ev_percent ?? 0);
+      const evClass = evBandClass(evPercent);
+      const winBoth = Number(context.winBoth ?? opp?.outcomes?.win_both_profit ?? 0);
+      const miss = Number(context.miss ?? opp?.outcomes?.typical_miss_profit ?? 0);
+      const winBothClass = winBoth > 0 ? 'gain' : winBoth < 0 ? 'loss' : '';
+      const missClass = miss > 0 ? 'gain' : miss < 0 ? 'loss' : '';
+      const badgeProb = `${t('table_prob')} ${formatPercent(opp?.probability_percent)}`;
+      const metaLine = [context.sportLabel, context.marketLabel].filter(Boolean).join(' · ');
+      const classes = ['arb-mobile-card', 'insight-mobile-card', evClass].filter(Boolean);
+      if (opp?.has_exchange) classes.push('has-exchange');
+      if (evPercent < 0) classes.push('roi-negative');
+      return `
+        <article class="${classes.join(' ')}">
+          <div class="arb-mobile-card-head">
+            <div class="arb-mobile-primary">
+              <span class="roi-badge">${formatPercent(evPercent)}</span>
+              <span class="roi-badge secondary">${escapeHtml(badgeProb)}</span>
+            </div>
+            <div class="arb-mobile-summary">
+              <span class="status-label">${escapeHtml(t('table_win_both'))}</span>
+              <strong class="profit-cell ${winBothClass}">${formatProfit(winBoth)}</strong>
+            </div>
+          </div>
+          <div class="arb-mobile-card-body">
+            <p class="arb-mobile-event">${escapeHtml(opp?.event || '')}</p>
+            <p class="arb-mobile-meta">${escapeHtml(metaLine)}</p>
+            <p class="arb-mobile-meta">${escapeHtml(context.commence || t('tbd'))}</p>
+          </div>
+          <div class="arb-mobile-outcomes">
+            <div class="arb-mobile-outcome">${formatMiddleSide(opp?.side_a)}</div>
+            <div class="arb-mobile-outcome">${formatMiddleSide(opp?.side_b)}</div>
+          </div>
+          <div class="arb-mobile-metrics">
+            ${formatMobileMetric(t('table_gap'), formatGapCell(opp))}
+            ${formatMobileMetric(t('table_middle'), formatMiddleZoneCell(opp))}
+            ${formatMobileMetric(t('table_miss'), `<strong class="profit-cell ${missClass}">${formatProfit(miss)}</strong>`)}
+          </div>
+        </article>`;
+    }
+
+    function renderPlusEvMobileCard(opp, context = {}) {
+      const edge = Number(opp?.edge_percent || 0);
+      const evClass = evBandClass(edge);
+      const evPer100 = Number(opp?.ev_per_100 || 0);
+      const evProfitClass = evPer100 > 0 ? 'gain' : evPer100 < 0 ? 'loss' : '';
+      const metaLine = [context.sportLabel, context.marketLabel].filter(Boolean).join(' · ');
+      const classes = ['arb-mobile-card', 'insight-mobile-card', evClass].filter(Boolean);
+      if (opp?.has_exchange) classes.push('has-exchange');
+      if (edge < 0) classes.push('roi-negative');
+      const grossBadge =
+        opp?.has_exchange && typeof opp?.gross_edge_percent === 'number' && opp.gross_edge_percent !== opp.edge_percent
+          ? `<span class="roi-badge secondary">${escapeHtml(t('gross'))} ${formatPercent(opp.gross_edge_percent)}</span>`
+          : '';
+      return `
+        <article class="${classes.join(' ')}">
+          <div class="arb-mobile-card-head">
+            <div class="arb-mobile-primary">
+              <span class="roi-badge">${formatPercent(edge)}</span>
+              ${grossBadge}
+            </div>
+            <div class="arb-mobile-summary">
+              <span class="status-label">${escapeHtml(t('table_ev_100'))}</span>
+              <strong class="profit-cell ${evProfitClass}">${formatProfit(evPer100)}</strong>
+            </div>
+          </div>
+          <div class="arb-mobile-card-body">
+            <p class="arb-mobile-event">${escapeHtml(opp?.event || '')}</p>
+            <p class="arb-mobile-meta">${escapeHtml(metaLine)}</p>
+            <p class="arb-mobile-meta">${escapeHtml(context.commence || t('tbd'))}</p>
+          </div>
+          <div class="arb-mobile-outcomes">
+            <div class="arb-mobile-outcome">${formatPlusBet(opp)}</div>
+          </div>
+          <div class="arb-mobile-metrics">
+            ${formatMobileMetric(t('table_soft_odds'), `<strong class="mono">${escapeHtml(formatOddsDisplay(opp?.bet?.soft_odds))}</strong>`)}
+            ${formatMobileMetric(t('table_fair_odds'), `<strong class="mono">${escapeHtml(formatOddsDisplay(opp?.sharp?.fair_odds))}</strong>`)}
+            ${formatMobileMetric(t('table_true_prob'), `<strong class="mono">${escapeHtml(formatPercent(opp?.sharp?.true_probability_percent))}</strong>`)}
+            ${formatMobileMetric(t('table_kelly'), formatKellyCell(context.kellyData), 'is-kelly')}
+          </div>
+        </article>`;
+    }
+
     function renderPartialWarning(data) {
       const errorDetails = data && data.partial && Array.isArray(data.sport_errors)
         ? data.sport_errors
@@ -4637,7 +5416,7 @@
       }
     }
 
-    function formatGapCell(opp) {
+    function legacyFormatGapCell(opp) {
       const integers = opp.gap?.middle_integers || [];
       const keyFlag = opp.gap?.includes_key_number ? ' 🏈' : '';
       const points =
@@ -4650,10 +5429,33 @@
       return `${pieces.join(t('gap_separator'))}${keyFlag}`;
     }
 
+    function formatGapCell(opp) {
+      const integers = opp.gap?.middle_integers || [];
+      const points =
+        typeof opp.gap?.points === 'number' ? t('gap_points', { points: opp.gap.points.toFixed(1) }) : '';
+      let range = '';
+      if (integers.length) {
+        range = integers.length === 1 ? `${integers[0]}` : `${integers[0]}-${integers[integers.length - 1]}`;
+      }
+      return `
+        <div class="middle-gap-cell">
+          ${range ? `<strong class="middle-gap-value mono">${escapeHtml(range)}</strong>` : ''}
+          ${points ? `<span class="middle-gap-copy">${escapeHtml(points)}</span>` : ''}
+          ${opp.gap?.includes_key_number ? `<span class="arb-event-tag middle-gap-key">${escapeHtml(t('key_numbers_label'))}</span>` : ''}
+        </div>`;
+    }
+
+    function formatMiddleZoneCell(opp) {
+      const zoneText = opp?.middle_zone ? escapeHtml(opp.middle_zone) : '-';
+      return `
+        <div class="middle-zone-cell">
+          <strong class="middle-zone-title">${zoneText}</strong>
+        </div>`;
+    }
+
     function formatMiddleSide(side) {
       if (!side) return '';
-      const line = side.line !== undefined && side.line !== null ? formatLine(side.line) : '';
-      const book = side.bookmaker ? ` @ ${side.bookmaker}` : '';
+      const line = side.line !== undefined && side.line !== null ? ` ${formatLine(side.line)}` : '';
       const odds = side.effective_price ? formatOddsDisplay(side.effective_price) : formatOddsDisplay(side.price);
       const availableValue =
         side.max_stake !== undefined &&
@@ -4663,8 +5465,24 @@
           : '-';
       const available = t('available_label', { amount: availableValue });
       const exchangeBadge = side.is_exchange ? `<span class="exchange-badge">${t('exchange')}</span>` : '';
-      const oddsText = t('odds_label', { odds });
-      return `<span class="outcome">${exchangeBadge}<strong>${side.team || ''} ${line}</strong><span>${oddsText}${book}</span><span>${available}</span></span>`;
+      const bookBadge = side.bookmaker ? `<span class="outcome-book">${escapeHtml(side.bookmaker)}</span>` : '';
+      const effectiveNote =
+        side.is_exchange && side.effective_price && side.effective_price !== side.price
+          ? `<span class="mono net-note">${t('net_at', { odds: formatOddsDisplay(side.effective_price) })}</span>`
+          : '';
+      return `
+        <span class="outcome">
+          ${exchangeBadge}
+          <span class="outcome-main">
+            <strong>${escapeHtml(side.team || '')}${escapeHtml(line)}</strong>
+            <span class="mono outcome-price">@ ${odds}</span>
+          </span>
+          <span class="outcome-meta">
+            ${bookBadge}
+            <span class="outcome-availability">${escapeHtml(available)}</span>
+          </span>
+          ${effectiveNote}
+        </span>`;
     }
 
     function formatLine(value) {
@@ -4678,6 +5496,215 @@
       if (roi >= 2) return 'band-hot';
       if (roi >= 1) return 'band-warm';
       return 'band-cool';
+    }
+
+    function getArbitrageBandMeta() {
+      return [
+        { key: 'all', label: t('arb_band_all') },
+        { key: 'high', label: t('arb_band_high') },
+        { key: 'mid', label: t('arb_band_mid') },
+        { key: 'low', label: t('arb_band_low') },
+        { key: 'negative', label: t('arb_band_negative') },
+      ];
+    }
+
+    function matchesArbitrageRoiBand(roi, bandKey) {
+      const value = Number(roi) || 0;
+      switch (bandKey) {
+        case 'high':
+          return value >= 2;
+        case 'mid':
+          return value >= 1 && value < 2;
+        case 'low':
+          return value >= 0 && value < 1;
+        case 'negative':
+          return value < 0;
+        case 'all':
+        default:
+          return true;
+      }
+    }
+
+    function renderArbQuickBandButtons(list) {
+      if (!arbQuickBands) return;
+      const source = Array.isArray(list) ? list : [];
+      const bandMeta = getArbitrageBandMeta();
+      const counts = Object.fromEntries(
+        bandMeta.map((band) => [
+          band.key,
+          band.key === 'all'
+            ? source.length
+            : source.filter((item) => matchesArbitrageRoiBand(item?.netRoi, band.key)).length,
+        ]),
+      );
+      arbQuickBands.innerHTML = bandMeta.map((band) => `
+        <button
+          type="button"
+          class="chip-btn arb-quick-band-btn ${activeArbRoiBand === band.key ? 'is-active' : ''}"
+          data-arb-band="${band.key}"
+          aria-pressed="${activeArbRoiBand === band.key ? 'true' : 'false'}"
+        >
+          <span>${escapeHtml(band.label)}</span>
+          <strong class="arb-quick-band-count">${counts[band.key] || 0}</strong>
+        </button>
+      `).join('');
+      arbQuickBands.querySelectorAll('[data-arb-band]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const nextBand = button.getAttribute('data-arb-band') || 'all';
+          setActiveArbRoiBand(nextBand);
+        });
+      });
+    }
+
+    function renderArbitrageResultsToolbar({ hasPayload, totalCount, filteredCount, minRoi, selectedVisible }) {
+      if (!arbResultsToolbar) return;
+      if (!hasPayload) {
+        arbResultsToolbar.classList.add('hidden');
+        arbResultsToolbar.innerHTML = '';
+        return;
+      }
+      const selectedBand = getArbitrageBandMeta().find((band) => band.key === activeArbRoiBand);
+      const scopeText =
+        activeArbRoiBand !== 'all' && selectedBand
+          ? t('arb_results_filter_band', { band: selectedBand.label })
+          : minRoi > 0
+            ? t('arb_results_filter_min', { value: formatPercent(minRoi) })
+            : t('arb_results_filter_all');
+      const selectionText = selectedVisible && selectedArbOpp?.event
+        ? t('arb_results_selection_value', { event: selectedArbOpp.event })
+        : selectedArbKey
+          ? t('arb_results_selection_hidden')
+          : t('arb_results_selection_hint');
+      const showingText =
+        totalCount !== filteredCount
+          ? t('filters_applied', { shown: filteredCount, total: totalCount })
+          : t('results_count', { count: filteredCount });
+      const sortText = arbitrageSortSelect?.selectedOptions?.[0]?.textContent?.trim() || t('sort_roi');
+      const selectionClass = selectedVisible ? 'is-active' : selectedArbKey ? 'is-warning' : 'is-muted';
+      arbResultsToolbar.classList.remove('hidden');
+      arbResultsToolbar.innerHTML = `
+        <div class="arb-results-chip">
+          <span class="status-label">${escapeHtml(t('sort_by'))}</span>
+          <strong>${escapeHtml(sortText)}</strong>
+        </div>
+        <div class="arb-results-chip">
+          <span class="status-label">${escapeHtml(t('filters_label'))}</span>
+          <strong>${escapeHtml(scopeText)}</strong>
+        </div>
+        <div class="arb-results-chip ${selectionClass}">
+          <span class="status-label">${escapeHtml(t('arb_results_selection_label'))}</span>
+          <strong>${escapeHtml(selectionText)}</strong>
+        </div>
+        <div class="arb-results-chip is-muted">
+          <span class="status-label">${escapeHtml(t('arb_results_showing_label'))}</span>
+          <strong>${escapeHtml(showingText)}</strong>
+        </div>`;
+    }
+
+    function renderArbitrageEmptyState(mode, context = {}) {
+      if (!emptyState || !arbEmptyTitle || !arbEmptyCopy || !arbEmptyActions) return;
+      let title = t('arb_empty_pre_scan_title');
+      let copy = t('arb_empty_pre_scan_copy');
+      let showReset = false;
+      if (mode === 'scan') {
+        title = t('arb_empty_scan_title');
+        copy = t('arb_empty_scan_copy');
+      } else if (mode === 'filtered') {
+        title = t('arb_empty_filtered_title');
+        if (activeArbRoiBand !== 'all') {
+          const bandLabel = getArbitrageBandMeta().find((band) => band.key === activeArbRoiBand)?.label || t('arb_band_all');
+          copy = t('arb_empty_filtered_band', { band: bandLabel });
+        } else {
+          copy = t('arb_empty_filtered_min', { value: formatPercent(context.minRoi || 0) });
+        }
+        showReset = true;
+      }
+      arbEmptyTitle.textContent = title;
+      arbEmptyCopy.textContent = copy;
+      arbEmptyActions.classList.toggle('hidden', !showReset);
+    }
+
+    function renderMiddlesEmptyState(mode, context = {}) {
+      if (!middlesEmpty || !middlesEmptyTitle || !middlesEmptyCopy || !middlesEmptyActions) return;
+      let title = t('middle_empty_pre_scan_title');
+      let copy = t('middle_empty_pre_scan_copy');
+      let showReset = false;
+      if (mode === 'scan') {
+        title = t('middle_empty_scan_title');
+        copy = t('middle_empty_scan_copy');
+      } else if (mode === 'filtered') {
+        title = t('middle_empty_filtered_title');
+        if (context.positiveOnly && context.minGap > 0) {
+          copy = t('middle_empty_filtered_combo', { gap: context.minGap.toFixed(1) });
+        } else if (context.positiveOnly) {
+          copy = t('middle_empty_filtered_positive');
+        } else {
+          copy = t('middle_empty_filtered_gap', { gap: (context.minGap || 0).toFixed(1) });
+        }
+        showReset = true;
+      }
+      middlesEmptyTitle.textContent = title;
+      middlesEmptyCopy.textContent = copy;
+      middlesEmptyActions.classList.toggle('hidden', !showReset);
+    }
+
+    function renderPlusEvEmptyState(mode, context = {}) {
+      if (!plusEvEmpty || !plusEvEmptyTitle || !plusEvEmptyCopy || !plusEvEmptyActions) return;
+      let title = t('plus_empty_pre_scan_title');
+      let copy = t('plus_empty_pre_scan_copy');
+      let showReset = false;
+      if (mode === 'scan') {
+        title = t('plus_empty_scan_title');
+        copy = t('plus_empty_scan_copy');
+      } else if (mode === 'filtered') {
+        title = t('plus_empty_filtered_title');
+        copy = t('plus_empty_filtered_copy', { edge: formatPercent(context.minEdge || 0) });
+        showReset = true;
+      }
+      plusEvEmptyTitle.textContent = title;
+      plusEvEmptyCopy.textContent = copy;
+      plusEvEmptyActions.classList.toggle('hidden', !showReset);
+    }
+
+    if (arbEmptyResetBtn) {
+      arbEmptyResetBtn.addEventListener('click', () => {
+        if (minRoiInput) minRoiInput.value = '0';
+        setActiveArbRoiBand('all', false);
+        persistSettings();
+      });
+    }
+
+    if (middlesEmptyResetBtn) {
+      middlesEmptyResetBtn.addEventListener('click', () => {
+        if (minGapInput) minGapInput.value = minGapInput.defaultValue || '0';
+        if (positiveEvToggle) positiveEvToggle.checked = positiveEvToggle.defaultChecked;
+        persistSettings();
+        renderMiddles();
+      });
+    }
+
+    if (plusEvEmptyResetBtn) {
+      plusEvEmptyResetBtn.addEventListener('click', () => {
+        if (minEdgeInput) minEdgeInput.value = minEdgeInput.defaultValue || '1';
+        if (bankrollInput) bankrollInput.value = bankrollInput.defaultValue || String(appConfig.defaultBankroll || 1000);
+        if (kellySelect) {
+          const defaultOption = Array.from(kellySelect.options).find((option) => option.defaultSelected) || kellySelect.options[0];
+          if (defaultOption) kellySelect.value = defaultOption.value;
+        }
+        persistSettings();
+        renderPlusEv();
+      });
+    }
+
+    function setActiveArbRoiBand(nextBand, shouldPersist = true) {
+      activeArbRoiBand = ['all', 'high', 'mid', 'low', 'negative'].includes(nextBand) ? nextBand : 'all';
+      if (lastScanData) {
+        renderArbitrage();
+      } else {
+        renderArbQuickBandButtons([]);
+        if (arbMinRoiField) arbMinRoiField.classList.toggle('is-overridden', activeArbRoiBand !== 'all');
+      }
+      if (shouldPersist) persistSettings();
     }
 
     function renderBars(container, data, type) {
@@ -4706,8 +5733,10 @@
     }
 
     function roiBandLabelClass(label) {
-      if (label.includes('10')) return 'band-hot';
-      if (label.includes('5')) return 'band-warm';
+      const token = String(label || '').toLowerCase();
+      if (token.includes('<0')) return 'band-negative';
+      if (token.includes('10') || token.includes('2%+') || token.includes('5%+')) return 'band-hot';
+      if (token.includes('5') || token.includes('1-2') || token.includes('3-5')) return 'band-warm';
       return 'band-cool';
     }
 
@@ -4769,6 +5798,70 @@
         best_event: best?.event || '',
         by_sport: bySport,
         key_numbers: keyNumbers,
+      };
+    }
+
+    function buildArbitrageStats(list) {
+      const count = Array.isArray(list) ? list.length : 0;
+      if (!count) {
+        return {
+          count: 0,
+          event_count: 0,
+          sport_count: 0,
+          average_roi_percent: 0,
+          best_roi_percent: 0,
+          best_profit: 0,
+          best_event: '',
+          best_market: '',
+          total_profit: 0,
+          by_sport: {},
+          by_roi_band: {},
+          exchange_count: 0,
+          three_way_count: 0,
+        };
+      }
+      let roiSum = 0;
+      let totalProfit = 0;
+      let best = list[0];
+      const eventKeys = new Set();
+      const bySport = {};
+      const byRoiBand = {};
+      let exchangeCount = 0;
+      let threeWayCount = 0;
+      list.forEach((entry) => {
+        const opp = entry?.opp || {};
+        const netRoi = Number(entry?.netRoi) || 0;
+        const profit = Number(entry?.profitValue) || 0;
+        roiSum += netRoi;
+        totalProfit += profit;
+        if (!best || netRoi > (Number(best?.netRoi) || 0)) {
+          best = entry;
+        }
+        const sport = opp.sport_display || opp.sport || 'Other';
+        bySport[sport] = (bySport[sport] || 0) + 1;
+        const eventKey = `${opp.event_id || opp.event || ''}::${opp.commence_time || ''}`.trim();
+        if (eventKey) eventKeys.add(eventKey);
+        const bandLabel = netRoi < 0 ? '<0%' : netRoi >= 2 ? '2%+' : netRoi >= 1 ? '1-2%' : '0-1%';
+        byRoiBand[bandLabel] = (byRoiBand[bandLabel] || 0) + 1;
+        if (opp.has_exchange) exchangeCount += 1;
+        const legCount = Array.isArray(opp.best_odds) ? opp.best_odds.slice(0, 3).filter(Boolean).length : 0;
+        if (legCount >= 3) threeWayCount += 1;
+      });
+      const bestOpp = best?.opp || {};
+      return {
+        count,
+        event_count: eventKeys.size || count,
+        sport_count: Object.keys(bySport).length,
+        average_roi_percent: roiSum / count,
+        best_roi_percent: Number(best?.netRoi) || 0,
+        best_profit: Number(best?.profitValue) || 0,
+        best_event: bestOpp.event || '',
+        best_market: formatMarket(bestOpp),
+        total_profit: totalProfit,
+        by_sport: bySport,
+        by_roi_band: byRoiBand,
+        exchange_count: exchangeCount,
+        three_way_count: threeWayCount,
       };
     }
 
