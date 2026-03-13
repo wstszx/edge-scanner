@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from providers import purebet
 
@@ -169,6 +169,26 @@ class PurebetMarketParsingTests(unittest.TestCase):
         self.assertEqual(len(events), 1)
         stats = purebet.fetch_events_async.last_stats
         self.assertEqual(stats.get("events_returned_count"), 1)
+
+    def test_purebet_get_json_retries_cloudflare_521(self) -> None:
+        first = Mock(status_code=521)
+        first.json.side_effect = ValueError("not json")
+        second = Mock(status_code=200)
+        second.json.return_value = []
+
+        with patch.object(purebet.requests, "get", side_effect=[first, second]) as mocked_get:
+            payload, retries_used = purebet._purebet_get_json(
+                "https://v3api.purebet.io/events",
+                {"live": "false"},
+                {"User-Agent": "Mozilla/5.0"},
+                retries=1,
+                backoff_seconds=0.0,
+                timeout=30,
+            )
+
+        self.assertEqual(payload, [])
+        self.assertEqual(retries_used, 1)
+        self.assertEqual(mocked_get.call_count, 2)
 
 
 if __name__ == "__main__":

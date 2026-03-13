@@ -92,6 +92,7 @@ PUREBET_DEFAULT_LEAGUE_MAP = {
 PUREBET_LEAGUE_MAP_RAW = os.getenv("PUREBET_LEAGUE_MAP", "").strip()
 
 PUREBET_SUPPORTED_MARKETS = {"h2h", "spreads", "totals"}
+PUREBET_RETRIABLE_STATUS_CODES = {429, 500, 502, 503, 504, 521, 522, 523, 524}
 
 PUREBET_ACTIVE_LEAGUES_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
@@ -121,6 +122,12 @@ def _purebet_headers() -> Dict[str, str]:
     if PUREBET_USER_AGENT:
         headers["User-Agent"] = PUREBET_USER_AGENT
     return headers
+
+
+def _purebet_status_error_message(status_code: int) -> str:
+    if int(status_code) in {521, 522, 523, 524}:
+        return f"Purebet API upstream unavailable ({status_code})"
+    return f"Purebet API request failed ({status_code})"
 
 def _purebet_min_stake() -> float:
     try:
@@ -168,7 +175,7 @@ def _purebet_get_json(
 ) -> Tuple[object, int]:
     """Return (json_payload, retries_used). Raises ProviderError on final failure."""
     last_error: Optional[ProviderError] = None
-    retriable_status = {429, 500, 502, 503, 504}
+    retriable_status = set(PUREBET_RETRIABLE_STATUS_CODES)
     attempts = max(0, retries) + 1
     for attempt in range(attempts):
         try:
@@ -184,7 +191,7 @@ def _purebet_get_json(
                 time.sleep(backoff_seconds * (2**attempt))
                 continue
             raise ProviderError(
-                f"Purebet API request failed ({response.status_code})",
+                _purebet_status_error_message(response.status_code),
                 status_code=response.status_code,
             )
         try:
@@ -218,10 +225,11 @@ async def _purebet_get_json_async(
         timeout=float(timeout),
         retries=retries,
         backoff_seconds=backoff_seconds,
+        retriable_status=sorted(PUREBET_RETRIABLE_STATUS_CODES),
         error_cls=ProviderError,
         network_error_prefix="Purebet network error",
         parse_error_message="Failed to parse Purebet API response",
-        status_error_message=lambda status_code: f"Purebet API request failed ({status_code})",
+        status_error_message=_purebet_status_error_message,
     )
 
 def _load_event_list(path: str) -> List[dict]:

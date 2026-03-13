@@ -37,8 +37,6 @@
   - `bookmaker_xyz`
   - `sx_bet`
   - `polymarket`
-  - `dexsport_io`
-  - `sportbet_one`
 - 接口路径使用资源语义命名，例如 `/history/stats`、`/provider-runtime/{provider_key}`
 - 新增配置项命名必须与环境变量一致，采用大写下划线格式
 
@@ -96,5 +94,6 @@
   - 响应字段缺失或类型漂移
   - 盘口映射明显不对
   - 扫描结果出现异常高 ROI 或明显错配赛事
-- `Dexsport.io`、`Sportbet.one` 这类镜像 / 代理 Provider，必须在文档和测试中明确区分“官方 API”与“代理上游”。
+- `bookmaker_xyz` 必须优先使用 Azuro 官方公开 `market-manager` + 官方 dictionaries 作为主取数来源；旧 GraphQL / 前端 bundle 只允许作为兼容性回退。
+- Azuro 动态联赛 key 统一使用 `azuro__<sport_slug>__<league_slug>__<country_slug>`，不允许自由定义其它格式。
 - Provider 快照应保存该 Provider 的原始视图，不应被后续跨 Provider 合并结果污染。

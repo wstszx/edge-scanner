@@ -6,10 +6,10 @@ import provider_verification as pv
 
 
 class ProviderVerificationTests(unittest.TestCase):
-    def test_summarize_provider_statuses_marks_proxy_notes_and_errors(self) -> None:
+    def test_summarize_provider_statuses_marks_errors(self) -> None:
         result = {
             "custom_providers": {
-                "dexsport_io": {
+                "bookmaker_xyz": {
                     "enabled": True,
                     "events_merged": 5,
                     "sports": [{"sport_key": "basketball_nba", "events_returned": 5}],
@@ -29,14 +29,39 @@ class ProviderVerificationTests(unittest.TestCase):
 
         statuses = pv.summarize_provider_statuses(
             result,
-            provider_keys=["dexsport_io", "purebet"],
+            provider_keys=["bookmaker_xyz", "purebet"],
             stake_amount=100.0,
         )
 
         self.assertEqual(statuses[0].status, "ok")
-        self.assertTrue(any("bookmaker.xyz" in note for note in statuses[0].notes))
         self.assertEqual(statuses[1].status, "error")
         self.assertIn("upstream 521", statuses[1].errors)
+
+    def test_summarize_provider_statuses_marks_empty_azuro_feed_note(self) -> None:
+        result = {
+            "custom_providers": {
+                "bookmaker_xyz": {
+                    "enabled": True,
+                    "events_merged": 0,
+                    "events_payload_count": 4800,
+                    "conditions_sport_filtered_count": 0,
+                    "dictionary_loaded": True,
+                    "dictionary_error": "",
+                    "sports": [],
+                }
+            }
+        }
+
+        statuses = pv.summarize_provider_statuses(
+            result,
+            provider_keys=["bookmaker_xyz"],
+            stake_amount=100.0,
+        )
+
+        self.assertEqual(statuses[0].status, "warning")
+        self.assertTrue(
+            any("Official Azuro feed currently has no leagues matching this sport key." in note for note in statuses[0].notes)
+        )
 
     def test_summarize_scan_flags_liquidity_limited_arbitrage(self) -> None:
         result = {

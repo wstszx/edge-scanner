@@ -117,9 +117,9 @@
                     </div>
                     <div class="panel-body">
                       <div id="sports-list" class="sports-grid">
-                        {% for sport in default_sports %}
+                        {% for sport in sport_options %}
                         <label class="checkbox">
-                          <input type="checkbox" name="sports" value="{{ sport.key }}" checked />
+                          <input type="checkbox" name="sports" value="{{ sport.key }}" {% if sport.key in default_sport_keys %}checked{% endif %} />
                           <span data-sport-key="{{ sport.key }}">{{ sport.label }}</span>
                         </label>
                         {% endfor %}

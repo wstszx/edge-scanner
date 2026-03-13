@@ -249,10 +249,7 @@ PUREBET_DEFAULT_LEAGUE_MAP = {
 }
 PUREBET_LEAGUE_MAP_RAW = os.getenv("PUREBET_LEAGUE_MAP", "").strip()
 PUREBET_SUPPORTED_MARKETS = {"h2h", "spreads", "totals"}
-PROXY_PROVIDER_MIRRORS = {
-    "dexsport_io": "bookmaker_xyz",
-    "sportbet_one": "bookmaker_xyz",
-}
+PROXY_PROVIDER_MIRRORS = {}
 PUREBET_ACTIVE_LEAGUES_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
     "mapping": {},
@@ -4777,7 +4774,7 @@ async def run_scan_async(
     provider_target_sport_keys = set(requested_sport_keys) if enabled_provider_keys else set()
     provider_only_via_bookmakers = bool(normalized_bookmakers) and not api_bookmakers
     provider_only_via_missing_api_key = (
-        bool(requested_provider_keys)
+        bool(enabled_provider_keys)
         and not normalized_bookmakers
         and not api_bookmakers
         and not api_keys

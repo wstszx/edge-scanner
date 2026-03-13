@@ -180,14 +180,37 @@ SPORT_DISPLAY_NAMES = {
     "americanfootball_ncaaf": "NCAAF",
     "basketball_nba": "NBA",
     "basketball_ncaab": "NCAAB",
+    "basketball_euroleague": "EuroLeague",
+    "basketball_germany_bbl": "Basketball Bundesliga",
+    "basketball_spain_liga_acb": "Liga ACB",
+    "basketball_italy_serie_a": "Lega Basket Serie A",
+    "basketball_france_pro_a": "LNB Pro A",
     "baseball_mlb": "MLB",
+    "baseball_mlb_spring_training": "MLB Spring Training",
     "icehockey_nhl": "NHL",
+    "icehockey_khl": "KHL",
+    "icehockey_ahl": "AHL",
     "soccer_epl": "Premier League",
+    "soccer_england_championship": "EFL Championship",
+    "soccer_england_league_one": "EFL League One",
+    "soccer_england_league_two": "EFL League Two",
     "soccer_spain_la_liga": "La Liga",
     "soccer_germany_bundesliga": "Bundesliga",
     "soccer_italy_serie_a": "Serie A",
     "soccer_france_ligue_one": "Ligue 1",
     "soccer_usa_mls": "MLS",
+    "soccer_portugal_primeira_liga": "Primeira Liga",
+    "soccer_netherlands_eredivisie": "Eredivisie",
+    "soccer_brazil_serie_a": "Brasileirao Serie A",
+    "soccer_argentina_liga_profesional": "Liga Profesional",
+    "soccer_mexico_liga_mx": "Liga MX",
+    "soccer_turkey_super_lig": "Super Lig",
+    "mma_ufc": "UFC",
+    "boxing_professional": "Professional Boxing",
+    "rugby_union_six_nations": "Six Nations",
+    "rugby_league_nrl": "National Rugby League",
+    "tennis_atp_indian_wells": "ATP Indian Wells",
+    "tennis_wta_indian_wells": "WTA Indian Wells",
 }
 
 AMERICAN_SPORTS = {
@@ -195,17 +218,34 @@ AMERICAN_SPORTS = {
     "americanfootball_ncaaf",
     "basketball_nba",
     "basketball_ncaab",
+    "basketball_euroleague",
+    "basketball_germany_bbl",
+    "basketball_spain_liga_acb",
+    "basketball_italy_serie_a",
+    "basketball_france_pro_a",
     "baseball_mlb",
+    "baseball_mlb_spring_training",
     "icehockey_nhl",
+    "icehockey_khl",
+    "icehockey_ahl",
 }
 
 SOCCER_SPORTS = {
     "soccer_epl",
+    "soccer_england_championship",
+    "soccer_england_league_one",
+    "soccer_england_league_two",
     "soccer_spain_la_liga",
     "soccer_germany_bundesliga",
     "soccer_italy_serie_a",
     "soccer_france_ligue_one",
     "soccer_usa_mls",
+    "soccer_portugal_primeira_liga",
+    "soccer_netherlands_eredivisie",
+    "soccer_brazil_serie_a",
+    "soccer_argentina_liga_profesional",
+    "soccer_mexico_liga_mx",
+    "soccer_turkey_super_lig",
 }
 
 _DEFAULT_SPORT_KEYS = [
@@ -228,10 +268,11 @@ if _ENV_DEFAULT_SPORTS:
 else:
     DEFAULT_SPORT_KEYS = _DEFAULT_SPORT_KEYS
 
-DEFAULT_SPORT_OPTIONS = [
-    {"key": key, "label": SPORT_DISPLAY_NAMES.get(key, key)}
-    for key in DEFAULT_SPORT_KEYS
+SPORT_OPTIONS = [
+    {"key": key, "label": label, "default": key in DEFAULT_SPORT_KEYS}
+    for key, label in SPORT_DISPLAY_NAMES.items()
 ]
+DEFAULT_SPORT_OPTIONS = SPORT_OPTIONS
 
 AMERICAN_MARKETS = ["h2h", "spreads", "totals"]
 SOCCER_MARKETS = ["spreads", "totals"]
@@ -313,8 +354,6 @@ BOOKMAKER_LABELS = {
     **{key: meta["name"] for key, meta in EXCHANGE_BOOKMAKERS.items()},
     **{book["key"]: book["name"] for book in SHARP_BOOKS if book.get("key")},
     **SOFT_BOOK_LABELS,
-    "dexsport_io": "Dexsport.io",
-    "sportbet_one": "Sportbet.one",
     "bookmaker_xyz": "bookmaker.xyz",
     "sx_bet": "SX Bet",
     "polymarket": "Polymarket",
@@ -345,8 +384,6 @@ BOOKMAKER_URLS = {
     "betfair_ex_au": "https://www.betfair.com.au/exchange/",
     "sportsbet_ex": "https://www.sportsbet.com.au/",
     "betdex": "https://www.betdex.com/",
-    "dexsport_io": "https://dexsport.com/",
-    "sportbet_one": "https://sportbet.one/",
     "bookmaker_xyz": "https://bookmaker.xyz/",
     "sx_bet": "https://sx.bet/",
     "polymarket": "https://polymarket.com/",
@@ -359,8 +396,6 @@ for key in [
     "polymarket",
     "purebet",
     "betdex",
-    "dexsport_io",
-    "sportbet_one",
     "bookmaker_xyz",
     "sx_bet",
 ]:
@@ -397,6 +432,14 @@ EDGE_BANDS = [
 
 def markets_for_sport(sport_key: str) -> list[str]:
     key = (sport_key or "").strip().lower()
+    if key.startswith("azuro__"):
+        parts = [part for part in key.split("__") if part]
+        family = parts[1] if len(parts) >= 4 else ""
+        if family in {"football"}:
+            return SOCCER_MARKETS.copy()
+        if family in {"american-football", "basketball", "baseball", "ice-hockey"}:
+            return AMERICAN_MARKETS.copy()
+        return GENERIC_MARKETS.copy()
     if key in AMERICAN_SPORTS:
         return AMERICAN_MARKETS
     if key in SOCCER_SPORTS:

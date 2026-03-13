@@ -101,26 +101,27 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["bookmaker_xyz"]))
         self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["sx_bet"]))
         self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["polymarket"]))
-        self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["dexsport_io"]))
-        self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["sportbet_one"]))
+        self.assertNotIn("dexsport_io", scanner.PROVIDER_FETCHERS)
+        self.assertNotIn("sportbet_one", scanner.PROVIDER_FETCHERS)
 
-    def test_dedupe_proxy_provider_keys_skips_mirrors_by_default(self) -> None:
+    def test_dedupe_proxy_provider_keys_returns_unique_registered_keys(self) -> None:
         deduped = scanner._dedupe_proxy_provider_keys(
-            ["bookmaker_xyz", "dexsport_io", "sportbet_one", "sx_bet"],
+            ["bookmaker_xyz", "sx_bet", "bookmaker_xyz", "purebet"],
             explicit_provider_keys=["sx_bet"],
         )
         self.assertIn("bookmaker_xyz", deduped)
         self.assertIn("sx_bet", deduped)
-        self.assertNotIn("dexsport_io", deduped)
-        self.assertNotIn("sportbet_one", deduped)
+        self.assertIn("purebet", deduped)
+        self.assertEqual(deduped.count("bookmaker_xyz"), 1)
 
-    def test_dedupe_proxy_provider_keys_keeps_explicit_mirror_selection(self) -> None:
+    def test_dedupe_proxy_provider_keys_ignores_unregistered_provider_keys(self) -> None:
         deduped = scanner._dedupe_proxy_provider_keys(
-            ["bookmaker_xyz", "dexsport_io", "sportbet_one"],
-            explicit_provider_keys=["dexsport_io"],
+            ["bookmaker_xyz", "dexsport_io", "sportbet_one", "sx_bet"],
+            explicit_provider_keys=["dexsport_io", "sx_bet"],
         )
         self.assertIn("bookmaker_xyz", deduped)
-        self.assertIn("dexsport_io", deduped)
+        self.assertIn("sx_bet", deduped)
+        self.assertNotIn("dexsport_io", deduped)
         self.assertNotIn("sportbet_one", deduped)
 
     def test_scan_single_sport_retries_async_provider_network_errors(self) -> None:
@@ -1020,6 +1021,66 @@ class ScannerRegressionTests(unittest.TestCase):
                 api_key="",
                 sports=["americanfootball_nfl"],
                 include_providers=["sx_bet"],
+            )
+
+        self.assertTrue(result.get("success"))
+        self.assertEqual(captured_should_fetch_api, [False])
+
+    def test_run_scan_include_purebet_without_api_keys_runs_provider_only(self) -> None:
+        captured_should_fetch_api = []
+
+        def _fake_scan_single_sport(**kwargs):
+            captured_should_fetch_api.append(bool(kwargs.get("should_fetch_api")))
+            sport = kwargs.get("sport") or {}
+            sport_key = sport.get("key") or ""
+            sport_title = sport.get("title") or sport_key
+            return {
+                "skipped": False,
+                "sport_key": sport_key,
+                "sport_timing": {
+                    "sport_key": sport_key,
+                    "sport": sport_title,
+                    "api_fetch_ms": 0.0,
+                    "provider_fetch_ms": 0.0,
+                    "analysis_ms": 0.0,
+                    "events_scanned": 0,
+                    "providers": [],
+                    "total_ms": 0.0,
+                },
+                "timing_steps": [],
+                "api_market_skips": [],
+                "sport_errors": [],
+                "provider_updates": {},
+                "provider_snapshot_updates": {},
+                "purebet_update": {
+                    "events_merged": 0,
+                    "sports": [],
+                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
+                    "league_sync": {
+                        "live_updates": 0,
+                        "cache_hits": 0,
+                        "stale_cache_uses": 0,
+                        "dynamic_added": 0,
+                        "unresolved": 0,
+                    },
+                },
+                "events_scanned": 0,
+                "total_profit": 0.0,
+                "arb_opportunities": [],
+                "middle_opportunities": [],
+                "plus_ev_opportunities": [],
+                "stale_event_filters": [],
+                "successful": 1,
+            }
+
+        with (
+            patch.object(scanner, "_scan_single_sport", side_effect=_fake_scan_single_sport),
+            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
+        ):
+            result = scanner.run_scan(
+                api_key="",
+                sports=["americanfootball_nfl"],
+                include_purebet=True,
             )
 
         self.assertTrue(result.get("success"))

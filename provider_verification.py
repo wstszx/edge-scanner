@@ -10,15 +10,11 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from config import DEFAULT_STAKE_AMOUNT
-from providers.dexsport_io import DEXSPORT_SOURCE
-from providers.sportbet_one import SPORTBET_ONE_SOURCE
 from scanner import run_scan
 
 DEFAULT_PROVIDERS = [
     "betdex",
     "bookmaker_xyz",
-    "dexsport_io",
-    "sportbet_one",
     "sx_bet",
     "polymarket",
     "purebet",
@@ -40,13 +36,7 @@ OFFICIAL_DOCS: dict[str, list[str]] = {
     ],
     "bookmaker_xyz": [
         "https://docs.bookmaker.xyz/guides/sportsbook",
-        "https://docs.azuro.org/developers/onchain-data",
-    ],
-    "dexsport_io": [
-        "https://dexsport.io/",
-    ],
-    "sportbet_one": [
-        "https://sportbet.one/",
+        "https://api.onchainfeed.org/api/v1/public/gateway/docs",
     ],
     "sx_bet": [
         "https://api.docs.sx.bet/",
@@ -63,8 +53,6 @@ OFFICIAL_DOCS: dict[str, list[str]] = {
 PROVIDER_TITLES = {
     "betdex": "BetDEX",
     "bookmaker_xyz": "bookmaker.xyz",
-    "dexsport_io": "Dexsport.io",
-    "sportbet_one": "Sportbet.one",
     "sx_bet": "SX Bet",
     "polymarket": "Polymarket",
     "purebet": "Purebet",
@@ -138,22 +126,36 @@ def _provider_error_list(summary: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _provider_upstream_summary(provider_key: str, summary: dict[str, Any]) -> dict[str, Any]:
+    return summary
+
+
+def _provider_empty_feed_note(provider_key: str, summary: dict[str, Any]) -> Optional[str]:
+    upstream = _provider_upstream_summary(provider_key, summary)
+    events_payload_count = int(upstream.get("events_payload_count", 0) or 0)
+    conditions_sport_filtered = int(upstream.get("conditions_sport_filtered_count", 0) or 0)
+    dictionary_loaded = bool(upstream.get("dictionary_loaded"))
+    dictionary_error = _compact_text(upstream.get("dictionary_error"))
+    if (
+        events_payload_count > 0
+        and conditions_sport_filtered == 0
+        and (dictionary_loaded or not dictionary_error)
+    ):
+        return "Official Azuro feed currently has no leagues matching this sport key."
+    return None
+
+
 def _provider_notes(provider_key: str, summary: dict[str, Any], stake_amount: float) -> list[str]:
     notes: list[str] = []
-    if provider_key == "dexsport_io" and DEXSPORT_SOURCE in {"bookmaker_xyz", "api"}:
-        notes.append(
-            "Current code path proxies bookmaker.xyz data instead of a dedicated Dexsport API."
-        )
-    if provider_key == "sportbet_one" and SPORTBET_ONE_SOURCE in {"bookmaker_xyz", "api"}:
-        notes.append(
-            "Current code path proxies bookmaker.xyz data instead of a dedicated Sportbet.one API."
-        )
     if provider_key == "purebet":
         errors = _provider_error_list(summary)
         if errors:
             notes.append(
                 "Purebet failures should be checked against docs.purebet.io before changing parsing code."
             )
+    empty_feed_note = _provider_empty_feed_note(provider_key, summary)
+    if empty_feed_note:
+        notes.append(empty_feed_note)
     if summary.get("events_merged", 0) == 0 and not _provider_error_list(summary):
         notes.append("Returned zero merged events in this scan.")
     if stake_amount <= 0:

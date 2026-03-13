@@ -147,25 +147,27 @@ BETDEX_ENABLED=0
 BOOKMAKER_XYZ_ENABLED=0
 SX_BET_ENABLED=0
 POLYMARKET_ENABLED=0
-DEXSPORT_IO_ENABLED=0
-SPORTBET_ONE_ENABLED=0
 ```
 Provider rate-limit reference: `docs/provider_rate_limits.md`
 
 `PUREBET_ENABLED` still controls Purebet default.
 
-Dexsport.io / Sportbet.one provider settings (proxy mode):
+bookmaker.xyz dictionary settings:
 ```
-DEXSPORT_SOURCE=bookmaker_xyz
-SPORTBET_ONE_SOURCE=bookmaker_xyz
+BOOKMAKER_XYZ_DICTIONARY_SOURCE=auto
+BOOKMAKER_XYZ_GAMES_PER_PAGE=100
+BOOKMAKER_XYZ_MAX_GAME_PAGES=10
+BOOKMAKER_XYZ_CONDITION_BATCH_SIZE=50
 ```
-Optional file fallback for local fixtures:
-```
-DEXSPORT_SOURCE=file
-DEXSPORT_SAMPLE_PATH=data/dexsport_sample.json
-SPORTBET_ONE_SOURCE=file
-SPORTBET_ONE_SAMPLE_PATH=data/sportbet_one_sample.json
-```
+`BOOKMAKER_XYZ_DICTIONARY_SOURCE=auto` prefers the official `@azuro-org/dictionaries` package and falls back to bookmaker.xyz frontend assets only if needed. `bookmaker.xyz` now reads live events from Azuro's official public `market-manager` API instead of the old GraphQL snapshot path.
+
+Supported sport keys now include:
+- Existing project keys such as `basketball_nba`, `soccer_epl`, `soccer_spain_la_liga`, `soccer_usa_mls`
+- Expanded curated keys such as `basketball_euroleague`, `soccer_england_championship`, `soccer_portugal_primeira_liga`, `icehockey_khl`, `mma_ufc`, `boxing_professional`
+- Generic Azuro keys in the form `azuro__<sport_slug>__<league_slug>__<country_slug>`, for example:
+  - `azuro__basketball__euroleague__international-tournaments`
+  - `azuro__football__premier-league__england`
+  - `azuro__mma__ufc__international-tournaments`
 
 SX Bet provider settings (API mode):
 ```
@@ -216,7 +218,7 @@ BetDEX is treated as an exchange in scanner settings, so exchange commission app
 You can also override per request with `includeProviders`:
 ```json
 {
-  "includeProviders": ["BetDEX", "bookmaker.xyz", "Dexsport.io", "Sportbet.one", "SX Bet", "polymarket"]
+  "includeProviders": ["BetDEX", "bookmaker.xyz", "SX Bet", "polymarket"]
 }
 ```
 `includePurebet` remains supported and overrides Purebet on/off for that request.

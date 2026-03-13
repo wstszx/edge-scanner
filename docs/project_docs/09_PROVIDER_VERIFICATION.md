@@ -78,7 +78,8 @@ run_provider_verification.bat
   - `tests/test_purebet_market_parsing.py`
   - `tests/test_polymarket_realtime.py`
   - `tests/test_bookmaker_xyz_cache.py`
-- 结果：`32 passed`
+  - `tests/test_scanner_regressions.py`
+- 结果：`68 passed, 3 subtests passed`
 
 ### 2.2 实时扫描
 
@@ -87,20 +88,18 @@ run_provider_verification.bat
   - `betdex`: 返回 8 个事件
   - `bookmaker_xyz`: 返回 8 个事件
   - `sx_bet`: 返回 8 个事件
-  - `polymarket`: 返回 46 个事件
+  - `polymarket`: 返回 54 个事件
   - `purebet`: 失败，线上返回 `521/522`
   - `plus_ev`: 0
-  - `arbitrage`: 4
-  - `middles`: 43
+  - `arbitrage`: 1
+  - `middles`: 609
 
 ## 3. 官方来源与结论
 
 | Provider | 当前实现端点 | 官方来源 | 结论 |
 |---|---|---|---|
 | BetDEX | `https://www.betdex.com/api/session`、`https://production.api.monacoprotocol.xyz/events`、`/markets`、`/market-prices` | `https://docs.betdex.com/`、`https://docs.api.monacoprotocol.xyz/` | 当前实现与线上请求日志一致，端点可用 |
-| bookmaker.xyz | `https://thegraph-1.onchainfeed.org/subgraphs/name/azuro-protocol/azuro-data-feed-{chain}` | `https://docs.bookmaker.xyz/guides/sportsbook`、`https://docs.azuro.org/developers/onchain-data` | 当前链路与 Azuro 官方数据接入说明一致 |
-| Dexsport.io | 当前 `api` / `bookmaker_xyz` 模式都复用 `bookmaker_xyz` 上游 | 当前仓库未直接调用 Dexsport 官方 API 文档 | 当前实现更像“代理 Provider”，不是独立官方 API 对接 |
-| Sportbet.one | 当前 `api` / `bookmaker_xyz` 模式都复用 `bookmaker_xyz` 上游 | 当前仓库未直接调用 Sportbet.one 官方 API 文档 | 当前实现更像“代理 Provider”，不是独立官方 API 对接 |
+| bookmaker.xyz | `https://api.onchainfeed.org/api/v1/public/market-manager/*` + `@azuro-org/dictionaries` | `https://docs.bookmaker.xyz/guides/sportsbook`、`https://api.onchainfeed.org/api/v1/public/gateway/docs` | 当前链路已切到 Azuro 官方公共 `market-manager`，并使用官方 dictionaries 解析盘口 |
 | SX Bet | `https://api.sx.bet/summary/upcoming/{baseToken}/{sportId}`、`/leagues/active`、`/markets/active`、`/orders/odds/best`、`/orders` | `https://api.docs.sx.bet/` | 当前实现与公开文档中的端点形态一致，实时请求成功 |
 | Polymarket | `https://gamma-api.polymarket.com/events`、`https://clob.polymarket.com/book`、`wss://ws-subscriptions-clob.polymarket.com/ws/market` | `https://docs.polymarket.com/developers/gamma-markets-api/get-events`、`https://docs.polymarket.com/developers/CLOB/introduction` | 当前实现与官方文档一致，实时请求成功 |
 | Purebet | `https://v3api.purebet.io/events`、`/markets`、`/activeLeagues` | `https://docs.purebet.io/` | 文档路径与实现一致，但实时请求多次返回 `521/522`，当前不能视为稳定可用 |
@@ -108,9 +107,10 @@ run_provider_verification.bat
 ## 4. 本轮发现
 
 1. `Purebet` 当前主要问题不是本地解析，而是上游可用性；实时请求多次返回 `521/522`。
-2. `Dexsport.io` 和 `Sportbet.one` 当前实现并未独立调用各自官方 API，`api` 模式实际上仍代理 `bookmaker_xyz` 上游。
-3. Provider 快照在旧实现里会被后续事件合并污染，导致 `bookmaker_xyz` 快照中混入 `sx_bet` 盘口；该问题已在本轮修复。
-4. 顶部套利结果存在极高 ROI，但往往伴随很小的 `max_stake`，需要按“低流动性 / 短时错价”处理，不能直接视为稳定机会。
+2. Provider 快照在旧实现里会被后续事件合并污染，导致 `bookmaker_xyz` 快照中混入 `sx_bet` 盘口；该问题已在本轮修复。
+3. 顶部套利结果存在极高 ROI，但往往伴随很小的 `max_stake`，需要按“低流动性 / 短时错价”处理，不能直接视为稳定机会。
+4. `bookmaker.xyz` 主链路已改为官方 `market-manager`，`basketball_nba` 与 `soccer_epl` 当前都能从官方实时 feed 返回事件，不再依赖旧 GraphQL 快照。
+5. `bookmaker.xyz` 同时支持动态 Azuro sport key：`azuro__<sport_slug>__<league_slug>__<country_slug>`，用于覆盖当前公共 feed 中的新增联赛。
 
 ## 5. 扫描结果抽检结论
 

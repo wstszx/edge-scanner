@@ -25,6 +25,51 @@ class ProviderSportCoverageTests(unittest.TestCase):
             "americanfootball_ncaaf",
         )
 
+    def test_bookmaker_xyz_soccer_epl_requires_english_context(self) -> None:
+        singapore_game = {
+            "title": "Young Lions - Hougang United FC",
+            "sport": {"slug": "football", "name": "Football"},
+            "league": {"slug": "premier-league", "name": "Premier League"},
+            "country": {"slug": "singapore", "name": "Singapore"},
+        }
+        england_game = {
+            "title": "Arsenal - Chelsea",
+            "sport": {"slug": "football", "name": "Football"},
+            "league": {"slug": "premier-league", "name": "Premier League"},
+            "country": {"slug": "england", "name": "England"},
+        }
+
+        self.assertFalse(bookmaker_xyz._sport_matches_requested("soccer_epl", singapore_game))
+        self.assertTrue(bookmaker_xyz._sport_matches_requested("soccer_epl", england_game))
+
+    def test_bookmaker_xyz_dynamic_azuro_sport_key_matches_exact_filter(self) -> None:
+        euroleague_game = {
+            "title": "Real Madrid - Fenerbahce",
+            "sport": {"slug": "basketball", "name": "Basketball"},
+            "league": {"slug": "euroleague", "name": "EuroLeague"},
+            "country": {
+                "slug": "international-tournaments",
+                "name": "International Tournaments",
+            },
+        }
+        wrong_country_game = {
+            **euroleague_game,
+            "country": {"slug": "spain", "name": "Spain"},
+        }
+
+        self.assertTrue(
+            bookmaker_xyz._sport_matches_requested(
+                "azuro__basketball__euroleague__international-tournaments",
+                euroleague_game,
+            )
+        )
+        self.assertFalse(
+            bookmaker_xyz._sport_matches_requested(
+                "azuro__basketball__euroleague__international-tournaments",
+                wrong_country_game,
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

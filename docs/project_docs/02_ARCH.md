@@ -38,10 +38,8 @@ edge-scanner/
 |   |-- __init__.py
 |   |-- betdex.py
 |   |-- bookmaker_xyz.py
-|   |-- dexsport_io.py
 |   |-- polymarket.py
 |   |-- purebet.py
-|   |-- sportbet_one.py
 |   `-- sx_bet.py
 |-- templates/
 |   `-- index.html

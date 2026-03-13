@@ -42,7 +42,7 @@ from config import (  # noqa: E402
     DEFAULT_PLUS_EV_SORT,
     DEFAULT_REGION_KEYS,
     DEFAULT_SHARP_BOOK,
-    DEFAULT_SPORT_OPTIONS,
+    DEFAULT_SPORT_KEYS,
     DEFAULT_STAKE_AMOUNT,
     DEFAULT_THEME,
     DEFAULT_AUTO_SCAN_ENABLED,
@@ -53,6 +53,7 @@ from config import (  # noqa: E402
     REGION_OPTIONS,
     SHARP_BOOKS,
     SHOW_POSITIVE_EV_ONLY,
+    SPORT_OPTIONS,
 )
 from providers import PROVIDER_FETCHERS, resolve_provider_key  # noqa: E402
 from scanner import run_scan  # noqa: E402
@@ -288,7 +289,8 @@ def index() -> str:
     _start_background_provider_services(wait_timeout=0.0)
     return render_template(
         "index.html",
-        default_sports=DEFAULT_SPORT_OPTIONS,
+        sport_options=SPORT_OPTIONS,
+        default_sport_keys=DEFAULT_SPORT_KEYS,
         region_options=REGION_OPTIONS,
         bookmaker_options=BOOKMAKER_OPTIONS,
         default_bookmaker_keys=DEFAULT_BOOKMAKER_KEYS,

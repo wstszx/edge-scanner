@@ -9,8 +9,6 @@ Registered custom providers:
 - `bookmaker_xyz`
 - `sx_bet`
 - `polymarket`
-- `dexsport_io` (proxy over `bookmaker_xyz`)
-- `sportbet_one` (proxy over `bookmaker_xyz`)
 
 ## 0) Common Variables
 
@@ -35,10 +33,12 @@ BETDEX_MARKET_ID_2="REPLACE_MARKET_ID_2"
 # bookmaker.xyz
 BOOKMAKER_HOME="https://bookmaker.xyz/"
 BOOKMAKER_PUBLIC_BASE="https://bookmaker.xyz"
-BOOKMAKER_GRAPH_BASE="https://thegraph-1.onchainfeed.org/subgraphs/name/azuro-protocol"
+BOOKMAKER_MARKET_MANAGER_BASE="https://api.onchainfeed.org/api/v1/public/market-manager"
 BOOKMAKER_UA="Mozilla/5.0"
-CHAIN_SLUG="polygon"  # polygon | gnosis | base
-MIN_STARTS_AT="REPLACE_UNIX_TIMESTAMP"
+BOOKMAKER_ENVIRONMENT="PolygonUSDT"  # PolygonUSDT | GnosisXDAI | BaseWETH
+BOOKMAKER_SPORT_SLUG="basketball"
+BOOKMAKER_LEAGUE_SLUG="nba"
+BOOKMAKER_GAME_ID="REPLACE_GAME_ID"
 
 # SX Bet
 SX_BASE="https://api.sx.bet"
@@ -168,26 +168,37 @@ curl -sS "${BOOKMAKER_PUBLIC_BASE}${CONST_ASSET_PATH}" \
   -H "User-Agent: $BOOKMAKER_UA"
 ```
 
-### 3.3 GraphQL conditions endpoint
-
-Endpoint format:
-- `$BOOKMAKER_GRAPH_BASE/azuro-data-feed-polygon`
-- `$BOOKMAKER_GRAPH_BASE/azuro-data-feed-gnosis`
-- `$BOOKMAKER_GRAPH_BASE/azuro-data-feed-base`
+### 3.3 Official market-manager `/games-by-filters`
 
 ```bash
-curl -sS "${BOOKMAKER_GRAPH_BASE}/azuro-data-feed-${CHAIN_SLUG}" \
+curl -sS -G "$BOOKMAKER_MARKET_MANAGER_BASE/games-by-filters" \
+  -H "Accept: application/json" \
+  -H "User-Agent: $BOOKMAKER_UA" \
+  --data-urlencode "environment=$BOOKMAKER_ENVIRONMENT" \
+  --data-urlencode "gameState=Prematch" \
+  --data-urlencode "sportSlug=$BOOKMAKER_SPORT_SLUG" \
+  --data-urlencode "leagueSlug=$BOOKMAKER_LEAGUE_SLUG" \
+  --data-urlencode "conditionState=Active" \
+  --data-urlencode "orderBy=startsAt" \
+  --data-urlencode "orderDirection=asc" \
+  --data-urlencode "page=1" \
+  --data-urlencode "perPage=100"
+```
+
+### 3.4 Official market-manager `/conditions-by-game-ids`
+
+```bash
+curl -sS "$BOOKMAKER_MARKET_MANAGER_BASE/conditions-by-game-ids" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
   -H "User-Agent: $BOOKMAKER_UA" \
-  --data-raw @- <<'JSON'
+  --data-raw @- <<JSON
 {
-  "query": "query { conditions(first: 400, skip: 0, where: {state: \"Active\", game_: {state_in: [\"Prematch\", \"Live\"], startsAt_gt: \"REPLACE_MIN_STARTS_AT\"}}, orderBy: conditionId, orderDirection: desc, subgraphError: allow) { id conditionId state outcomes { outcomeId title currentOdds sortOrder } game { id gameId slug title startsAt state sport { sportId slug name } league { slug name } country { slug name } participants { name } } } }"
+  "environment": "$BOOKMAKER_ENVIRONMENT",
+  "gameIds": ["$BOOKMAKER_GAME_ID"]
 }
 JSON
 ```
-
-If you want to inject a runtime timestamp, replace `REPLACE_MIN_STARTS_AT` first.
 
 ## 4) SX Bet (`providers/sx_bet.py`)
 
@@ -274,19 +285,7 @@ curl -sS -G "$POLY_CLOB_BASE/book" \
   --data-urlencode "token_id=$POLY_TOKEN_ID"
 ```
 
-## 6) Dexsport and Sportbet Proxy Notes
-
-### 6.1 `dexsport_io` (`providers/dexsport_io.py`)
-- Default `DEXSPORT_SOURCE=bookmaker_xyz`.
-- No independent HTTP data endpoint.
-- Reuses `bookmaker_xyz` fetch path and only re-tags output key/title.
-
-### 6.2 `sportbet_one` (`providers/sportbet_one.py`)
-- Default `SPORTBET_ONE_SOURCE=bookmaker_xyz`.
-- No independent HTTP data endpoint.
-- Reuses `bookmaker_xyz` fetch path and only re-tags output key/title.
-
-## 7) Quick Check Tips
+## 6) Quick Check Tips
 
 Add `-i` to inspect HTTP status and headers:
 
