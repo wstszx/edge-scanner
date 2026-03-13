@@ -555,6 +555,8 @@
                       </label>
                     </div>
                     <div class="arb-calc-leg-actions">
+                      <button type="button" class="secondary-btn" id="arb-calc-open-a"
+                        data-i18n="table_open">Open</button>
                       <button type="button" class="secondary-btn" id="arb-calc-base-a"
                         data-i18n="arb_calc_use_this_stake">Use This Stake</button>
                     </div>
@@ -583,6 +585,8 @@
                       </label>
                     </div>
                     <div class="arb-calc-leg-actions">
+                      <button type="button" class="secondary-btn" id="arb-calc-open-b"
+                        data-i18n="table_open">Open</button>
                       <button type="button" class="secondary-btn" id="arb-calc-base-b"
                         data-i18n="arb_calc_use_this_stake">Use This Stake</button>
                     </div>
@@ -611,6 +615,8 @@
                       </label>
                     </div>
                     <div class="arb-calc-leg-actions">
+                      <button type="button" class="secondary-btn" id="arb-calc-open-c"
+                        data-i18n="table_open">Open</button>
                       <button type="button" class="secondary-btn" id="arb-calc-base-c"
                         data-i18n="arb_calc_use_this_stake">Use This Stake</button>
                     </div>
@@ -1004,6 +1010,7 @@
     const arbCalcLegAInfo = document.getElementById('arb-calc-leg-a-book');
     const arbCalcOddsAInput = document.getElementById('arb-calc-odds-a');
     const arbCalcStakeAInput = document.getElementById('arb-calc-stake-a');
+    const arbCalcOpenABtn = document.getElementById('arb-calc-open-a');
     const arbCalcBaseABtn = document.getElementById('arb-calc-base-a');
     const arbCalcPayoutA = document.getElementById('arb-calc-payout-a');
     const arbCalcLegB = document.getElementById('arb-calc-leg-b');
@@ -1011,6 +1018,7 @@
     const arbCalcLegBInfo = document.getElementById('arb-calc-leg-b-book');
     const arbCalcOddsBInput = document.getElementById('arb-calc-odds-b');
     const arbCalcStakeBInput = document.getElementById('arb-calc-stake-b');
+    const arbCalcOpenBBtn = document.getElementById('arb-calc-open-b');
     const arbCalcBaseBBtn = document.getElementById('arb-calc-base-b');
     const arbCalcPayoutB = document.getElementById('arb-calc-payout-b');
     const arbCalcLegC = document.getElementById('arb-calc-leg-c');
@@ -1018,6 +1026,7 @@
     const arbCalcLegCInfo = document.getElementById('arb-calc-leg-c-book');
     const arbCalcOddsCInput = document.getElementById('arb-calc-odds-c');
     const arbCalcStakeCInput = document.getElementById('arb-calc-stake-c');
+    const arbCalcOpenCBtn = document.getElementById('arb-calc-open-c');
     const arbCalcBaseCBtn = document.getElementById('arb-calc-base-c');
     const arbCalcPayoutC = document.getElementById('arb-calc-payout-c');
     const arbCalcMinPayout = document.getElementById('arb-calc-min-payout');
@@ -1031,6 +1040,7 @@
         info: arbCalcLegAInfo,
         oddsInput: arbCalcOddsAInput,
         stakeInput: arbCalcStakeAInput,
+        openBtn: arbCalcOpenABtn,
         baseBtn: arbCalcBaseABtn,
         payoutEl: arbCalcPayoutA,
       },
@@ -1040,6 +1050,7 @@
         info: arbCalcLegBInfo,
         oddsInput: arbCalcOddsBInput,
         stakeInput: arbCalcStakeBInput,
+        openBtn: arbCalcOpenBBtn,
         baseBtn: arbCalcBaseBBtn,
         payoutEl: arbCalcPayoutB,
       },
@@ -1049,6 +1060,7 @@
         info: arbCalcLegCInfo,
         oddsInput: arbCalcOddsCInput,
         stakeInput: arbCalcStakeCInput,
+        openBtn: arbCalcOpenCBtn,
         baseBtn: arbCalcBaseCBtn,
         payoutEl: arbCalcPayoutC,
       },
@@ -3078,6 +3090,20 @@
       arbCalcTotalInput.addEventListener('change', () => rebalanceArbCalculator('total'));
     }
     arbCalcLegRefs.forEach((leg, idx) => {
+      if (leg.openBtn) {
+        leg.openBtn.addEventListener('click', () => {
+          if (!selectedArbOpp || !arbCalculatorState) return;
+          const currentLeg = arbCalculatorState.legs?.[idx];
+          const targetUrl = resolveArbLegOpenUrl(currentLeg, selectedArbOpp);
+          if (!normalizeUrl(targetUrl)) {
+            showStatusKey('open_books_missing', 'error');
+            return;
+          }
+          if (!openExternalTab(targetUrl)) {
+            showStatusKey('open_books_blocked', 'error');
+          }
+        });
+      }
       if (leg.baseBtn) {
         leg.baseBtn.addEventListener('click', () => rebalanceArbCalculator(`base_${idx}`));
       }
@@ -4100,8 +4126,11 @@
             stake: 0,
             outcome: `${item?.outcome || ''}`,
             bookmaker: `${item?.bookmaker || ''}`,
+            bookmakerKey: `${item?.bookmaker_key || ''}`,
             point: item?.point,
             maxStake: item?.max_stake,
+            eventId: `${item?.book_event_id ?? opp?.event_id ?? ''}`,
+            eventUrl: `${item?.book_event_url || ''}`,
           };
         })
         .filter(Boolean);
@@ -4309,7 +4338,11 @@
         arbCalcBody.classList.add('hidden');
         if (arbCalcMeta) arbCalcMeta.innerHTML = '';
         if (arbCalcBadges) arbCalcBadges.innerHTML = '';
-        arbCalcLegRefs.forEach((refs) => refs.section?.classList.add('hidden'));
+        if (arbCalcOpenBtn) arbCalcOpenBtn.disabled = true;
+        arbCalcLegRefs.forEach((refs) => {
+          refs.section?.classList.add('hidden');
+          if (refs.openBtn) refs.openBtn.disabled = true;
+        });
         return;
       }
 
@@ -4371,6 +4404,7 @@
             refs.info.innerHTML = '';
             refs.info.classList.add('hidden');
           }
+          if (refs.openBtn) refs.openBtn.disabled = true;
           if (refs.payoutEl) refs.payoutEl.textContent = '-';
           return;
         }
@@ -4384,6 +4418,7 @@
           refs.info.innerHTML = metaHtml;
           refs.info.classList.toggle('hidden', !metaHtml);
         }
+        if (refs.openBtn) refs.openBtn.disabled = !normalizeUrl(resolveArbLegOpenUrl(leg, selectedArbOpp));
         refs.section?.classList.toggle('is-over-limit', Number.isFinite(maxStake) && currentStake > maxStake + 1e-9);
         if (refs.oddsInput) refs.oddsInput.value = leg.odds ? leg.odds.toFixed(2) : '';
         if (refs.stakeInput) refs.stakeInput.value = roundMoney(currentStake).toFixed(2);
@@ -4931,6 +4966,33 @@
         entries.push({ key, name, eventId, eventUrl });
       });
       return entries;
+    }
+
+    function matchesArbLegBookValue(left, right) {
+      const normalizedLeft = `${left || ''}`.trim().toLowerCase();
+      const normalizedRight = `${right || ''}`.trim().toLowerCase();
+      return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+    }
+
+    function buildArbLegBookTarget(leg, opp) {
+      if (!leg || !opp) return null;
+      const fallback = collectBookTargets(opp).find((book) =>
+        matchesArbLegBookValue(book.key, leg.bookmakerKey) ||
+        matchesArbLegBookValue(book.name, leg.bookmaker) ||
+        matchesArbLegBookValue(book.eventUrl, leg.eventUrl)
+      );
+      return {
+        key: `${leg.bookmakerKey || fallback?.key || ''}`.trim(),
+        name: `${leg.bookmaker || fallback?.name || ''}`.trim(),
+        eventId: `${leg.eventId || fallback?.eventId || opp?.event_id || ''}`.trim(),
+        eventUrl: `${leg.eventUrl || fallback?.eventUrl || ''}`.trim(),
+      };
+    }
+
+    function resolveArbLegOpenUrl(leg, opp) {
+      const book = buildArbLegBookTarget(leg, opp);
+      if (!book) return '';
+      return resolveBookmakerOpenUrl(book, opp);
     }
 
     function normalizeUrl(value) {
