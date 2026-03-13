@@ -5337,9 +5337,6 @@
         : '';
 
       const warningBlocks = [];
-      if (errorDetails) {
-        warningBlocks.push(t('partial_results', { details: errorDetails }));
-      }
       if (skipDetails) {
         warningBlocks.push(t('market_skips', { details: skipDetails }));
       }
@@ -5349,10 +5346,9 @@
         partialWarning.classList.remove('hidden');
         if (scanErrors) {
           const scanBlocks = [];
-          if (errorDetails) scanBlocks.push(t('scan_errors', { details: errorDetails }));
           if (skipDetails) scanBlocks.push(t('scan_market_skips', { details: skipDetails }));
           scanErrors.innerHTML = scanBlocks.join('<br/>');
-          scanErrors.classList.remove('hidden');
+          scanErrors.classList.toggle('hidden', !scanBlocks.length);
         }
       } else {
         partialWarning.classList.add('hidden');
