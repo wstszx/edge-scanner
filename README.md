@@ -29,6 +29,20 @@ The scanner pulls odds from The Odds API across multiple regions (US, EU, UK, AU
 
 Your browser opens automatically. Enter your API key and scan.
 
+## Project Docs
+
+Structured project documentation lives in `docs/project_docs/` and follows the required workflow:
+
+- `00_WORKFLOW.md` - workflow and prompt template
+- `01_PRD.md` - product requirements
+- `02_ARCH.md` - architecture document
+- `03_API_DOC.md` - API contract
+- `04_SPEC.md` - implementation specification
+- `05_TEST_CASE.md` - test cases
+- `06_CODE_GENERATION_PROMPT.md` - code generation prompt
+- `07_TEST_GENERATION_PROMPT.md` - test generation prompt
+- `08_PROJECT_SUMMARY.md` - project summary
+
 Optional: configure via `settings.json` (loaded automatically if present). Keys mirror the
 environment variables used in this README. You can override with real env vars.
 Common defaults: `DEFAULT_REGION_KEYS`, `DEFAULT_SPORT_KEYS`, `DEFAULT_STAKE_AMOUNT`,
