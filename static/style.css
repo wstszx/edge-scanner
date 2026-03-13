@@ -1276,6 +1276,70 @@ body.modal-open .content {
   transition: var(--transition);
 }
 
+#results-table td {
+  vertical-align: top;
+}
+
+#results-table th:nth-child(1),
+#results-table td:nth-child(1),
+#results-table th:nth-child(2),
+#results-table td:nth-child(2) {
+  width: 6.5rem;
+}
+
+#results-table th:nth-child(3),
+#results-table td:nth-child(3) {
+  width: 7.5rem;
+}
+
+#results-table th:nth-child(4),
+#results-table td:nth-child(4),
+#results-table th:nth-child(5),
+#results-table td:nth-child(5) {
+  width: 7rem;
+}
+
+#results-table th:nth-child(6),
+#results-table td:nth-child(6) {
+  min-width: 17rem;
+}
+
+#results-table th:nth-child(7),
+#results-table td:nth-child(7) {
+  width: 8.5rem;
+}
+
+#results-table th:nth-child(8),
+#results-table td:nth-child(8) {
+  width: 8rem;
+}
+
+#results-table th:nth-child(9),
+#results-table td:nth-child(9),
+#results-table th:nth-child(10),
+#results-table td:nth-child(10),
+#results-table th:nth-child(11),
+#results-table td:nth-child(11) {
+  min-width: 13.5rem;
+}
+
+#results-table td:nth-child(1),
+#results-table td:nth-child(2),
+#results-table td:nth-child(3),
+#results-table td:nth-child(4),
+#results-table td:nth-child(5),
+#results-table td:nth-child(7),
+#results-table td:nth-child(8) {
+  white-space: nowrap;
+}
+
+#results-table td:nth-child(6),
+#results-table td:nth-child(9),
+#results-table td:nth-child(10),
+#results-table td:nth-child(11) {
+  white-space: normal;
+}
+
 #results-table tbody tr:nth-child(even) td,
 #middles-table tbody tr:nth-child(even) td,
 #plus-ev-table tbody tr:nth-child(even) td {
@@ -1559,6 +1623,7 @@ body.modal-open .content {
 .arb-event-title {
   font-size: 0.93rem;
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .arb-event-meta {
@@ -1607,6 +1672,12 @@ body.modal-open .content {
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.5rem;
+  min-width: 0;
+}
+
+.outcome-main strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .outcome-price {
