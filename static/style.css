@@ -1280,64 +1280,20 @@ body.modal-open .content {
   vertical-align: top;
 }
 
-#results-table th:nth-child(1),
-#results-table td:nth-child(1),
-#results-table th:nth-child(2),
-#results-table td:nth-child(2) {
-  width: 6.5rem;
+#results-table th:nth-child(n),
+#results-table td:nth-child(n) {
+  width: auto;
+  min-width: 0;
 }
 
-#results-table th:nth-child(3),
-#results-table td:nth-child(3) {
-  width: 7.5rem;
-}
-
-#results-table th:nth-child(4),
-#results-table td:nth-child(4),
-#results-table th:nth-child(5),
-#results-table td:nth-child(5) {
-  width: 7rem;
-}
-
-#results-table th:nth-child(6),
-#results-table td:nth-child(6) {
-  min-width: 17rem;
-}
-
-#results-table th:nth-child(7),
-#results-table td:nth-child(7) {
-  width: 8.5rem;
-}
-
-#results-table th:nth-child(8),
-#results-table td:nth-child(8) {
-  width: 8rem;
-}
-
-#results-table th:nth-child(9),
-#results-table td:nth-child(9),
-#results-table th:nth-child(10),
-#results-table td:nth-child(10),
-#results-table th:nth-child(11),
-#results-table td:nth-child(11) {
-  min-width: 13.5rem;
+#results-table td:nth-child(n) {
+  white-space: normal;
 }
 
 #results-table td:nth-child(1),
 #results-table td:nth-child(2),
-#results-table td:nth-child(3),
-#results-table td:nth-child(4),
-#results-table td:nth-child(5),
-#results-table td:nth-child(7),
-#results-table td:nth-child(8) {
+#results-table td:nth-child(3) {
   white-space: nowrap;
-}
-
-#results-table td:nth-child(6),
-#results-table td:nth-child(9),
-#results-table td:nth-child(10),
-#results-table td:nth-child(11) {
-  white-space: normal;
 }
 
 #results-table tbody tr:nth-child(even) td,
@@ -3787,7 +3743,9 @@ body {
 }
 
 #results-table {
-  min-width: 840px;
+  width: 100%;
+  min-width: 0;
+  table-layout: auto;
 }
 
 #middles-table {
