@@ -19,6 +19,7 @@
 | UT-PROV-001 | `providers/bookmaker_xyz.py` | 扫描期缓存启停 | 缓存命中与清理逻辑正确 | `tests/test_bookmaker_xyz_cache.py` |
 | UT-PROV-002 | `providers/purebet.py` | 市场解析、事件归一化 | 返回统一事件/市场结构 | `tests/test_purebet_market_parsing.py` |
 | UT-PROV-003 | `providers/polymarket.py` | 实时状态与异步抓取 | 运行时状态、异步获取可用 | `tests/test_polymarket_realtime.py` |
+| UT-PROV-004 | `scanner.py` | Provider 快照与后续合并事件隔离 | 快照中只保留该 Provider 原始盘口 | `tests/test_scanner_regressions.py` |
 
 ## 2. 接口测试用例
 
@@ -37,6 +38,8 @@
 | IT-APP-011 | `GET /history/stats` | 读取历史统计 | 返回 `enabled`、`dir`、`modes` | 待补充 |
 | IT-APP-012 | `GET /provider-snapshots/{provider}` | 快照存在/不存在 | 正确返回 `200` 或 `404` | 待补充 |
 | IT-APP-013 | `GET /cross-provider-report` | 报告存在/不存在 | 正确返回 `200` 或 `404` | 待补充 |
+| IT-PROV-014 | Provider-only 扫描 | 每个自定义 Provider 单独执行一次实时扫描 | 返回结构化 `stats` 或明确错误 | 手工 + 请求日志 |
+| IT-PROV-015 | 官方文档对照复测 | Provider 异常后对照官方文档重新核验端点和字段 | 形成可复核结论 | 手工 + `09_PROVIDER_VERIFICATION.md` |
 
 ## 3. 边界用例
 
@@ -60,6 +63,7 @@
 | EX-005 | 通知发送失败 | 记录 warning，不阻塞扫描返回 | 代码已实现，待补回归测试 |
 | EX-006 | 快照文件 JSON 损坏 | `/provider-snapshots/{provider}` 返回 500 | 代码已实现，待补接口测试 |
 | EX-007 | 跨 Provider 报告 JSON 损坏 | `/cross-provider-report` 返回 500 | 代码已实现，待补接口测试 |
+| EX-008 | Provider 上游服务不可用 | 扫描返回 `partial=true` 或 Provider 局部错误，不误报成功数据 | 需要实时复测 |
 
 ## 5. 测试覆盖率要求
 
@@ -71,3 +75,4 @@
 - 每个自定义 Provider 至少覆盖一种解析/分段/运行时场景。
 - 历史记录、通知、请求日志等非主链路副作用必须覆盖“不阻塞主流程”的行为。
 - 当前仓库未内置覆盖率门禁配置；如后续接入 `pytest-cov`，应以“核心数学逻辑 + 全部公开接口 + 全部已注册 Provider 的关键路径”作为最低门槛。
+- 每次调整自定义 Provider 后，必须补一轮“官方文档对照 + 实时扫描结果抽检”，不能只看离线 fixture 测试。

@@ -42,6 +42,52 @@ Structured project documentation lives in `docs/project_docs/` and follows the r
 - `06_CODE_GENERATION_PROMPT.md` - code generation prompt
 - `07_TEST_GENERATION_PROMPT.md` - test generation prompt
 - `08_PROJECT_SUMMARY.md` - project summary
+- `09_PROVIDER_VERIFICATION.md` - provider verification workflow and latest findings
+
+## Provider Verification
+
+Run the repeatable provider verification script to check provider-focused tests, execute a provider-only scan, and write a JSON + Markdown report:
+
+```bash
+python provider_verification.py --sport basketball_nba
+```
+
+Windows shortcuts:
+
+```powershell
+.\run_provider_verification.ps1
+```
+
+```bat
+run_provider_verification.bat
+```
+
+Local automation helpers:
+
+```powershell
+.\scheduled_provider_verification.ps1 --sport basketball_nba --fail-on-alert
+.\register_provider_verification_task.ps1 -DailyAt 09:00 -Sport basketball_nba -FailOnAlert
+```
+
+GitHub Actions automation is available at `.github/workflows/provider-verification.yml`. Scheduled runs upload the generated reports as workflow artifacts. Manual runs can enable strict mode to fail on alerts.
+
+Useful flags:
+
+- `--skip-tests` - skip the provider-focused pytest subset
+- `--providers betdex bookmaker_xyz sx_bet polymarket purebet` - verify only selected providers
+- `--out-dir data/provider_verification` - choose a custom report directory
+- `--summary-only` - print only failed providers and suspicious result highlights
+- `--json-stdout` - print the full JSON payload to stdout
+- `--fail-on-alert` - return exit code `2` when provider or result alerts are detected
+
+The Windows wrapper scripts preserve the Python exit code, so `--fail-on-alert` can be used directly in scheduled tasks or CI.
+
+Each run writes both timestamped history files and fixed latest files:
+
+- `data/provider_verification/provider_verification_<timestamp>.json`
+- `data/provider_verification/provider_verification_<timestamp>.md`
+- `data/provider_verification/provider_verification_latest.json`
+- `data/provider_verification/provider_verification_latest.md`
 
 Optional: configure via `settings.json` (loaded automatically if present). Keys mirror the
 environment variables used in this README. You can override with real env vars.

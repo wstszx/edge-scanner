@@ -1,0 +1,87 @@
+name: Provider Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      sport:
+        description: Sport key to verify
+        required: false
+        default: basketball_nba
+      strict:
+        description: Fail the workflow when alerts are detected
+        required: false
+        type: boolean
+        default: false
+      skip_tests:
+        description: Skip the provider-focused pytest subset
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "30 1 * * *"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run provider verification
+        id: verify
+        shell: bash
+        run: |
+          set +e
+          SPORT="${{ github.event.inputs.sport || 'basketball_nba' }}"
+          STRICT="${{ github.event.inputs.strict || 'false' }}"
+          SKIP_TESTS="${{ github.event.inputs.skip_tests || 'false' }}"
+          ARGS=(--sport "$SPORT" --summary-only)
+          if [ "$STRICT" = "true" ]; then
+            ARGS+=(--fail-on-alert)
+          fi
+          if [ "$SKIP_TESTS" = "true" ]; then
+            ARGS+=(--skip-tests)
+          fi
+          python provider_verification.py "${ARGS[@]}"
+          EXIT_CODE=$?
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          echo "sport=$SPORT" >> "$GITHUB_OUTPUT"
+          echo "strict=$STRICT" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Publish Markdown summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f data/provider_verification/provider_verification_latest.md ]; then
+            cat data/provider_verification/provider_verification_latest.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Provider verification report was not generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload provider verification artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-verification-${{ steps.verify.outputs.sport }}
+          path: data/provider_verification/
+          if-no-files-found: warn
+
+      - name: Fail strict run on alerts
+        if: ${{ steps.verify.outputs.strict == 'true' && steps.verify.outputs.exit_code != '0' }}
+        shell: bash
+        run: |
+          echo "Provider verification detected alerts in strict mode."
+          exit 1

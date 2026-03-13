@@ -177,6 +177,121 @@ class ScannerRegressionTests(unittest.TestCase):
         stats = provider_sports[0].get("stats") or {}
         self.assertTrue(stats.get("network_retry_recovered"))
 
+    def test_scan_single_sport_snapshot_updates_keep_provider_payloads_isolated(self) -> None:
+        async def _bookmaker_fetcher(
+            sport_key: str,
+            markets: list[str],
+            regions: list[str],
+            bookmakers=None,
+        ):
+            _bookmaker_fetcher.last_stats = {"provider": "bookmaker_xyz", "sport_key": sport_key}
+            return [
+                {
+                    "id": "bookmaker-event",
+                    "sport_key": sport_key,
+                    "home_team": "Home Team",
+                    "away_team": "Away Team",
+                    "commence_time": "2026-03-13T00:00:00Z",
+                    "bookmakers": [
+                        {
+                            "key": "bookmaker_xyz",
+                            "title": "bookmaker.xyz",
+                            "markets": [
+                                {
+                                    "key": "h2h",
+                                    "outcomes": [
+                                        {"name": "Home Team", "price": 2.1},
+                                        {"name": "Away Team", "price": 1.8},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+
+        async def _sx_fetcher(
+            sport_key: str,
+            markets: list[str],
+            regions: list[str],
+            bookmakers=None,
+        ):
+            _sx_fetcher.last_stats = {"provider": "sx_bet", "sport_key": sport_key}
+            return [
+                {
+                    "id": "sx-event",
+                    "sport_key": sport_key,
+                    "home_team": "Home Team",
+                    "away_team": "Away Team",
+                    "commence_time": "2026-03-13T00:00:00Z",
+                    "bookmakers": [
+                        {
+                            "key": "sx_bet",
+                            "title": "SX Bet",
+                            "markets": [
+                                {
+                                    "key": "h2h",
+                                    "outcomes": [
+                                        {"name": "Home Team", "price": 2.2},
+                                        {"name": "Away Team", "price": 1.75},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+
+        _bookmaker_fetcher.last_stats = {}
+        _sx_fetcher.last_stats = {}
+
+        with (
+            patch.dict(
+                scanner.PROVIDER_FETCHERS,
+                {
+                    "bookmaker_xyz": _bookmaker_fetcher,
+                    "sx_bet": _sx_fetcher,
+                },
+            ),
+            patch.dict(
+                scanner.PROVIDER_TITLES,
+                {
+                    "bookmaker_xyz": "bookmaker.xyz",
+                    "sx_bet": "SX Bet",
+                },
+            ),
+        ):
+            result = asyncio.run(
+                scanner._scan_single_sport(
+                    sport={"key": "basketball_nba", "title": "NBA"},
+                    all_markets=False,
+                    should_fetch_api=False,
+                    api_pool=scanner.ApiKeyPool([]),
+                    normalized_regions=["us"],
+                    api_bookmakers=[],
+                    provider_target_sport_keys=["basketball_nba"],
+                    enabled_provider_keys=["bookmaker_xyz", "sx_bet"],
+                    normalized_bookmakers=["bookmaker_xyz", "sx_bet"],
+                    stake_amount=100.0,
+                    commission_rate=0.0,
+                    sharp_priority=scanner._sharp_priority("pinnacle"),
+                    min_edge_percent=0.0,
+                    bankroll=1000.0,
+                    kelly_fraction=0.25,
+                )
+            )
+
+        snapshot_updates = result.get("provider_snapshot_updates") or {}
+        bookmaker_events = snapshot_updates["bookmaker_xyz"]["events"]
+        sx_events = snapshot_updates["sx_bet"]["events"]
+
+        self.assertEqual(len(bookmaker_events), 1)
+        self.assertEqual(len(sx_events), 1)
+        self.assertEqual(len(bookmaker_events[0]["bookmakers"]), 1)
+        self.assertEqual(len(sx_events[0]["bookmakers"]), 1)
+        self.assertEqual(bookmaker_events[0]["bookmakers"][0]["key"], "bookmaker_xyz")
+        self.assertEqual(sx_events[0]["bookmakers"][0]["key"], "sx_bet")
+
     def test_collect_market_entries_accepts_three_way_h2h(self) -> None:
         game = {
             "sport_key": "soccer_epl",

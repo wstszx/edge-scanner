@@ -58,6 +58,7 @@ python app.py --port 5050
   - `settings.json`
   - `config.py`
   - `docs/project_docs/`
+- 自定义 Provider 的维护不能只看单元测试；每次相关改动后，都要执行官方文档对照和一次实时扫描抽检。
 - 若出现历史或请求日志膨胀，应优先检查：
   - `HISTORY_MAX_RECORDS`
   - `SCAN_SAVE_ENABLED`

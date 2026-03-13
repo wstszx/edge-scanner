@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import asyncio
+import copy
 import contextvars
 import datetime as dt
 import concurrent.futures
@@ -4549,7 +4550,8 @@ async def _scan_single_sport(
             )
             provider_snapshot_update["sports"].append(sport_snapshot)
             if provider_events:
-                provider_snapshot_update["events"].extend(provider_events)
+                # Keep raw provider snapshots isolated from later event merges.
+                provider_snapshot_update["events"].extend(copy.deepcopy(provider_events))
             if provider_key == PUREBET_BOOK_KEY:
                 purebet_update["sports"].append(
                     {

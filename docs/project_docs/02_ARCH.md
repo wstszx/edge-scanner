@@ -21,6 +21,7 @@
 | 历史与通知层 | `history.py`、`notifier.py` | 保存机会历史、输出统计、发送 Webhook/Telegram 通知 |
 | 前端展示层 | `templates/index.html`、`static/style.css` | 参数面板、结果展示、历史加载、诊断视图 |
 | 测试层 | `tests/` | 回归测试、数学逻辑测试、接口输入校验、Provider 解析测试 |
+| 验证文档层 | `docs/project_docs/` | 维护 Provider 核验流程、官方文档来源、结果检查标准 |
 
 ## 3. 目录结构
 
@@ -190,3 +191,10 @@ flowchart LR
 1. 首页访问与扫描请求会尝试预热后台 Provider 服务。
 2. 当前仅 `polymarket` 暴露实时运行时状态。
 3. `/provider-runtime/polymarket` 返回 `enabled`、`started`、`ready` 与 `status`。
+
+### 6.4 Provider 核验流程
+
+1. 先执行 Provider 单元/回归测试，确认解析和映射逻辑没有本地回归。
+2. 再执行 Provider-only 实时扫描，检查端点是否仍可用、返回是否仍符合实现假设。
+3. 如果出现空结果、字段变化、异常赔率、状态码异常或高比例错配，必须回到官方文档核对端点、参数、字段语义和限流要求。
+4. 最后抽查扫描输出的顶部机会，确认赛事、盘口、赔率来源、最大下注额和链接都合理。

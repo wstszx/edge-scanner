@@ -87,3 +87,14 @@
   - 返回与扫描器兼容的标准化事件结构
   - 在 `tests/` 中补 Provider 解析或分段测试
   - 更新本目录下 `ARCH`、`API Doc`、`TEST CASE` 与 `PROJECT SUMMARY`
+
+## 9. Provider 校验规范
+
+- 自定义 Provider 的在线接口核验必须优先参考官方文档。
+- 如果在线扫描出现以下任一情况，必须先核文档再改代码：
+  - HTTP 4xx / 5xx / 52x
+  - 响应字段缺失或类型漂移
+  - 盘口映射明显不对
+  - 扫描结果出现异常高 ROI 或明显错配赛事
+- `Dexsport.io`、`Sportbet.one` 这类镜像 / 代理 Provider，必须在文档和测试中明确区分“官方 API”与“代理上游”。
+- Provider 快照应保存该 Provider 的原始视图，不应被后续跨 Provider 合并结果污染。
