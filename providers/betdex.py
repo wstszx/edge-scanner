@@ -5,6 +5,7 @@ import datetime as dt
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -25,6 +26,7 @@ BETDEX_PUBLIC_BASE = os.getenv("BETDEX_PUBLIC_BASE", "https://www.betdex.com").s
 BETDEX_TIMEOUT_RAW = os.getenv("BETDEX_TIMEOUT_SECONDS", "20").strip()
 BETDEX_RETRIES_RAW = os.getenv("BETDEX_RETRIES", "2").strip()
 BETDEX_RETRY_BACKOFF_RAW = os.getenv("BETDEX_RETRY_BACKOFF", "0.5").strip()
+BETDEX_SESSION_CACHE_TTL_RAW = os.getenv("BETDEX_SESSION_CACHE_TTL_SECONDS", "900").strip()
 BETDEX_EVENTS_PAGE_SIZE_RAW = os.getenv("BETDEX_EVENTS_PAGE_SIZE", "250").strip()
 BETDEX_EVENTS_MAX_PAGES_RAW = os.getenv("BETDEX_EVENTS_MAX_PAGES", "8").strip()
 BETDEX_MARKETS_PAGE_SIZE_RAW = os.getenv("BETDEX_MARKETS_PAGE_SIZE", "500").strip()
@@ -78,6 +80,14 @@ class ProviderError(Exception):
         self.status_code = status_code
 
 
+ACCESS_TOKEN_CACHE: Dict[str, object] = {
+    "expires_at": 0.0,
+    "token": "",
+}
+ACCESS_TOKEN_CACHE_LOCK = threading.RLock()
+ACCESS_TOKEN_CACHE_ASYNC_LOCK: Optional[asyncio.Lock] = None
+
+
 def _int_or_default(value: str, default: int, min_value: int = 0) -> int:
     try:
         return max(min_value, int(float(value)))
@@ -90,6 +100,17 @@ def _float_or_default(value: str, default: float, min_value: float = 0.0) -> flo
         return max(min_value, float(value))
     except (TypeError, ValueError):
         return default
+
+
+def _session_cache_async_lock() -> asyncio.Lock:
+    global ACCESS_TOKEN_CACHE_ASYNC_LOCK
+    if ACCESS_TOKEN_CACHE_ASYNC_LOCK is None:
+        ACCESS_TOKEN_CACHE_ASYNC_LOCK = asyncio.Lock()
+    return ACCESS_TOKEN_CACHE_ASYNC_LOCK
+
+
+def _session_cache_ttl_seconds() -> float:
+    return _float_or_default(BETDEX_SESSION_CACHE_TTL_RAW, 900.0, min_value=0.0)
 
 
 def _safe_float(value) -> Optional[float]:
@@ -300,7 +321,44 @@ def _normalize_commence_time(value: object) -> Optional[str]:
         return None
 
 
-def _fetch_access_token(retries: int, backoff_seconds: float, timeout: int) -> Tuple[str, int]:
+def _extract_access_token(payload: object) -> str:
+    if not isinstance(payload, dict):
+        raise ProviderError("BetDEX session endpoint returned an invalid payload")
+    sessions = payload.get("sessions")
+    if not isinstance(sessions, list) or not sessions or not isinstance(sessions[0], dict):
+        raise ProviderError("BetDEX session endpoint returned no sessions")
+    token = _normalize_text(sessions[0].get("accessToken"))
+    if not token:
+        raise ProviderError("BetDEX session endpoint returned an empty access token")
+    return token
+
+
+def _cached_access_token() -> str:
+    with ACCESS_TOKEN_CACHE_LOCK:
+        token = _normalize_text(ACCESS_TOKEN_CACHE.get("token"))
+        expires_at = float(ACCESS_TOKEN_CACHE.get("expires_at", 0.0) or 0.0)
+    if token and time.time() < expires_at:
+        return token
+    return ""
+
+
+def _store_access_token(token: str) -> None:
+    ttl = _session_cache_ttl_seconds()
+    expires_at = time.time() + ttl if ttl > 0 else time.time()
+    with ACCESS_TOKEN_CACHE_LOCK:
+        ACCESS_TOKEN_CACHE["token"] = token
+        ACCESS_TOKEN_CACHE["expires_at"] = expires_at
+
+
+def _supports_sport(sport_key: str) -> bool:
+    key = _normalize_text(sport_key).lower()
+    return bool(SPORT_SUBCATEGORY_DEFAULTS.get(key) or SPORT_LEAGUE_HINTS.get(key))
+
+
+def _fetch_access_token(retries: int, backoff_seconds: float, timeout: int) -> Tuple[str, int, str]:
+    cached = _cached_access_token()
+    if cached:
+        return cached, 0, "hit"
     payload, retries_used = _request_json(
         _session_url(),
         params=None,
@@ -309,15 +367,9 @@ def _fetch_access_token(retries: int, backoff_seconds: float, timeout: int) -> T
         backoff_seconds=backoff_seconds,
         timeout=timeout,
     )
-    if not isinstance(payload, dict):
-        raise ProviderError("BetDEX session endpoint returned an invalid payload")
-    sessions = payload.get("sessions")
-    if not isinstance(sessions, list) or not sessions or not isinstance(sessions[0], dict):
-        raise ProviderError("BetDEX session endpoint returned no sessions")
-    token = _normalize_text(sessions[0].get("accessToken"))
-    if not token:
-        raise ProviderError("BetDEX session endpoint returned an empty access token")
-    return token, retries_used
+    token = _extract_access_token(payload)
+    _store_access_token(token)
+    return token, retries_used, "miss"
 
 
 async def _fetch_access_token_async(
@@ -325,25 +377,26 @@ async def _fetch_access_token_async(
     retries: int,
     backoff_seconds: float,
     timeout: int,
-) -> Tuple[str, int]:
-    payload, retries_used = await _request_json_async(
-        client,
-        _session_url(),
-        params=None,
-        access_token=None,
-        retries=retries,
-        backoff_seconds=backoff_seconds,
-        timeout=timeout,
-    )
-    if not isinstance(payload, dict):
-        raise ProviderError("BetDEX session endpoint returned an invalid payload")
-    sessions = payload.get("sessions")
-    if not isinstance(sessions, list) or not sessions or not isinstance(sessions[0], dict):
-        raise ProviderError("BetDEX session endpoint returned no sessions")
-    token = _normalize_text(sessions[0].get("accessToken"))
-    if not token:
-        raise ProviderError("BetDEX session endpoint returned an empty access token")
-    return token, retries_used
+) -> Tuple[str, int, str]:
+    cached = _cached_access_token()
+    if cached:
+        return cached, 0, "hit"
+    async with _session_cache_async_lock():
+        cached = _cached_access_token()
+        if cached:
+            return cached, 0, "hit"
+        payload, retries_used = await _request_json_async(
+            client,
+            _session_url(),
+            params=None,
+            access_token=None,
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+            timeout=timeout,
+        )
+        token = _extract_access_token(payload)
+        _store_access_token(token)
+        return token, retries_used, "miss"
 
 
 def _fetch_events_dataset(
@@ -1061,6 +1114,8 @@ async def fetch_events_async(
         "provider": PROVIDER_KEY,
         "source": BETDEX_SOURCE or "api",
         "back_price_side": _back_price_side(),
+        "session_cache": "miss",
+        "skipped_unsupported_sport": False,
         "events_payload_count": 0,
         "events_sport_filtered_count": 0,
         "markets_payload_count": 0,
@@ -1094,6 +1149,11 @@ async def fetch_events_async(
     if source != "api":
         raise ProviderError("BetDEX provider supports BETDEX_SOURCE=api or BETDEX_SOURCE=file")
 
+    if not _supports_sport(sport_key):
+        stats["skipped_unsupported_sport"] = True
+        _set_last_stats(stats)
+        return []
+
     retries = _int_or_default(BETDEX_RETRIES_RAW, 2, min_value=0)
     backoff = _float_or_default(BETDEX_RETRY_BACKOFF_RAW, 0.5, min_value=0.0)
     timeout = _int_or_default(BETDEX_TIMEOUT_RAW, 20, min_value=1)
@@ -1108,13 +1168,14 @@ async def fetch_events_async(
     expected_subcategories = SPORT_SUBCATEGORY_DEFAULTS.get(sport_key, ())
     league_hints = SPORT_LEAGUE_HINTS.get(sport_key, ())
     client = await get_shared_client(PROVIDER_KEY, timeout=float(timeout), follow_redirects=True)
-    token, retries_used = await _fetch_access_token_async(
+    token, retries_used, session_cache = await _fetch_access_token_async(
         client,
         retries=retries,
         backoff_seconds=backoff,
         timeout=timeout,
     )
     stats["retries_used"] += retries_used
+    stats["session_cache"] = session_cache
 
     events_dataset, events_meta = await _fetch_events_dataset_async(
         client=client,
@@ -1513,6 +1574,8 @@ fetch_events.last_stats = {
     "provider": PROVIDER_KEY,
     "source": BETDEX_SOURCE or "api",
     "back_price_side": _back_price_side(),
+    "session_cache": "miss",
+    "skipped_unsupported_sport": False,
     "events_payload_count": 0,
     "events_sport_filtered_count": 0,
     "markets_payload_count": 0,

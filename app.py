@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import atexit
 import argparse
+import copy
 import json
 import logging
 import os
 import re
 import socket
 import threading
+import time
 import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,6 +65,12 @@ from notifier import get_notifier  # noqa: E402
 app = Flask(__name__)
 _BACKGROUND_SERVICES_LOCK = threading.Lock()
 _BACKGROUND_SERVICES_STARTED = False
+_SERVER_AUTO_SCAN_LOCK = threading.Lock()
+_SERVER_AUTO_SCAN_THREAD: Optional[threading.Thread] = None
+_SERVER_AUTO_SCAN_STOP_EVENT = threading.Event()
+_SCAN_EXECUTION_LOCK = threading.Lock()
+_SERVER_AUTO_SCAN_CONFIG: Optional[dict] = None
+_SERVER_AUTO_SCAN_CONFIG_VERSION = 0
 
 
 @app.route("/favicon.ico")
@@ -144,6 +152,29 @@ if not ENV_API_KEYS:
     )
 
 ENV_ALL_MARKETS = _env_flag(os.getenv("ARBITRAGE_ALL_MARKETS"))
+ENV_PROVIDER_ONLY_MODE = _coerce_bool(
+    os.getenv("SCAN_CUSTOM_PROVIDERS_ONLY"),
+    default=True,
+)
+ENV_SERVER_AUTO_SCAN_ENABLED = _coerce_bool(
+    os.getenv("SERVER_AUTO_SCAN_ENABLED"),
+    default=True,
+)
+ENV_SERVER_AUTO_SCAN_RUN_ON_START = _coerce_bool(
+    os.getenv("SERVER_AUTO_SCAN_RUN_ON_START"),
+    default=True,
+)
+try:
+    ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES = max(
+        1,
+        int(float(os.getenv("SERVER_AUTO_SCAN_INTERVAL_MINUTES", str(DEFAULT_AUTO_SCAN_MINUTES)).strip())),
+    )
+except (TypeError, ValueError):
+    ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES = DEFAULT_AUTO_SCAN_MINUTES
+ENV_SERVER_AUTO_SCAN_CONFIG_PATH = os.getenv(
+    "SERVER_AUTO_SCAN_CONFIG_PATH",
+    str(Path("data") / "server_auto_scan_config.json"),
+).strip()
 ENV_SAVE_SCAN = _env_flag(os.getenv("SCAN_SAVE_ENABLED"))
 ENV_SAVE_DIR = os.getenv("SCAN_SAVE_DIR", str(Path("data") / "scans")).strip()
 ENV_PROVIDER_SNAPSHOT_DIR = os.getenv(
@@ -284,6 +315,528 @@ def _extract_opportunity_list(payload: object) -> list[dict]:
     return []
 
 
+def _server_auto_scan_payload() -> dict:
+    provider_keys = list(PROVIDER_FETCHERS.keys())
+    payload = {
+        "sports": list(DEFAULT_SPORT_KEYS),
+        "allSports": DEFAULT_ALL_SPORTS,
+        "allMarkets": ENV_ALL_MARKETS,
+        "stake": DEFAULT_STAKE_AMOUNT,
+        "regions": list(DEFAULT_REGION_KEYS),
+        "bookmakers": provider_keys if ENV_PROVIDER_ONLY_MODE else list(DEFAULT_BOOKMAKER_KEYS),
+        "commission": float(DEFAULT_COMMISSION * 100.0),
+        "sharpBook": DEFAULT_SHARP_BOOK,
+        "minEdgePercent": MIN_EDGE_PERCENT,
+        "bankroll": DEFAULT_BANKROLL,
+        "kellyFraction": DEFAULT_KELLY_FRACTION,
+    }
+    if ENV_PROVIDER_ONLY_MODE:
+        payload["includeProviders"] = provider_keys
+    return payload
+
+
+def _default_server_auto_scan_config() -> dict:
+    return {
+        "enabled": bool(ENV_SERVER_AUTO_SCAN_ENABLED),
+        "interval_minutes": int(ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES),
+        "payload": _server_auto_scan_payload(),
+    }
+
+
+def _server_auto_scan_config_summary(config: Optional[dict]) -> str:
+    if not isinstance(config, dict):
+        return "enabled=False config=missing"
+    payload = config.get("payload") if isinstance(config.get("payload"), dict) else {}
+    sports = payload.get("sports") if isinstance(payload.get("sports"), list) else []
+    bookmakers = payload.get("bookmakers") if isinstance(payload.get("bookmakers"), list) else []
+    include_providers = (
+        payload.get("includeProviders")
+        if isinstance(payload.get("includeProviders"), list)
+        else []
+    )
+    providers_label = ",".join(str(item) for item in include_providers[:6]) or "-"
+    return (
+        f"enabled={bool(config.get('enabled'))} "
+        f"interval={int(config.get('interval_minutes') or ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES)}m "
+        f"sports={len(sports)} bookmakers={len(bookmakers)} providers={providers_label}"
+    )
+
+
+def _server_auto_scan_config_path() -> Optional[Path]:
+    raw = str(ENV_SERVER_AUTO_SCAN_CONFIG_PATH or "").strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
+def _normalize_server_auto_scan_config(raw: object) -> Optional[dict]:
+    if not isinstance(raw, dict):
+        return None
+    scan_payload = raw.get("payload")
+    if not isinstance(scan_payload, dict):
+        scan_payload = raw
+
+    sports_raw = scan_payload.get("sports")
+    if isinstance(sports_raw, list):
+        sports = [str(item) for item in sports_raw if isinstance(item, str) and item.strip()]
+    else:
+        sports = list(DEFAULT_SPORT_KEYS)
+
+    regions_raw = scan_payload.get("regions")
+    if isinstance(regions_raw, list):
+        regions = [str(item) for item in regions_raw if isinstance(item, str) and item.strip()]
+    else:
+        regions = list(DEFAULT_REGION_KEYS)
+
+    bookmakers_raw = scan_payload.get("bookmakers")
+    if isinstance(bookmakers_raw, list):
+        bookmakers = [str(item) for item in bookmakers_raw if isinstance(item, str) and item.strip()]
+    else:
+        bookmakers = []
+
+    include_providers_raw = scan_payload.get("includeProviders")
+    if isinstance(include_providers_raw, list):
+        include_providers = [
+            str(item)
+            for item in include_providers_raw
+            if isinstance(item, str) and item.strip()
+        ]
+    else:
+        include_providers = []
+
+    try:
+        stake_value = (
+            float(scan_payload.get("stake"))
+            if scan_payload.get("stake") is not None
+            else DEFAULT_STAKE_AMOUNT
+        )
+    except (TypeError, ValueError):
+        stake_value = DEFAULT_STAKE_AMOUNT
+
+    try:
+        commission_value = (
+            float(scan_payload.get("commission"))
+            if scan_payload.get("commission") is not None
+            else float(DEFAULT_COMMISSION * 100.0)
+        )
+    except (TypeError, ValueError):
+        commission_value = float(DEFAULT_COMMISSION * 100.0)
+
+    try:
+        min_edge_percent = (
+            float(scan_payload.get("minEdgePercent"))
+            if scan_payload.get("minEdgePercent") is not None
+            else MIN_EDGE_PERCENT
+        )
+    except (TypeError, ValueError):
+        min_edge_percent = MIN_EDGE_PERCENT
+
+    try:
+        bankroll_value = (
+            float(scan_payload.get("bankroll"))
+            if scan_payload.get("bankroll") is not None
+            else DEFAULT_BANKROLL
+        )
+    except (TypeError, ValueError):
+        bankroll_value = DEFAULT_BANKROLL
+
+    try:
+        kelly_fraction = (
+            float(scan_payload.get("kellyFraction"))
+            if scan_payload.get("kellyFraction") is not None
+            else DEFAULT_KELLY_FRACTION
+        )
+    except (TypeError, ValueError):
+        kelly_fraction = DEFAULT_KELLY_FRACTION
+
+    try:
+        interval_minutes = (
+            int(float(raw.get("intervalMinutes")))
+            if raw.get("intervalMinutes") is not None
+            else ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES
+        )
+    except (TypeError, ValueError):
+        interval_minutes = ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES
+    interval_minutes = max(1, interval_minutes)
+
+    sharp_book_raw = scan_payload.get("sharpBook")
+    if isinstance(sharp_book_raw, str):
+        sharp_book = sharp_book_raw.strip().lower() or DEFAULT_SHARP_BOOK
+    else:
+        sharp_book = DEFAULT_SHARP_BOOK
+
+    return {
+        "enabled": _coerce_bool(raw.get("enabled"), default=ENV_SERVER_AUTO_SCAN_ENABLED),
+        "interval_minutes": interval_minutes,
+        "payload": {
+            "sports": sports,
+            "allSports": _coerce_bool(scan_payload.get("allSports"), default=DEFAULT_ALL_SPORTS),
+            "allMarkets": _coerce_bool(scan_payload.get("allMarkets"), default=ENV_ALL_MARKETS),
+            "stake": stake_value,
+            "regions": regions,
+            "bookmakers": bookmakers,
+            "includeProviders": include_providers,
+            "commission": commission_value,
+            "sharpBook": sharp_book,
+            "minEdgePercent": max(0.0, min_edge_percent),
+            "bankroll": max(0.0, bankroll_value),
+            "kellyFraction": max(0.0, min(kelly_fraction, 1.0)),
+        },
+    }
+
+
+def _persist_server_auto_scan_config(config: dict) -> None:
+    path = _server_auto_scan_config_path()
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(config, handle, ensure_ascii=False, indent=2)
+
+
+def _load_server_auto_scan_config() -> Optional[dict]:
+    path = _server_auto_scan_config_path()
+    if path is None or not path.is_file():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        logging.warning("Failed to load server auto scan config", exc_info=True)
+        return None
+    return _normalize_server_auto_scan_config(payload)
+
+
+def _set_server_auto_scan_config(config: Optional[dict], *, persist: bool = True) -> None:
+    global _SERVER_AUTO_SCAN_CONFIG
+    global _SERVER_AUTO_SCAN_CONFIG_VERSION
+    normalized = _normalize_server_auto_scan_config(config) if config is not None else None
+    with _SERVER_AUTO_SCAN_LOCK:
+        _SERVER_AUTO_SCAN_CONFIG = copy.deepcopy(normalized) if normalized is not None else None
+        _SERVER_AUTO_SCAN_CONFIG_VERSION += 1
+    if persist and normalized is not None:
+        try:
+            _persist_server_auto_scan_config(normalized)
+        except OSError:
+            logging.warning("Failed to persist server auto scan config", exc_info=True)
+    if normalized is None:
+        logging.info("Server auto scan config cleared")
+    else:
+        logging.info(
+            "Server auto scan config updated: %s",
+            _server_auto_scan_config_summary(normalized),
+        )
+
+
+def _get_server_auto_scan_config() -> tuple[Optional[dict], int]:
+    with _SERVER_AUTO_SCAN_LOCK:
+        config = copy.deepcopy(_SERVER_AUTO_SCAN_CONFIG)
+        version = int(_SERVER_AUTO_SCAN_CONFIG_VERSION)
+    return config, version
+
+
+def _execute_scan_payload(
+    payload: dict,
+    *,
+    save_scan_override: Optional[bool] = None,
+    background: bool = False,
+) -> dict:
+    if background:
+        acquired = _SCAN_EXECUTION_LOCK.acquire(blocking=False)
+        if not acquired:
+            return {
+                "success": False,
+                "error": "Scan already in progress",
+                "error_code": 409,
+            }
+    else:
+        _SCAN_EXECUTION_LOCK.acquire()
+    try:
+        _start_background_provider_services(wait_timeout=0.0)
+        api_keys = ENV_API_KEYS or _payload_api_keys(payload)
+        sports = payload.get("sports") or []
+        all_sports = _coerce_bool(payload.get("allSports"), default=DEFAULT_ALL_SPORTS)
+        all_markets = _coerce_bool(payload.get("allMarkets"), default=ENV_ALL_MARKETS)
+        stake = payload.get("stake")
+        regions = payload.get("regions")
+        bookmakers = payload.get("bookmakers")
+        commission = payload.get("commission")
+        include_purebet = (
+            _coerce_bool(payload.get("includePurebet"), default=False)
+            if "includePurebet" in payload
+            else None
+        )
+        include_providers_raw = payload.get("includeProviders")
+        sharp_book_raw = payload.get("sharpBook")
+        if isinstance(sharp_book_raw, str):
+            sharp_book = sharp_book_raw.strip().lower() or DEFAULT_SHARP_BOOK
+        else:
+            sharp_book = DEFAULT_SHARP_BOOK
+        try:
+            min_edge_percent = (
+                float(payload.get("minEdgePercent"))
+                if payload.get("minEdgePercent") is not None
+                else MIN_EDGE_PERCENT
+            )
+        except (TypeError, ValueError):
+            min_edge_percent = MIN_EDGE_PERCENT
+        min_edge_percent = max(0.0, min_edge_percent)
+        try:
+            bankroll_value = (
+                float(payload.get("bankroll"))
+                if payload.get("bankroll") is not None
+                else DEFAULT_BANKROLL
+            )
+        except (TypeError, ValueError):
+            bankroll_value = DEFAULT_BANKROLL
+        bankroll_value = max(0.0, bankroll_value)
+        try:
+            kelly_fraction = (
+                float(payload.get("kellyFraction"))
+                if payload.get("kellyFraction") is not None
+                else DEFAULT_KELLY_FRACTION
+            )
+        except (TypeError, ValueError):
+            kelly_fraction = DEFAULT_KELLY_FRACTION
+        kelly_fraction = max(0.0, min(kelly_fraction, 1.0))
+        try:
+            stake_value = float(stake) if stake is not None else DEFAULT_STAKE_AMOUNT
+        except (TypeError, ValueError):
+            stake_value = DEFAULT_STAKE_AMOUNT
+        if isinstance(regions, list):
+            regions_value = [str(region) for region in regions if isinstance(region, str)]
+        else:
+            regions_value = None
+        if isinstance(bookmakers, list):
+            bookmakers_value = [
+                str(book)
+                for book in bookmakers
+                if isinstance(book, str) and book.strip()
+            ]
+        else:
+            bookmakers_value = None
+        if isinstance(include_providers_raw, list):
+            include_providers_value = [
+                str(provider)
+                for provider in include_providers_raw
+                if isinstance(provider, str) and provider.strip()
+            ]
+        elif isinstance(include_providers_raw, str):
+            include_providers_value = [
+                item.strip()
+                for item in re.split(r"[,\s]+", include_providers_raw)
+                if item.strip()
+            ]
+        else:
+            include_providers_value = None
+        if (include_providers_value is None or not include_providers_value) and bookmakers_value:
+            derived = []
+            seen = set()
+            for book in bookmakers_value:
+                provider_key = resolve_provider_key(book)
+                if provider_key and provider_key not in seen:
+                    derived.append(provider_key)
+                    seen.add(provider_key)
+            include_providers_value = derived
+        if ENV_PROVIDER_ONLY_MODE:
+            api_keys = []
+            provider_bookmakers = []
+            seen_provider_books = set()
+            for book in bookmakers_value or []:
+                provider_key = resolve_provider_key(book)
+                if not provider_key or provider_key in seen_provider_books:
+                    continue
+                provider_bookmakers.append(provider_key)
+                seen_provider_books.add(provider_key)
+            bookmakers_value = provider_bookmakers or None
+
+            normalized_providers = []
+            seen_providers = set()
+            for provider in include_providers_value or []:
+                provider_key = resolve_provider_key(provider)
+                if not provider_key or provider_key in seen_providers:
+                    continue
+                normalized_providers.append(provider_key)
+                seen_providers.add(provider_key)
+            include_providers_value = (
+                normalized_providers
+                or provider_bookmakers
+                or list(PROVIDER_FETCHERS.keys())
+            )
+        try:
+            commission_percent = float(commission) if commission is not None else None
+        except (TypeError, ValueError):
+            commission_percent = None
+        commission_rate = (
+            commission_percent / 100.0
+            if commission_percent is not None
+            else DEFAULT_COMMISSION
+        )
+        result = run_scan(
+            api_key=api_keys,
+            sports=sports,
+            all_sports=all_sports,
+            all_markets=all_markets,
+            stake_amount=stake_value,
+            regions=regions_value or DEFAULT_REGION_KEYS,
+            bookmakers=bookmakers_value,
+            commission_rate=commission_rate,
+            sharp_book=sharp_book,
+            min_edge_percent=min_edge_percent,
+            bankroll=bankroll_value,
+            kelly_fraction=kelly_fraction,
+            include_purebet=include_purebet,
+            include_providers=include_providers_value,
+        )
+        if result.get("success"):
+            scan_time = result.get("scan_time", "")
+            arbitrage_items = _extract_opportunity_list(result.get("arbitrage"))
+            if not arbitrage_items:
+                arbitrage_items = _extract_opportunity_list(result.get("opportunities"))
+            middle_items = _extract_opportunity_list(result.get("middles"))
+            plus_ev_items = _extract_opportunity_list(result.get("plus_ev"))
+            try:
+                get_history_manager().save_opportunities(
+                    {
+                        "opportunities": arbitrage_items,
+                        "middles": middle_items,
+                        "plus_ev": plus_ev_items,
+                    },
+                    scan_time=scan_time,
+                )
+            except Exception:
+                logging.warning("Failed to save scan history", exc_info=True)
+            notifier = get_notifier()
+            if notifier.is_configured:
+                def _notify():
+                    try:
+                        notifier.notify_opportunities(
+                            arb_list=arbitrage_items,
+                            middle_list=middle_items,
+                            ev_list=plus_ev_items,
+                            scan_time=scan_time,
+                        )
+                    except Exception:
+                        logging.warning("Failed to send notifications", exc_info=True)
+                threading.Thread(target=_notify, daemon=True).start()
+        should_save_scan = (
+            _should_save_scan(payload)
+            if save_scan_override is None
+            else bool(save_scan_override)
+        )
+        if should_save_scan:
+            saved_path = _save_scan_payload(payload, result)
+            if saved_path:
+                result["scan_saved_path"] = saved_path
+            else:
+                result["scan_save_error"] = "Failed to save scan payload"
+        return result
+    finally:
+        _SCAN_EXECUTION_LOCK.release()
+
+
+def _server_auto_scan_loop() -> None:
+    next_run_at: Optional[float] = None
+    last_config_version = -1
+    last_enabled = False
+    while not _SERVER_AUTO_SCAN_STOP_EVENT.is_set():
+        config, config_version = _get_server_auto_scan_config()
+        current_enabled = bool(config and config.get("enabled"))
+        if config_version != last_config_version:
+            last_config_version = config_version
+            if current_enabled:
+                interval_seconds = max(
+                    60.0,
+                    float(config.get("interval_minutes") or ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES) * 60.0,
+                )
+                if not last_enabled:
+                    next_run_at = time.time() if ENV_SERVER_AUTO_SCAN_RUN_ON_START else time.time() + interval_seconds
+                elif next_run_at is None:
+                    next_run_at = time.time() + interval_seconds
+                else:
+                    next_run_at = min(next_run_at, time.time() + interval_seconds)
+                logging.info(
+                    "Server auto scan scheduled: %s",
+                    _server_auto_scan_config_summary(config),
+                )
+            else:
+                next_run_at = None
+                logging.info("Server auto scan idle: no enabled config")
+        last_enabled = current_enabled
+        if not current_enabled:
+            if _SERVER_AUTO_SCAN_STOP_EVENT.wait(1.0):
+                break
+            continue
+        interval_seconds = max(
+            60.0,
+            float(config.get("interval_minutes") or ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES) * 60.0,
+        )
+        if next_run_at is None:
+            next_run_at = time.time() if ENV_SERVER_AUTO_SCAN_RUN_ON_START else time.time() + interval_seconds
+        now = time.time()
+        if now >= next_run_at:
+            try:
+                logging.info(
+                    "Server auto scan starting: %s",
+                    _server_auto_scan_config_summary(config),
+                )
+                result = _execute_scan_payload(
+                    config.get("payload") or {},
+                    background=True,
+                    save_scan_override=False,
+                )
+            except Exception:
+                logging.exception("Server auto scan crashed")
+                next_run_at = time.time() + interval_seconds
+                continue
+            if result.get("success"):
+                logging.info(
+                    "Server auto scan completed at %s",
+                    result.get("scan_time", ""),
+                )
+            else:
+                logging.warning(
+                    "Server auto scan did not complete: %s",
+                    result.get("error", "unknown error"),
+                )
+            next_run_at = time.time() + interval_seconds
+            continue
+        wait_seconds = min(1.0, max(0.1, next_run_at - now))
+        if _SERVER_AUTO_SCAN_STOP_EVENT.wait(wait_seconds):
+            break
+
+
+def _start_server_auto_scan() -> None:
+    global _SERVER_AUTO_SCAN_THREAD
+    if not ENV_SERVER_AUTO_SCAN_ENABLED:
+        return
+    with _SERVER_AUTO_SCAN_LOCK:
+        if _SERVER_AUTO_SCAN_THREAD and _SERVER_AUTO_SCAN_THREAD.is_alive():
+            return
+        _SERVER_AUTO_SCAN_STOP_EVENT.clear()
+        _SERVER_AUTO_SCAN_THREAD = threading.Thread(
+            target=_server_auto_scan_loop,
+            name="server-auto-scan",
+            daemon=True,
+        )
+        _SERVER_AUTO_SCAN_THREAD.start()
+    logging.info("Server auto scan thread started")
+
+
+def _stop_server_auto_scan() -> None:
+    global _SERVER_AUTO_SCAN_THREAD
+    with _SERVER_AUTO_SCAN_LOCK:
+        _SERVER_AUTO_SCAN_STOP_EVENT.set()
+        thread = _SERVER_AUTO_SCAN_THREAD
+        _SERVER_AUTO_SCAN_THREAD = None
+    if thread and thread.is_alive():
+        thread.join(timeout=2.0)
+    logging.info("Server auto scan thread stopped")
+
+
+atexit.register(_stop_server_auto_scan)
+
+
 @app.route("/")
 def index() -> str:
     _start_background_provider_services(wait_timeout=0.0)
@@ -319,6 +872,7 @@ def index() -> str:
         default_language=DEFAULT_LANGUAGE,
         default_all_sports=DEFAULT_ALL_SPORTS,
         default_all_markets=ENV_ALL_MARKETS,
+        provider_only_mode=ENV_PROVIDER_ONLY_MODE,
         kelly_options=KELLY_OPTIONS,
         bookmaker_links=BOOKMAKER_URLS,
         custom_provider_keys=list(PROVIDER_FETCHERS.keys()),
@@ -327,7 +881,6 @@ def index() -> str:
 
 @app.route("/scan", methods=["POST"])
 def scan() -> tuple:
-    _start_background_provider_services(wait_timeout=0.0)
     raw_body = request.get_data(cache=True, as_text=False)
     if raw_body:
         try:
@@ -358,145 +911,49 @@ def scan() -> tuple:
             ),
             400,
         )
-    api_keys = ENV_API_KEYS or _payload_api_keys(payload)
-    sports = payload.get("sports") or []
-    all_sports = _coerce_bool(payload.get("allSports"), default=DEFAULT_ALL_SPORTS)
-    all_markets = _coerce_bool(payload.get("allMarkets"), default=ENV_ALL_MARKETS)
-    stake = payload.get("stake")
-    regions = payload.get("regions")
-    bookmakers = payload.get("bookmakers")
-    commission = payload.get("commission")
-    include_purebet = (
-        _coerce_bool(payload.get("includePurebet"), default=False)
-        if "includePurebet" in payload
-        else None
-    )
-    include_providers_raw = payload.get("includeProviders")
-    sharp_book_raw = payload.get("sharpBook")
-    if isinstance(sharp_book_raw, str):
-        sharp_book = sharp_book_raw.strip().lower() or DEFAULT_SHARP_BOOK
-    else:
-        sharp_book = DEFAULT_SHARP_BOOK
-    try:
-        min_edge_percent = (
-            float(payload.get("minEdgePercent")) if payload.get("minEdgePercent") is not None else MIN_EDGE_PERCENT
-        )
-    except (TypeError, ValueError):
-        min_edge_percent = MIN_EDGE_PERCENT
-    min_edge_percent = max(0.0, min_edge_percent)
-    try:
-        bankroll_value = float(payload.get("bankroll")) if payload.get("bankroll") is not None else DEFAULT_BANKROLL
-    except (TypeError, ValueError):
-        bankroll_value = DEFAULT_BANKROLL
-    bankroll_value = max(0.0, bankroll_value)
-    try:
-        kelly_fraction = (
-            float(payload.get("kellyFraction"))
-            if payload.get("kellyFraction") is not None
-            else DEFAULT_KELLY_FRACTION
-        )
-    except (TypeError, ValueError):
-        kelly_fraction = DEFAULT_KELLY_FRACTION
-    kelly_fraction = max(0.0, min(kelly_fraction, 1.0))
-    try:
-        stake_value = float(stake) if stake is not None else DEFAULT_STAKE_AMOUNT
-    except (TypeError, ValueError):
-        stake_value = DEFAULT_STAKE_AMOUNT
-    if isinstance(regions, list):
-        regions_value = [str(region) for region in regions if isinstance(region, str)]
-    else:
-        regions_value = None
-    if isinstance(bookmakers, list):
-        bookmakers_value = [str(book) for book in bookmakers if isinstance(book, str) and book.strip()]
-    else:
-        bookmakers_value = None
-    if isinstance(include_providers_raw, list):
-        include_providers_value = [
-            str(provider)
-            for provider in include_providers_raw
-            if isinstance(provider, str) and provider.strip()
-        ]
-    elif isinstance(include_providers_raw, str):
-        include_providers_value = [
-            item.strip()
-            for item in re.split(r"[,\s]+", include_providers_raw)
-            if item.strip()
-        ]
-    else:
-        include_providers_value = None
-    if (include_providers_value is None or not include_providers_value) and bookmakers_value:
-        derived = []
-        seen = set()
-        for book in bookmakers_value:
-            provider_key = resolve_provider_key(book)
-            if provider_key and provider_key not in seen:
-                derived.append(provider_key)
-                seen.add(provider_key)
-        include_providers_value = derived
-    try:
-        commission_percent = float(commission) if commission is not None else None
-    except (TypeError, ValueError):
-        commission_percent = None
-    commission_rate = (
-        commission_percent / 100.0 if commission_percent is not None else DEFAULT_COMMISSION
-    )
-    result = run_scan(
-        api_key=api_keys,
-        sports=sports,
-        all_sports=all_sports,
-        all_markets=all_markets,
-        stake_amount=stake_value,
-        regions=regions_value or DEFAULT_REGION_KEYS,
-        bookmakers=bookmakers_value,
-        commission_rate=commission_rate,
-        sharp_book=sharp_book,
-        min_edge_percent=min_edge_percent,
-        bankroll=bankroll_value,
-        kelly_fraction=kelly_fraction,
-        include_purebet=include_purebet,
-        include_providers=include_providers_value,
-    )
-    if result.get("success"):
-        scan_time = result.get("scan_time", "")
-        arbitrage_items = _extract_opportunity_list(result.get("arbitrage"))
-        if not arbitrage_items:
-            arbitrage_items = _extract_opportunity_list(result.get("opportunities"))
-        middle_items = _extract_opportunity_list(result.get("middles"))
-        plus_ev_items = _extract_opportunity_list(result.get("plus_ev"))
-        # Persist history (non-blocking)
-        try:
-            get_history_manager().save_opportunities(
-                {
-                    "opportunities": arbitrage_items,
-                    "middles": middle_items,
-                    "plus_ev": plus_ev_items,
-                },
-                scan_time=scan_time,
-            )
-        except Exception:
-            logging.warning("Failed to save scan history", exc_info=True)
-        # Send notifications in background thread (non-blocking)
-        notifier = get_notifier()
-        if notifier.is_configured:
-            def _notify():
-                try:
-                    notifier.notify_opportunities(
-                        arb_list=arbitrage_items,
-                        middle_list=middle_items,
-                        ev_list=plus_ev_items,
-                        scan_time=scan_time,
-                    )
-                except Exception:
-                    logging.warning("Failed to send notifications", exc_info=True)
-            threading.Thread(target=_notify, daemon=True).start()
-    if _should_save_scan(payload):
-        saved_path = _save_scan_payload(payload, result)
-        if saved_path:
-            result["scan_saved_path"] = saved_path
-        else:
-            result["scan_save_error"] = "Failed to save scan payload"
+    result = _execute_scan_payload(payload)
     status = 200 if result.get("success") else result.get("error_code", 500)
     return jsonify(result), status
+
+
+@app.route("/server-auto-scan-config", methods=["GET", "POST"])
+def server_auto_scan_config() -> tuple:
+    if request.method == "GET":
+        config, _ = _get_server_auto_scan_config()
+        return jsonify({"success": True, "config": config}), 200
+
+    raw_body = request.get_data(cache=True, as_text=False)
+    if raw_body:
+        try:
+            payload = request.get_json(force=True, silent=False)
+        except BadRequest:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "Invalid JSON payload",
+                        "error_code": 400,
+                    }
+                ),
+                400,
+            )
+    else:
+        payload = {}
+    normalized = _normalize_server_auto_scan_config(payload)
+    if normalized is None:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "Auto scan config payload must be a JSON object",
+                    "error_code": 400,
+                }
+            ),
+            400,
+        )
+    _set_server_auto_scan_config(normalized, persist=True)
+    config, _ = _get_server_auto_scan_config()
+    return jsonify({"success": True, "config": config}), 200
 
 
 @app.route("/history", methods=["GET"])
@@ -648,7 +1105,24 @@ def main() -> None:
     args = parser.parse_args()
 
     ensure_data_dir()
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(message)s",
+        )
+    else:
+        logging.getLogger().setLevel(logging.INFO)
+    loaded_auto_scan_config = _load_server_auto_scan_config()
+    persist_startup_config = loaded_auto_scan_config is None
+    if loaded_auto_scan_config is None:
+        loaded_auto_scan_config = _default_server_auto_scan_config()
+        logging.info("No persisted server auto scan config found; using default startup config")
+    _set_server_auto_scan_config(
+        loaded_auto_scan_config,
+        persist=persist_startup_config,
+    )
     _start_background_provider_services()
+    _start_server_auto_scan()
     port = _choose_port(args.port)
     if port > 0:
         timer = threading.Timer(1.0, open_browser, args=(port,))
@@ -658,6 +1132,7 @@ def main() -> None:
     try:
         app.run(port=port or 0, debug=False)
     finally:
+        _stop_server_auto_scan()
         _stop_background_provider_services()
         if timer:
             timer.cancel()

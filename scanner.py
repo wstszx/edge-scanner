@@ -9,6 +9,7 @@ import contextvars
 import datetime as dt
 import concurrent.futures
 import difflib
+import importlib
 import inspect
 import itertools
 import json
@@ -1078,15 +1079,21 @@ def _attach_request_log_info(result: dict, logger: _ScanRequestLogger) -> dict:
 
 def _activate_provider_scan_caches(enabled_provider_keys: Sequence[str]) -> List[object]:
     active_cache_modules: List[object] = []
-    provider_set = set(enabled_provider_keys or [])
-    if "bookmaker_xyz" in provider_set:
+    seen = set()
+    for provider_key in enabled_provider_keys or []:
+        normalized_key = str(provider_key).strip().lower()
+        if not normalized_key or normalized_key in seen:
+            continue
+        seen.add(normalized_key)
         try:
-            from providers import bookmaker_xyz
-
-            bookmaker_xyz.enable_scan_cache()
-            active_cache_modules.append(bookmaker_xyz)
+            module = importlib.import_module(f"providers.{normalized_key}")
+            enable = getattr(module, "enable_scan_cache", None)
+            if not callable(enable):
+                continue
+            enable()
+            active_cache_modules.append(module)
         except Exception:
-            pass
+            continue
     return active_cache_modules
 
 

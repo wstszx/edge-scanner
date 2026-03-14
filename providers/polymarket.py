@@ -34,6 +34,10 @@ POLYMARKET_EVENTS_CACHE_TTL_RAW = os.getenv("POLYMARKET_EVENTS_CACHE_TTL", "12")
 POLYMARKET_CLOB_BOOK_CACHE_TTL_RAW = os.getenv("POLYMARKET_CLOB_BOOK_CACHE_TTL", "4").strip()
 POLYMARKET_CLOB_MAX_BOOKS_RAW = os.getenv("POLYMARKET_CLOB_MAX_BOOKS", "300").strip()
 POLYMARKET_CLOB_BOOK_WORKERS_RAW = os.getenv("POLYMARKET_CLOB_BOOK_WORKERS", "8").strip()
+POLYMARKET_HTTP_CLOB_DEPTH_ENABLED = os.getenv(
+    "POLYMARKET_HTTP_CLOB_DEPTH_ENABLED",
+    "0",
+).strip().lower() not in {"0", "false", "no", "off"}
 POLYMARKET_USER_AGENT = os.getenv(
     "POLYMARKET_USER_AGENT",
     (
@@ -127,8 +131,16 @@ CLOB_BOOK_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
     "entries": {},
 }
+SCAN_CACHE_CONTEXT: Dict[str, object] = {
+    "active": False,
+    "events": None,
+    "events_meta": {},
+    "clob_entries": {},
+}
+SCAN_CACHE_LOCK = threading.RLock()
 SPORT_TAG_CACHE_ASYNC_LOCK: Optional[asyncio.Lock] = None
 EVENTS_CACHE_ASYNC_LOCK: Optional[asyncio.Lock] = None
+SCAN_CACHE_ASYNC_LOCK: Optional[asyncio.Lock] = None
 REALTIME_MANAGER: Optional["PolymarketRealtimeManager"] = None
 REALTIME_MANAGER_LOCK = threading.Lock()
 
@@ -170,6 +182,29 @@ def _events_cache_async_lock() -> asyncio.Lock:
     return EVENTS_CACHE_ASYNC_LOCK
 
 
+def _scan_cache_async_lock() -> asyncio.Lock:
+    global SCAN_CACHE_ASYNC_LOCK
+    if SCAN_CACHE_ASYNC_LOCK is None:
+        SCAN_CACHE_ASYNC_LOCK = asyncio.Lock()
+    return SCAN_CACHE_ASYNC_LOCK
+
+
+def enable_scan_cache() -> None:
+    with SCAN_CACHE_LOCK:
+        SCAN_CACHE_CONTEXT["active"] = True
+        SCAN_CACHE_CONTEXT["events"] = None
+        SCAN_CACHE_CONTEXT["events_meta"] = {}
+        SCAN_CACHE_CONTEXT["clob_entries"] = {}
+
+
+def disable_scan_cache() -> None:
+    with SCAN_CACHE_LOCK:
+        SCAN_CACHE_CONTEXT["active"] = False
+        SCAN_CACHE_CONTEXT["events"] = None
+        SCAN_CACHE_CONTEXT["events_meta"] = {}
+        SCAN_CACHE_CONTEXT["clob_entries"] = {}
+
+
 def _websocket_realtime_enabled() -> bool:
     return bool(POLYMARKET_WS_ENABLED) and (
         bool(POLYMARKET_MARKET_WS_ENABLED) or bool(POLYMARKET_SPORTS_WS_ENABLED)
@@ -196,6 +231,15 @@ def _float_or_default(value: str, default: float, min_value: float = 0.0) -> flo
         return max(min_value, float(value))
     except (TypeError, ValueError):
         return default
+
+
+def _http_clob_depth_enabled() -> bool:
+    return bool(POLYMARKET_HTTP_CLOB_DEPTH_ENABLED)
+
+
+def _scan_cache_active() -> bool:
+    with SCAN_CACHE_LOCK:
+        return bool(SCAN_CACHE_CONTEXT.get("active"))
 
 
 def _ws_warmup_seconds() -> float:
@@ -1820,11 +1864,23 @@ def _load_clob_depth_map(
     now = time.time()
     cache_valid = ttl > 0 and now < float(CLOB_BOOK_CACHE.get("expires_at", 0.0))
     cache_entries = CLOB_BOOK_CACHE.get("entries") if isinstance(CLOB_BOOK_CACHE.get("entries"), dict) else {}
+    scan_cache_entries: Dict[str, object] = {}
+    if _scan_cache_active():
+        with SCAN_CACHE_LOCK:
+            cached_scan_entries = SCAN_CACHE_CONTEXT.get("clob_entries")
+            if isinstance(cached_scan_entries, dict):
+                scan_cache_entries = cached_scan_entries
+            else:
+                scan_cache_entries = {}
+                SCAN_CACHE_CONTEXT["clob_entries"] = scan_cache_entries
 
     depth_by_token: Dict[str, Optional[float]] = {}
     unresolved: List[str] = []
     for token_id in unique_token_ids:
-        if cache_valid and token_id in cache_entries:
+        if token_id in scan_cache_entries:
+            depth = _safe_float(scan_cache_entries.get(token_id))
+            depth_by_token[token_id] = round(float(depth), 6) if depth is not None and depth > 0 else None
+        elif cache_valid and token_id in cache_entries:
             depth = _safe_float(cache_entries.get(token_id))
             depth_by_token[token_id] = round(float(depth), 6) if depth is not None and depth > 0 else None
         else:
@@ -1856,11 +1912,13 @@ def _load_clob_depth_map(
                 if had_error:
                     depth_by_token[resolved_token_id] = None
                     cache_entries[resolved_token_id] = None
+                    scan_cache_entries[resolved_token_id] = None
                     book_errors += 1
                     continue
                 books_fetched += 1
                 depth_by_token[resolved_token_id] = depth
                 cache_entries[resolved_token_id] = depth
+                scan_cache_entries[resolved_token_id] = depth
         else:
             with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
                 futures = [executor.submit(_fetch_single_book, token_id) for token_id in unresolved]
@@ -1870,14 +1928,19 @@ def _load_clob_depth_map(
                     if had_error:
                         depth_by_token[resolved_token_id] = None
                         cache_entries[resolved_token_id] = None
+                        scan_cache_entries[resolved_token_id] = None
                         book_errors += 1
                         continue
                     books_fetched += 1
                     depth_by_token[resolved_token_id] = depth
                     cache_entries[resolved_token_id] = depth
+                    scan_cache_entries[resolved_token_id] = depth
 
     CLOB_BOOK_CACHE["entries"] = cache_entries
     CLOB_BOOK_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+    if _scan_cache_active():
+        with SCAN_CACHE_LOCK:
+            SCAN_CACHE_CONTEXT["clob_entries"] = scan_cache_entries
 
     books_with_depth = sum(
         1
@@ -1914,11 +1977,23 @@ async def _load_clob_depth_map_async(
     now = time.time()
     cache_valid = ttl > 0 and now < float(CLOB_BOOK_CACHE.get("expires_at", 0.0))
     cache_entries = CLOB_BOOK_CACHE.get("entries") if isinstance(CLOB_BOOK_CACHE.get("entries"), dict) else {}
+    scan_cache_entries: Dict[str, object] = {}
+    if _scan_cache_active():
+        with SCAN_CACHE_LOCK:
+            cached_scan_entries = SCAN_CACHE_CONTEXT.get("clob_entries")
+            if isinstance(cached_scan_entries, dict):
+                scan_cache_entries = cached_scan_entries
+            else:
+                scan_cache_entries = {}
+                SCAN_CACHE_CONTEXT["clob_entries"] = scan_cache_entries
 
     depth_by_token: Dict[str, Optional[float]] = {}
     unresolved: List[str] = []
     for token_id in unique_token_ids:
-        if cache_valid and token_id in cache_entries:
+        if token_id in scan_cache_entries:
+            depth = _safe_float(scan_cache_entries.get(token_id))
+            depth_by_token[token_id] = round(float(depth), 6) if depth is not None and depth > 0 else None
+        elif cache_valid and token_id in cache_entries:
             depth = _safe_float(cache_entries.get(token_id))
             depth_by_token[token_id] = round(float(depth), 6) if depth is not None and depth > 0 else None
         else:
@@ -1951,11 +2026,13 @@ async def _load_clob_depth_map_async(
                 if had_error:
                     depth_by_token[resolved_token_id] = None
                     cache_entries[resolved_token_id] = None
+                    scan_cache_entries[resolved_token_id] = None
                     book_errors += 1
                     continue
                 books_fetched += 1
                 depth_by_token[resolved_token_id] = depth
                 cache_entries[resolved_token_id] = depth
+                scan_cache_entries[resolved_token_id] = depth
         else:
             semaphore = asyncio.Semaphore(worker_count)
 
@@ -1970,14 +2047,19 @@ async def _load_clob_depth_map_async(
                 if had_error:
                     depth_by_token[resolved_token_id] = None
                     cache_entries[resolved_token_id] = None
+                    scan_cache_entries[resolved_token_id] = None
                     book_errors += 1
                     continue
                 books_fetched += 1
                 depth_by_token[resolved_token_id] = depth
                 cache_entries[resolved_token_id] = depth
+                scan_cache_entries[resolved_token_id] = depth
 
     CLOB_BOOK_CACHE["entries"] = cache_entries
     CLOB_BOOK_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+    if _scan_cache_active():
+        with SCAN_CACHE_LOCK:
+            SCAN_CACHE_CONTEXT["clob_entries"] = scan_cache_entries
 
     books_with_depth = sum(
         1
@@ -2205,6 +2287,12 @@ def _load_active_game_events(
     page_size: int,
     max_pages: int,
 ) -> Tuple[List[dict], dict]:
+    if _scan_cache_active():
+        with SCAN_CACHE_LOCK:
+            cached_events = SCAN_CACHE_CONTEXT.get("events")
+            cached_meta = dict(SCAN_CACHE_CONTEXT.get("events_meta") or {})
+        if isinstance(cached_events, list):
+            return cached_events, {**cached_meta, "pages_fetched": 0, "retries_used": 0, "cache": "scan_hit"}
     ttl = _int_or_default(POLYMARKET_EVENTS_CACHE_TTL_RAW, 12, min_value=0)
     now = time.time()
     cache_valid = ttl > 0 and now < float(EVENTS_CACHE.get("expires_at", 0.0))
@@ -2247,7 +2335,12 @@ def _load_active_game_events(
 
     EVENTS_CACHE["expires_at"] = now + ttl if ttl > 0 else now
     EVENTS_CACHE["events"] = all_events
-    return all_events, {"pages_fetched": pages_fetched, "retries_used": total_retries, "cache": "miss"}
+    meta = {"pages_fetched": pages_fetched, "retries_used": total_retries, "cache": "miss"}
+    if _scan_cache_active():
+        with SCAN_CACHE_LOCK:
+            SCAN_CACHE_CONTEXT["events"] = list(all_events)
+            SCAN_CACHE_CONTEXT["events_meta"] = dict(meta)
+    return all_events, meta
 
 
 async def _load_active_game_events_async(
@@ -2257,6 +2350,12 @@ async def _load_active_game_events_async(
     page_size: int,
     max_pages: int,
 ) -> Tuple[List[dict], dict]:
+    if _scan_cache_active():
+        with SCAN_CACHE_LOCK:
+            cached_events = SCAN_CACHE_CONTEXT.get("events")
+            cached_meta = dict(SCAN_CACHE_CONTEXT.get("events_meta") or {})
+        if isinstance(cached_events, list):
+            return cached_events, {**cached_meta, "pages_fetched": 0, "retries_used": 0, "cache": "scan_hit"}
     ttl = _int_or_default(POLYMARKET_EVENTS_CACHE_TTL_RAW, 12, min_value=0)
     now = time.time()
     cache_valid = ttl > 0 and now < float(EVENTS_CACHE.get("expires_at", 0.0))
@@ -2264,6 +2363,13 @@ async def _load_active_game_events_async(
     if cache_valid and isinstance(cached_events, list):
         return cached_events, {"pages_fetched": 0, "retries_used": 0, "cache": "hit"}
 
+    async with _scan_cache_async_lock():
+        if _scan_cache_active():
+            with SCAN_CACHE_LOCK:
+                cached_events = SCAN_CACHE_CONTEXT.get("events")
+                cached_meta = dict(SCAN_CACHE_CONTEXT.get("events_meta") or {})
+            if isinstance(cached_events, list):
+                return cached_events, {**cached_meta, "pages_fetched": 0, "retries_used": 0, "cache": "scan_hit"}
     async with _events_cache_async_lock():
         now = time.time()
         cache_valid = ttl > 0 and now < float(EVENTS_CACHE.get("expires_at", 0.0))
@@ -2307,11 +2413,16 @@ async def _load_active_game_events_async(
 
         EVENTS_CACHE["expires_at"] = now + ttl if ttl > 0 else now
         EVENTS_CACHE["events"] = all_events
-        return all_events, {
+        meta = {
             "pages_fetched": pages_fetched,
             "retries_used": total_retries,
             "cache": "miss",
         }
+        if _scan_cache_active():
+            with SCAN_CACHE_LOCK:
+                SCAN_CACHE_CONTEXT["events"] = list(all_events)
+                SCAN_CACHE_CONTEXT["events_meta"] = dict(meta)
+        return all_events, meta
 
 
 def _set_last_stats(stats: dict) -> None:
@@ -2329,6 +2440,7 @@ async def fetch_events_async(
     stats = {
         "provider": PROVIDER_KEY,
         "source": POLYMARKET_SOURCE or "api",
+        "skipped_unsupported_sport": False,
         "events_payload_count": 0,
         "events_sports_count": 0,
         "events_sport_filtered_count": 0,
@@ -2339,6 +2451,8 @@ async def fetch_events_async(
         "clob_tokens_requested": 0,
         "clob_tokens_considered": 0,
         "clob_tokens_truncated": 0,
+        "clob_http_fallback_enabled": _http_clob_depth_enabled(),
+        "clob_http_fallback_skipped": 0,
         "clob_books_fetched": 0,
         "clob_books_with_depth": 0,
         "clob_book_errors": 0,
@@ -2379,6 +2493,11 @@ async def fetch_events_async(
 
     if (POLYMARKET_SOURCE or "api").lower() != "api":
         raise ProviderError("Polymarket provider currently supports POLYMARKET_SOURCE=api only")
+
+    if not SPORT_ALIASES.get(sport_key):
+        stats["skipped_unsupported_sport"] = True
+        _set_last_stats(stats)
+        return []
 
     retries = _int_or_default(POLYMARKET_RETRIES_RAW, 2, min_value=0)
     backoff = _float_or_default(POLYMARKET_RETRY_BACKOFF_RAW, 0.5, min_value=0.0)
@@ -2484,7 +2603,7 @@ async def fetch_events_async(
                 stats["realtime_market_books_missed"] = len(unresolved_token_ids)
                 stats["realtime_market_books_pending"] = len(unresolved_token_ids)
                 _apply_realtime_stats(stats, realtime_manager.snapshot())
-            if unresolved_token_ids:
+            if unresolved_token_ids and _http_clob_depth_enabled():
                 rest_depth_map, clob_meta = await _load_clob_depth_map_async(
                     client=client,
                     token_ids=unresolved_token_ids,
@@ -2495,6 +2614,8 @@ async def fetch_events_async(
                 stats["retries_used"] += int(clob_meta.get("retries_used", 0) or 0)
                 stats["clob_books_fetched"] = int(clob_meta.get("books_fetched", 0) or 0)
                 stats["clob_book_errors"] = int(clob_meta.get("book_errors", 0) or 0)
+            elif unresolved_token_ids:
+                stats["clob_http_fallback_skipped"] = len(unresolved_token_ids)
             stats["clob_books_with_depth"] = sum(
                 1
                 for token_id in normalized_token_ids
@@ -2582,6 +2703,9 @@ def fetch_events(
 fetch_events.last_stats = {
     "provider": PROVIDER_KEY,
     "source": POLYMARKET_SOURCE or "api",
+    "skipped_unsupported_sport": False,
+    "clob_http_fallback_enabled": _http_clob_depth_enabled(),
+    "clob_http_fallback_skipped": 0,
     "events_returned_count": 0,
 }
 fetch_events_async.last_stats = dict(fetch_events.last_stats)

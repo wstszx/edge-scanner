@@ -1290,9 +1290,7 @@ body.modal-open .content {
   white-space: normal;
 }
 
-#results-table td:nth-child(1),
-#results-table td:nth-child(2),
-#results-table td:nth-child(3) {
+.arb-summary-nowrap {
   white-space: nowrap;
 }
 
@@ -1308,12 +1306,12 @@ body.modal-open .content {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
-#results-table tbody td:first-child {
+#results-table tbody td.arb-opportunity-anchor-cell {
   position: relative;
   padding-left: 1.22rem;
 }
 
-#results-table tbody td:first-child::before {
+#results-table tbody td.arb-opportunity-anchor-cell::before {
   content: "";
   position: absolute;
   left: 0.46rem;
@@ -1325,7 +1323,7 @@ body.modal-open .content {
   transition: var(--transition);
 }
 
-#results-table tbody tr:hover td:first-child::before {
+#results-table tbody tr:hover td.arb-opportunity-anchor-cell::before {
   background: color-mix(in srgb, var(--accent) 38%, transparent);
 }
 
@@ -1334,7 +1332,7 @@ body.modal-open .content {
   border-bottom-color: var(--accent);
 }
 
-#results-table tbody tr.arb-selected-row td:first-child::before {
+#results-table tbody tr.arb-selected-row td.arb-opportunity-anchor-cell::before {
   width: 4px;
   background: var(--accent-strong);
 }
@@ -1410,6 +1408,363 @@ body.modal-open .content {
 
 .arb-mobile-list {
   display: none;
+}
+
+.arb-desktop-list {
+  display: grid;
+  gap: 0.58rem;
+}
+
+.arb-opportunity-card {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, #8fb1d0 44%, var(--border));
+  border-radius: 0.24rem;
+  background: #f9fbff;
+  box-shadow: none;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.arb-opportunity-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 34%, #7da6cd);
+  box-shadow: none;
+  transform: none;
+}
+
+.arb-opportunity-card-selected {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 38%, #7da6cd);
+  border-color: color-mix(in srgb, var(--accent) 44%, #7da6cd);
+}
+
+.arb-opportunity-strip {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) minmax(104px, auto) minmax(0, 1fr);
+  align-items: stretch;
+  border-bottom: 1px solid #9bb8d2;
+  background: linear-gradient(90deg, #4d7396 0%, #7ea7cb 100%);
+}
+
+.arb-opportunity-card.band-hot .arb-opportunity-strip {
+  background: linear-gradient(90deg, #4c7091 0%, #7fa8c8 100%);
+}
+
+.arb-opportunity-card.band-warm .arb-opportunity-strip {
+  background: linear-gradient(90deg, #587c9f 0%, #89b0d2 100%);
+}
+
+.arb-opportunity-card.band-cool .arb-opportunity-strip {
+  background: linear-gradient(90deg, #506f8d 0%, #779ec0 100%);
+}
+
+.arb-opportunity-strip-score,
+.arb-opportunity-strip-sport,
+.arb-opportunity-strip-right {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 2.78rem;
+  padding: 0.42rem 0.72rem;
+}
+
+.arb-opportunity-strip-score,
+.arb-opportunity-strip-sport {
+  border-right: 1px solid color-mix(in srgb, #fff 16%, transparent);
+  background: color-mix(in srgb, #163654 24%, transparent);
+}
+
+.arb-opportunity-strip-score {
+  justify-content: flex-start;
+}
+
+.arb-opportunity-strip-sport {
+  color: #fff;
+  font-size: 1.06rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.arb-opportunity-strip-right {
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.arb-opportunity-strip-badges,
+.arb-opportunity-strip-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  flex-wrap: wrap;
+}
+
+.arb-opportunity-strip-actions {
+  margin-left: 0.08rem;
+}
+
+.arb-opportunity-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  color: #fff;
+  font-size: 0.94rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.arb-opportunity-countdown svg {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+}
+
+.arb-opportunity-roi {
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 1.42rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.arb-opportunity-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.9rem;
+  padding: 0.18rem 0.58rem;
+  border: 1px solid color-mix(in srgb, #fff 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, #18324d 24%, transparent);
+  color: color-mix(in srgb, #fff 86%, transparent);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.arb-opportunity-profit-chip {
+  font-family: var(--font-mono);
+}
+
+.arb-opportunity-profit-chip.gain {
+  color: color-mix(in srgb, #fff 84%, var(--success));
+}
+
+.arb-opportunity-profit-chip.loss {
+  color: color-mix(in srgb, #fff 84%, var(--error));
+}
+
+.arb-strip-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 1.82rem;
+  height: 1.82rem;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, #fff 24%, transparent);
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, #091626 26%, transparent);
+  color: #fff;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.arb-strip-icon-btn:hover {
+  border-color: color-mix(in srgb, #fff 42%, transparent);
+  background: color-mix(in srgb, #091626 38%, transparent);
+}
+
+.arb-strip-icon-btn:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+}
+
+.arb-strip-icon-btn svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.arb-opportunity-body {
+  display: grid;
+  background: linear-gradient(180deg, #f7fbff 0%, #ffffff 100%);
+}
+
+.arb-opportunity-leg {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.92fr) minmax(90px, 0.64fr) minmax(0, 2.45fr) minmax(160px, 1.12fr) minmax(138px, 0.88fr) 44px;
+  column-gap: 0;
+  row-gap: 0.18rem;
+  align-items: center;
+  padding: 0.52rem 0.4rem;
+  border-top: 1px solid #d7e4ef;
+  background: #ffffff;
+}
+
+.arb-opportunity-leg:nth-child(odd) {
+  background: #ffffff;
+}
+
+.arb-opportunity-leg-book,
+.arb-opportunity-leg-when,
+.arb-opportunity-leg-event,
+.arb-opportunity-leg-pick,
+.arb-opportunity-leg-price,
+.arb-opportunity-leg-action {
+  min-width: 0;
+  min-height: 100%;
+  padding: 0 0.68rem;
+}
+
+.arb-opportunity-leg-when,
+.arb-opportunity-leg-event,
+.arb-opportunity-leg-pick,
+.arb-opportunity-leg-price,
+.arb-opportunity-leg-action {
+  border-left: 1px solid #e1ebf3;
+}
+
+.arb-opportunity-leg-book {
+  display: grid;
+  gap: 0.14rem;
+}
+
+.arb-opportunity-leg-book strong,
+.arb-opportunity-book-link {
+  color: #2c6ea5;
+  font-size: 0.96rem;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+.arb-opportunity-book-link:hover {
+  text-decoration: underline;
+}
+
+.arb-opportunity-leg-book-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.34rem;
+  flex-wrap: wrap;
+}
+
+.arb-opportunity-leg-book-meta .exchange-badge {
+  padding: 0.14rem 0.42rem;
+  font-size: 0.68rem;
+}
+
+.arb-opportunity-leg-book span,
+.arb-opportunity-leg-when span,
+.arb-opportunity-leg-event span,
+.arb-opportunity-leg-pick span,
+.arb-opportunity-leg-price span,
+.arb-opportunity-leg-note {
+  color: #6c8095;
+  font-size: 0.74rem;
+  line-height: 1.25;
+}
+
+.arb-opportunity-leg-when {
+  display: grid;
+  gap: 0.04rem;
+  align-content: center;
+}
+
+.arb-opportunity-leg-event {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 0.14rem;
+  align-items: start;
+  align-content: center;
+}
+
+.arb-opportunity-leg-event-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  color: #88a2bb;
+  margin-top: 0.08rem;
+}
+
+.arb-opportunity-leg-event-mark svg {
+  width: 15px;
+  height: 15px;
+}
+
+.arb-opportunity-leg-event-copy {
+  display: grid;
+  gap: 0.14rem;
+}
+
+.arb-opportunity-leg-event strong,
+.arb-opportunity-leg-pick strong {
+  color: #1a2f45;
+  font-size: 1rem;
+  line-height: 1.22;
+  overflow-wrap: anywhere;
+}
+
+.arb-opportunity-leg-pick {
+  display: grid;
+  gap: 0.14rem;
+  align-content: center;
+}
+
+.arb-opportunity-leg-pick-meta {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.arb-opportunity-leg-price {
+  display: grid;
+  justify-items: end;
+  gap: 0.18rem;
+  text-align: right;
+  align-content: center;
+}
+
+.arb-opportunity-leg-price strong {
+  color: #214f78;
+  font-size: 1.58rem;
+  line-height: 1;
+}
+
+.arb-opportunity-leg-price-meta {
+  display: grid;
+  justify-items: end;
+  gap: 0.06rem;
+}
+
+.arb-opportunity-leg-action {
+  display: grid;
+  justify-items: end;
+  align-content: center;
+}
+
+.arb-leg-icon-link {
+  display: inline-grid;
+  place-items: center;
+  width: 1.84rem;
+  height: 1.84rem;
+  border: 1px solid #c8d7e5;
+  border-radius: 999px;
+  background: #eef4f9;
+  color: #35506b;
+  text-decoration: none;
+  transition: var(--transition);
+}
+
+.arb-leg-icon-link:hover {
+  border-color: #7ca3c9;
+  color: #2c6ea5;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.arb-leg-icon-link svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.arb-leg-icon-link.is-muted {
+  opacity: 0.18;
 }
 
 .arb-mobile-card {
@@ -1507,6 +1862,109 @@ body.modal-open .content {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-soft);
+}
+
+#results-table .arb-leg-cell {
+  min-width: 320px;
+}
+
+#results-table tbody tr.arb-leg-row:not(.arb-leg-row-last) .arb-leg-cell {
+  border-bottom-style: dashed;
+  border-bottom-color: color-mix(in srgb, var(--border-strong) 62%, transparent);
+}
+
+.arb-leg-outcome {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.arb-leg-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.arb-leg-head-tags {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.arb-leg-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.arb-leg-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.arb-leg-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.arb-leg-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.42rem;
+}
+
+.arb-leg-metric {
+  display: grid;
+  gap: 0.14rem;
+  padding: 0.46rem 0.54rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 84%, var(--surface-soft));
+}
+
+.arb-leg-metric-label {
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+}
+
+.arb-leg-metric-value {
+  font-size: 0.82rem;
+  line-height: 1.15;
+}
+
+.arb-leg-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.arb-leg-open-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  text-decoration: none;
+  font-size: 0.74rem;
+  padding: 0.28rem 0.62rem;
 }
 
 .arb-mobile-exchange {
@@ -2398,9 +2856,7 @@ body.modal-open .content {
   #results-table th:nth-child(4),
   #results-table td:nth-child(4),
   #results-table th:nth-child(8),
-  #results-table td:nth-child(8),
-  #results-table th:nth-child(10),
-  #results-table td:nth-child(10) {
+  #results-table td:nth-child(8) {
     display: none;
   }
 
@@ -3670,7 +4126,7 @@ body {
 }
 
 @media (max-width: 860px) {
-  .arb-table-scroll {
+  .arb-desktop-list {
     display: none;
   }
 
@@ -3684,9 +4140,41 @@ body {
   }
 }
 
+@media (max-width: 1240px) {
+  .arb-opportunity-strip-right {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    border-top: 1px solid color-mix(in srgb, #fff 14%, transparent);
+  }
+
+  .arb-opportunity-leg {
+    grid-template-columns: minmax(130px, 0.92fr) minmax(78px, 0.62fr) minmax(0, 1.9fr) minmax(0, 1.08fr) minmax(124px, 0.84fr) 40px;
+  }
+}
+
+@media (max-width: 980px) {
+  .arb-opportunity-leg {
+    grid-template-columns: minmax(108px, 0.88fr) minmax(74px, 0.58fr) minmax(0, 1.55fr) minmax(0, 0.98fr) minmax(112px, 0.78fr) 38px;
+    gap: 0.58rem;
+    padding: 0.64rem 0.78rem;
+  }
+
+  .arb-opportunity-leg-price strong {
+    font-size: 1.4rem;
+  }
+}
+
 @media (max-width: 540px) {
   .arb-mobile-card-head {
     flex-direction: column;
+  }
+
+  .arb-leg-main {
+    flex-direction: column;
+  }
+
+  .arb-leg-metrics {
+    grid-template-columns: 1fr;
   }
 
   .arb-mobile-summary {
@@ -3744,8 +4232,44 @@ body {
 
 #results-table {
   width: 100%;
-  min-width: 0;
-  table-layout: auto;
+  min-width: 100%;
+  table-layout: fixed;
+}
+
+#results-table col.arb-col-net-roi {
+  width: 8%;
+}
+
+#results-table col.arb-col-gross-roi {
+  width: 6%;
+}
+
+#results-table col.arb-col-profit {
+  width: 8%;
+}
+
+#results-table col.arb-col-exchange {
+  width: 8%;
+}
+
+#results-table col.arb-col-sport {
+  width: 7%;
+}
+
+#results-table col.arb-col-event {
+  width: 18%;
+}
+
+#results-table col.arb-col-time {
+  width: 11%;
+}
+
+#results-table col.arb-col-market {
+  width: 9%;
+}
+
+#results-table col.arb-col-bet {
+  width: 25%;
 }
 
 #middles-table {

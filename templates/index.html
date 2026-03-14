@@ -486,26 +486,7 @@
                 </div>
               </div>
               <div id="arb-results-toolbar" class="arb-results-toolbar hidden"></div>
-              <div class="table-scroll arb-table-scroll">
-                <table id="results-table">
-                  <thead>
-                    <tr>
-                      <th data-i18n="table_net_roi">Net ROI</th>
-                      <th data-i18n="table_gross_roi">Gross ROI</th>
-                      <th data-i18n="table_profit">Profit</th>
-                      <th data-i18n="table_exchange">Exchange</th>
-                      <th data-i18n="table_sport">Sport</th>
-                      <th data-i18n="table_event">Event</th>
-                      <th data-i18n="table_time">Time</th>
-                      <th data-i18n="table_market">Market</th>
-                      <th data-i18n="table_outcome_1">Outcome 1</th>
-                      <th data-i18n="table_outcome_2">Outcome 2</th>
-                      <th data-i18n="table_outcome_3">Outcome 3</th>
-                    </tr>
-                  </thead>
-                  <tbody></tbody>
-                </table>
-              </div>
+              <div id="arb-desktop-list" class="arb-desktop-list"></div>
               <div id="arb-mobile-list" class="arb-mobile-list hidden"></div>
               <div id="table-empty" class="empty arb-empty-state">
                 <span class="empty-kicker" data-i18n="opportunities_title">Opportunities</span>
@@ -958,6 +939,7 @@
     data-default-density="{{ default_density }}" data-default-theme="{{ default_theme }}"
     data-default-language="{{ default_language }}"
     data-default-all-markets="{{ 'true' if default_all_markets else 'false' }}"
+    data-provider-only-mode="{{ 'true' if provider_only_mode else 'false' }}"
     data-kelly-options='{{ kelly_options | tojson }}' data-bookmaker-links='{{ bookmaker_links | tojson }}'
     data-custom-provider-keys='{{ custom_provider_keys | tojson }}' hidden></div>
 
@@ -984,6 +966,7 @@
         defaultTheme: configEl.dataset.defaultTheme || '',
         defaultLanguage: configEl.dataset.defaultLanguage || '',
         defaultAllMarkets: configEl.dataset.defaultAllMarkets === 'true',
+        providerOnlyMode: configEl.dataset.providerOnlyMode === 'true',
         kellyOptions: parseConfigJson(configEl.dataset.kellyOptions, []),
         bookmakerLinks: parseConfigJson(configEl.dataset.bookmakerLinks, {}),
         customProviderKeys: parseConfigJson(configEl.dataset.customProviderKeys, []),
@@ -991,6 +974,7 @@
       : {};
     let bookmakerLinks = { ...(appConfig.bookmakerLinks || {}) };
     const hasEnvKey = appConfig.hasEnvKey === true || appConfig.hasEnvKey === 'true';
+    const providerOnlyMode = appConfig.providerOnlyMode === true || appConfig.providerOnlyMode === 'true';
     const form = document.getElementById('scan-form');
     const apiKeyInput = document.getElementById('api-key');
     const stakeInput = document.getElementById('stake-input');
@@ -1009,7 +993,7 @@
     const arbSportBars = document.getElementById('arb-sport-bars');
     const arbResultsToolbar = document.getElementById('arb-results-toolbar');
     const arbMobileList = document.getElementById('arb-mobile-list');
-    const resultsBody = document.querySelector('#results-table tbody');
+    const arbDesktopList = document.getElementById('arb-desktop-list');
     const emptyState = document.getElementById('table-empty');
     const arbEmptyTitle = document.getElementById('arb-empty-title');
     const arbEmptyCopy = document.getElementById('arb-empty-copy');
@@ -1197,6 +1181,7 @@
     let lastStatus = null;
     let lastFocusedElement = null;
     let autoScanTimer = null;
+    let serverAutoScanSyncTimer = null;
     let scanFeedbackTimer = null;
     let scanStartedAtMs = 0;
     let scanLastStatusKey = '';
@@ -1574,6 +1559,10 @@
         open_books: 'Open',
         open_books_missing: 'No bookmaker links available for this opportunity.',
         open_books_blocked: 'Pop-up blocked. Allow pop-ups to open bookmakers.',
+        countdown_live: 'Live',
+        countdown_minutes: '{count} min',
+        countdown_hours: '{count} h',
+        countdown_days: '{count} d',
         gap_points: '{points} pts',
         gap_separator: ' / ',
         kelly_roll: '{percent}% roll',
@@ -1902,6 +1891,10 @@
     };
 
     Object.assign(TRANSLATIONS.zh || {}, {
+      countdown_live: '\u5df2\u5f00\u59cb',
+      countdown_minutes: '{count}\u5206\u949f',
+      countdown_hours: '{count}\u5c0f\u65f6',
+      countdown_days: '{count}\u5929',
       tab_providers: '\u5e73\u53f0\u6570\u636e',
       provider_data_title: '\u5e73\u53f0\u6570\u636e\u6821\u9a8c',
       provider_data_helper: '\u67e5\u770b\u6bcf\u4e2a\u5e73\u53f0\u6293\u53d6\u7684\u539f\u59cb\u5feb\u7167\uff0c\u53ef\u6309\u5c42\u7ea7\u5c55\u5f00/\u6298\u53e0\u3002',
@@ -2302,6 +2295,53 @@
       return date.toLocaleTimeString(activeLocale);
     }
 
+    function formatDateParts(value) {
+      if (!value) return { date: t('tbd'), time: '' };
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return { date: t('tbd'), time: '' };
+      return {
+        date: date.toLocaleDateString(activeLocale),
+        time: date.toLocaleTimeString(activeLocale, { hour: '2-digit', minute: '2-digit' }),
+      };
+    }
+
+    function formatCompactDateParts(value) {
+      if (!value) return { date: t('tbd'), time: '' };
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return { date: t('tbd'), time: '' };
+      return {
+        date: date.toLocaleDateString(activeLocale, { day: 'numeric', month: 'short' }),
+        time: date.toLocaleTimeString(activeLocale, { hour: '2-digit', minute: '2-digit' }),
+      };
+    }
+
+    function formatKickoffCountdown(value) {
+      if (!value) return t('tbd');
+      const start = new Date(value).getTime();
+      if (Number.isNaN(start)) return t('tbd');
+      const diffMs = start - Date.now();
+      if (diffMs <= 0) return t('countdown_live');
+      const minutes = Math.max(1, Math.round(diffMs / 60000));
+      if (minutes < 60) return t('countdown_minutes', { count: minutes });
+      const hours = Math.round(minutes / 60);
+      if (hours < 24) return t('countdown_hours', { count: hours });
+      const days = Math.round(hours / 24);
+      return t('countdown_days', { count: days });
+    }
+
+    function arbIcon(name) {
+      switch (name) {
+        case 'clock':
+          return '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"></circle><path d="M8 4.5v3.9l2.6 1.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>';
+        case 'external':
+          return '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M9.5 3.25H12.75V6.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path><path d="M7 9L12.75 3.25" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path><path d="M6.25 4H4.75A1.5 1.5 0 0 0 3.25 5.5v5.75a1.5 1.5 0 0 0 1.5 1.5h5.75a1.5 1.5 0 0 0 1.5-1.5v-1.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>';
+        case 'note':
+          return '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5.25 2.75h4.8l2.2 2.2v7.3a1.5 1.5 0 0 1-1.5 1.5h-5.5a1.5 1.5 0 0 1-1.5-1.5v-8a1.5 1.5 0 0 1 1.5-1.5Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.4"></path><path d="M9.9 2.9v2.1h2.1" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.4"></path><path d="M5.8 7h4.4M5.8 9.3h4.4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.4"></path></svg>';
+        default:
+          return '';
+      }
+    }
+
     function formatDurationMs(value) {
       const ms = Number(value);
       if (!Number.isFinite(ms) || ms < 0) return '-';
@@ -2544,6 +2584,7 @@
       reconcileNotificationToggles();
       updateBookmakerState();
       syncBookmakerLinksFromInputs();
+      queueServerAutoScanSync(true);
     });
 
     if (toggleKeyBtn && apiKeyInput) {
@@ -2656,6 +2697,7 @@
       });
       updateAdvancedSummary();
       updateQuickActionState();
+      queueServerAutoScanSync();
     }
 
     function updateBookmakerState() {
@@ -2785,6 +2827,7 @@
         ) {
           updateAdvancedSummary();
         }
+        queueServerAutoScanSync();
       });
     }
 
@@ -2847,26 +2890,83 @@
     }
 
     function selectedBookmakers(useAllBookmakers) {
-      if (useAllBookmakers) {
-        return Array.from(form?.querySelectorAll('input[name="bookmakers"]') || []).map((el) => el.value);
-      }
-      return Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
+      const values = useAllBookmakers
+        ? Array.from(form?.querySelectorAll('input[name="bookmakers"]') || []).map((el) => el.value)
+        : Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
+      if (!providerOnlyMode) return values;
+      const providerSet = new Set(appConfig.customProviderKeys || []);
+      return values.filter((value) => providerSet.has(value));
     }
 
     function selectedIncludeProviders(useAllBookmakers, bookmakers) {
-      if (useAllBookmakers) return Array.from(appConfig.customProviderKeys || []);
       const providerSet = new Set(appConfig.customProviderKeys || []);
+      if (useAllBookmakers) return Array.from(providerSet);
       const picked = [];
       for (const key of bookmakers || []) {
         if (!providerSet.has(key)) continue;
         if (!picked.includes(key)) picked.push(key);
       }
-      return picked;
+      if (picked.length || !providerOnlyMode) return picked;
+      return Array.from(providerSet);
+    }
+
+    function buildServerAutoScanConfigPayload() {
+      const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
+      const regions = selectedRegions();
+      const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
+      const bookmakers = selectedBookmakers(useAllBookmakers);
+      const includeProviders = selectedIncludeProviders(useAllBookmakers, bookmakers);
+      const commissionValue = commissionInput && Number.isFinite(parseFloat(commissionInput.value))
+        ? parseFloat(commissionInput.value)
+        : defaultCommissionPercent;
+      return {
+        enabled: true,
+        intervalMinutes: readAutoScanMinutes(),
+        payload: {
+          sports,
+          allSports: allSportsToggle ? allSportsToggle.checked : false,
+          allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
+          stake: parseFloat(stakeInput?.value) || 100,
+          regions,
+          bookmakers,
+          includeProviders,
+          commission: commissionValue,
+          sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
+          minEdgePercent: parseFloat(minEdgeInput?.value) || appConfig.defaultMinEdgePercent || 1,
+          bankroll: parseFloat(bankrollInput?.value) || appConfig.defaultBankroll || 1000,
+          kellyFraction: parseFloat(kellySelect?.value) || appConfig.defaultKellyFraction || 0.25,
+        },
+      };
+    }
+
+    async function syncServerAutoScanConfig() {
+      if (!form) return;
+      try {
+        await fetch('/server-auto-scan-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(buildServerAutoScanConfigPayload()),
+        });
+      } catch (error) {
+        return;
+      }
+    }
+
+    function queueServerAutoScanSync(immediate = false) {
+      if (serverAutoScanSyncTimer) {
+        clearTimeout(serverAutoScanSyncTimer);
+        serverAutoScanSyncTimer = null;
+      }
+      const delayMs = immediate ? 0 : 250;
+      serverAutoScanSyncTimer = window.setTimeout(() => {
+        serverAutoScanSyncTimer = null;
+        void syncServerAutoScanConfig();
+      }, delayMs);
     }
 
     function triggerAutoScan() {
       if (isScanning) return;
-      if (!hasEnvKey && !apiKeyInput?.value.trim()) return;
+      if (!providerOnlyMode && !hasEnvKey && !apiKeyInput?.value.trim()) return;
       const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
       const useAllSports = allSportsToggle ? allSportsToggle.checked : false;
       if (!useAllSports && !sports.length) return;
@@ -2875,7 +2975,7 @@
       const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
       const bookmakers = selectedBookmakers(useAllBookmakers);
       const includeProviders = selectedIncludeProviders(useAllBookmakers, bookmakers);
-      if (!useAllBookmakers && !bookmakers.length) return;
+      if (!useAllBookmakers && !bookmakers.length && !includeProviders.length) return;
       const stakeValue = parseFloat(stakeInput?.value) || 100;
       const commissionValue = commissionInput && Number.isFinite(parseFloat(commissionInput.value))
         ? parseFloat(commissionInput.value)
@@ -3023,6 +3123,7 @@
     function persistSettings() {
       const payload = collectSettings();
       localStorage.setItem('edge-scan-settings', JSON.stringify(payload));
+      queueServerAutoScanSync();
     }
 
     function saveSettings() {
@@ -3046,7 +3147,7 @@
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      if (!hasEnvKey && !apiKeyInput?.value.trim()) {
+      if (!providerOnlyMode && !hasEnvKey && !apiKeyInput?.value.trim()) {
         showStatusKey('enter_api_key', 'error');
         return;
       }
@@ -3059,7 +3160,7 @@
       const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
       const bookmakers = selectedBookmakers(useAllBookmakers);
       const includeProviders = selectedIncludeProviders(useAllBookmakers, bookmakers);
-      if (!useAllBookmakers && !bookmakers.length) {
+      if (!useAllBookmakers && !bookmakers.length && !includeProviders.length) {
         showStatusKey('select_bookmakers', 'error');
         return;
       }
@@ -3067,6 +3168,7 @@
       const commissionValue = commissionInput && Number.isFinite(parseFloat(commissionInput.value))
         ? parseFloat(commissionInput.value)
         : defaultCommissionPercent;
+      await syncServerAutoScanConfig();
       await runScan({
         apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
         sports,
@@ -3800,7 +3902,7 @@
         minRoi,
         selectedVisible,
       });
-      resultsBody.innerHTML = '';
+      if (arbDesktopList) arbDesktopList.innerHTML = '';
       if (arbMobileList) arbMobileList.innerHTML = '';
       tableCount.textContent = t('results_count', { count: filtered.length });
       if (!filtered.length) {
@@ -3819,42 +3921,25 @@
         let runningProfit = 0;
         filtered.forEach((entry) => {
           const opp = entry.opp;
-          const row = document.createElement('tr');
           const calcNet = entry.calcNet;
           const netRoi = entry.netRoi;
           const oppKey = buildArbOpportunityKey(opp);
-          row.dataset.arbKey = oppKey;
-          row.tabIndex = 0;
-          row.classList.add(roiBandClass(netRoi));
+          const rowBandClass = roiBandClass(netRoi);
           const commence = formatDateTime(opp.commence_time);
+          const kickoffCountdown = formatKickoffCountdown(opp.commence_time);
           const calcGross = opp.has_exchange ? calculateStakes(opp, stakeValue, false) : null;
           const grossRoi = opp.has_exchange ? calcGross?.roi_percent ?? opp.gross_roi_percent : null;
           const netNegative = typeof netRoi === 'number' && netRoi < 0;
-          if (netNegative) row.classList.add('roi-negative');
-          if (opp.has_exchange) row.classList.add('has-exchange');
-          const breakdown = calcNet?.breakdown || [];
+          const breakdown = Array.isArray(calcNet?.breakdown) ? calcNet.breakdown : [];
+          const legs = buildArbDisplayLegs(opp, breakdown);
           const profitValue = entry.profitValue ?? 0;
           runningProfit += profitValue || 0;
           const profitClass = profitValue > 0 ? 'gain' : profitValue < 0 ? 'loss' : '';
           const grossCell = opp.has_exchange ? formatRoiBadge(grossRoi) : '-';
           const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
-          const openLabel = t('open_books');
+          const marketLabel = formatMarket(opp);
           const hasOpenTargets = collectBookTargets(opp).length > 0;
-          if (selectedArbKey && selectedArbKey === oppKey) {
-            row.classList.add('arb-selected-row');
-          }
-          row.innerHTML = `
-            <td><span class="roi-badge">${formatPercent(netRoi)}</span>${netNegative ? `<span class="roi-warning" title="${t('net_roi_negative')}">⚠</span>` : ''}</td>
-            <td>${grossCell}</td>
-            <td class="profit-cell ${profitClass}">${calcNet ? formatProfit(profitValue) : '-'}</td>
-            <td>${formatExchangeCell(opp)}</td>
-            <td>${sportLabel}</td>
-            <td>${formatArbEventCell(opp, sportLabel)}</td>
-            <td>${commence}</td>
-            <td>${formatMarket(opp)}</td>
-            <td>${formatOutcome(breakdown[0])}</td>
-            <td>${formatOutcome(breakdown[1])}</td>
-            <td>${formatOutcome(breakdown[2])}</td>`;
+          const isSelected = Boolean(selectedArbKey && selectedArbKey === oppKey);
           const activateOpportunity = () => {
             const wasSame = selectedArbKey === oppKey;
             selectedArbKey = oppKey;
@@ -3866,27 +3951,64 @@
             }
             renderArbitrage();
           };
-          row.addEventListener('click', activateOpportunity);
-          row.addEventListener('keydown', (event) => {
-            if (event.key !== 'Enter' && event.key !== ' ') return;
-            event.preventDefault();
-            activateOpportunity();
-          });
-          resultsBody.appendChild(row);
+          if (arbDesktopList) {
+            const desktopCard = document.createElement('article');
+            desktopCard.dataset.arbKey = oppKey;
+            desktopCard.tabIndex = 0;
+            desktopCard.className = `arb-opportunity-card ${rowBandClass}`;
+            if (netNegative) desktopCard.classList.add('roi-negative');
+            if (isSelected) desktopCard.classList.add('arb-opportunity-card-selected');
+            const legRows = legs
+              .map((leg, legIndex) => formatArbDesktopLegRow(leg, {
+                legIndex,
+                opp,
+                sportLabel,
+                marketLabel,
+              }))
+              .join('');
+            desktopCard.innerHTML = `
+              <div class="arb-opportunity-strip">
+                <div class="arb-opportunity-strip-score">
+                  <span class="arb-opportunity-roi">${escapeHtml(formatPercent(netRoi))}</span>
+                  ${netNegative ? `<span class="roi-warning" title="${t('net_roi_negative')}">&#9888;</span>` : ''}
+                </div>
+                <div class="arb-opportunity-strip-sport">${escapeHtml(sportLabel || t('unknown'))}</div>
+                <div class="arb-opportunity-strip-right">
+                  <div class="arb-opportunity-strip-badges">
+                    <span class="arb-opportunity-countdown" title="${escapeHtml(commence)}">${arbIcon('clock')}<span>${escapeHtml(kickoffCountdown)}</span></span>
+                    ${grossRoi !== null && grossRoi !== undefined ? `<span class="arb-opportunity-stat-chip">${escapeHtml(t('gross'))} ${escapeHtml(formatPercent(grossRoi))}</span>` : ''}
+                    <span class="arb-opportunity-stat-chip arb-opportunity-profit-chip ${profitClass}">${escapeHtml(calcNet ? formatProfit(profitValue) : '-')}</span>
+                  </div>
+                  <div class="arb-opportunity-strip-actions">
+                    <button type="button" class="arb-strip-icon-btn arb-open-all-btn" title="${escapeHtml(t('open_books'))}" aria-label="${escapeHtml(t('open_books'))}" ${hasOpenTargets ? '' : 'disabled'}>${arbIcon('external')}</button>
+                  </div>
+                </div>
+              </div>
+              <div class="arb-opportunity-body">
+                ${legRows}
+              </div>`;
+            bindArbDesktopCardActions(desktopCard, opp);
+            desktopCard.addEventListener('click', activateOpportunity);
+            desktopCard.addEventListener('keydown', (event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              activateOpportunity();
+            });
+            arbDesktopList.appendChild(desktopCard);
+          }
           if (arbMobileList) {
             const mobileCard = document.createElement('article');
-            mobileCard.className = `arb-mobile-card ${roiBandClass(netRoi)}`;
+            mobileCard.className = `arb-mobile-card ${rowBandClass}`;
             if (netNegative) mobileCard.classList.add('roi-negative');
             if (opp.has_exchange) mobileCard.classList.add('has-exchange');
-            if (selectedArbKey && selectedArbKey === oppKey) {
+            if (isSelected) {
               mobileCard.classList.add('arb-mobile-card-selected');
             }
-            const marketLabel = escapeHtml(formatMarket(opp));
+            const safeMarketLabel = escapeHtml(marketLabel);
             const safeSport = escapeHtml(sportLabel);
             const safeTime = escapeHtml(commence);
-            const outcomeCards = [breakdown[0], breakdown[1], breakdown[2]]
-              .filter(Boolean)
-              .map((item) => `<div class="arb-mobile-outcome">${formatOutcome(item)}</div>`)
+            const outcomeCards = legs
+              .map((item, idx) => `<div class="arb-mobile-outcome">${formatOutcome(item, { legIndex: idx, opp })}</div>`)
               .join('');
             mobileCard.tabIndex = 0;
             mobileCard.innerHTML = `
@@ -3899,7 +4021,7 @@
               </div>
               <div class="arb-mobile-card-body">
                 <p class="arb-mobile-event">${escapeHtml(opp.event || '')}</p>
-                <p class="arb-mobile-meta">${safeSport} · ${marketLabel}</p>
+                <p class="arb-mobile-meta">${safeSport} · ${safeMarketLabel}</p>
                 <p class="arb-mobile-meta">${safeTime}</p>
               </div>
               <div class="arb-mobile-outcomes">${outcomeCards}</div>
@@ -3907,6 +4029,7 @@
                 <div class="arb-mobile-exchange">${formatExchangeCell(opp)}</div>
                 <span class="arb-mobile-hint">${t('arb_mobile_hint')}</span>
               </div>`;
+            bindArbLegOpenLinks(mobileCard);
             mobileCard.addEventListener('click', activateOpportunity);
             mobileCard.addEventListener('keydown', (event) => {
               if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -4901,9 +5024,41 @@
       return Math.round(-100 / (decimal - 1));
     }
 
-    function formatOutcome(item) {
-      if (!item) return '-';
-      const point = item.point !== undefined && item.point !== null ? ` (${item.point})` : '';
+    function formatArbLegLabel(index) {
+      if (!Number.isInteger(index) || index < 0) return '';
+      const key = `arb_calc_leg_${index + 1}`;
+      const translated = t(key);
+      return translated !== key ? translated : `Leg ${index + 1}`;
+    }
+
+    function buildArbDisplayLegs(opp, breakdown = []) {
+      const computedLegs = Array.isArray(breakdown) ? breakdown.filter(Boolean) : [];
+      if (computedLegs.length) return computedLegs;
+      const rawLegs = Array.isArray(opp?.best_odds) ? opp.best_odds.slice(0, 3).filter(Boolean) : [];
+      return rawLegs.map((leg) => ({
+        outcome: leg.outcome,
+        bookmaker: leg.bookmaker,
+        bookmakerKey: `${leg.bookmaker_key || ''}`,
+        price: leg.price,
+        effective_price: leg.effective_price ?? leg.price,
+        point: leg.point,
+        stake: null,
+        max_stake: leg.max_stake,
+        payout: null,
+        is_exchange: Boolean(leg.is_exchange),
+        eventId: `${leg.book_event_id ?? opp?.event_id ?? ''}`,
+        eventUrl: `${leg.book_event_url || ''}`,
+      }));
+    }
+
+    function formatArbDesktopLegRow(item, options = {}) {
+      if (!item) return '';
+      const { legIndex = null, opp = null, sportLabel = '', marketLabel = '' } = options;
+      const point = item.point !== undefined && item.point !== null ? ` (${formatLine(item.point)})` : '';
+      const hasStake = Number.isFinite(Number(item.stake));
+      const hasPayout = Number.isFinite(Number(item.payout));
+      const stakeValue = hasStake ? formatCurrency(Number(item.stake)) : '-';
+      const payoutValue = hasPayout ? formatCurrency(Number(item.payout)) : '-';
       const availableValue =
         item.max_stake !== undefined &&
           item.max_stake !== null &&
@@ -4911,25 +5066,141 @@
           ? formatCurrency(Number(item.max_stake))
           : '-';
       const available = t('available_label', { amount: availableValue });
+      const when = formatCompactDateParts(opp?.commence_time);
+      const targetUrl = opp ? normalizeUrl(resolveArbLegOpenUrl(item, opp)) : '';
+      const exchangeBadge = item.is_exchange ? `<span class="exchange-badge">${escapeHtml(t('exchange'))}</span>` : '';
+      const effectiveNote =
+        item.is_exchange && item.effective_price && item.effective_price !== item.price
+          ? `<span class="mono arb-opportunity-leg-note">${escapeHtml(t('net_at', { odds: formatOddsDisplay(item.effective_price) }))}</span>`
+          : '';
+      const legLabel = Number.isInteger(legIndex) ? formatArbLegLabel(legIndex) : '';
+      const openLabel = escapeHtml(t('table_open'));
+      const bookMeta = [
+        legLabel ? `<span>${escapeHtml(legLabel)}</span>` : '',
+        exchangeBadge,
+      ].filter(Boolean).join('');
+      const priceMeta = [
+        hasStake ? `<span class="mono">${escapeHtml(stakeValue)}</span>` : '',
+        hasPayout ? `<span>${escapeHtml(t('arb_calc_payout'))}: ${escapeHtml(payoutValue)}</span>` : '',
+        `<span>${escapeHtml(available)}</span>`,
+      ].filter(Boolean).join('');
+      const pickMeta = [effectiveNote].filter(Boolean).join('');
+      const bookMarkup = targetUrl
+        ? `<a class="arb-opportunity-book-link arb-leg-open-link" href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.bookmaker || t('unknown'))}</a>`
+        : `<strong>${escapeHtml(item.bookmaker || t('unknown'))}</strong>`;
+      return `
+        <div class="arb-opportunity-leg">
+          <div class="arb-opportunity-leg-book">
+            ${bookMarkup}
+            ${bookMeta ? `<div class="arb-opportunity-leg-book-meta">${bookMeta}</div>` : ''}
+          </div>
+          <div class="arb-opportunity-leg-when">
+            <span>${escapeHtml(when.date)}</span>
+            ${when.time ? `<span>${escapeHtml(when.time)}</span>` : ''}
+          </div>
+          <div class="arb-opportunity-leg-event">
+            <span class="arb-opportunity-leg-event-mark" aria-hidden="true">${arbIcon('note')}</span>
+            <div class="arb-opportunity-leg-event-copy">
+              <strong>${escapeHtml(opp?.event || '-')}</strong>
+              <span>${escapeHtml([sportLabel, marketLabel].filter(Boolean).join(' / '))}</span>
+            </div>
+          </div>
+          <div class="arb-opportunity-leg-pick">
+            <strong>${escapeHtml(item.outcome || '')}${escapeHtml(point)}</strong>
+            ${pickMeta ? `<div class="arb-opportunity-leg-pick-meta">${pickMeta}</div>` : ''}
+          </div>
+          <div class="arb-opportunity-leg-price">
+            <strong class="mono">${escapeHtml(formatOddsDisplay(item.price))}</strong>
+            ${priceMeta ? `<div class="arb-opportunity-leg-price-meta">${priceMeta}</div>` : ''}
+          </div>
+          <div class="arb-opportunity-leg-action">
+            ${targetUrl ? `<a class="arb-leg-icon-link arb-leg-open-link" href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer" title="${openLabel}" aria-label="${openLabel}">${arbIcon('external')}</a>` : '<span class="arb-leg-icon-link is-muted" aria-hidden="true"></span>'}
+          </div>
+        </div>`;
+    }
+
+    function formatOutcome(item, options = {}) {
+      if (!item) return '-';
+      const { legIndex = null, opp = null } = options;
+      const point = item.point !== undefined && item.point !== null ? ` (${formatLine(item.point)})` : '';
+      const stakeValue = Number.isFinite(Number(item.stake)) ? formatCurrency(Number(item.stake)) : '-';
+      const payoutValue = Number.isFinite(Number(item.payout)) ? formatCurrency(Number(item.payout)) : '-';
+      const availableValue =
+        item.max_stake !== undefined &&
+          item.max_stake !== null &&
+          !Number.isNaN(Number(item.max_stake))
+          ? formatCurrency(Number(item.max_stake))
+          : '-';
+      const available = t('available_label', { amount: availableValue });
+      const legLabel =
+        Number.isInteger(legIndex) && legIndex >= 0
+          ? `<span class="arb-leg-label">${escapeHtml(formatArbLegLabel(legIndex))}</span>`
+          : '';
       const exchangeBadge = item.is_exchange ? `<span class="exchange-badge">${t('exchange')}</span>` : '';
-      const bookBadge = item.bookmaker ? `<span class="outcome-book">${escapeHtml(item.bookmaker)}</span>` : '';
+      const bookBadge = item.bookmaker ? `<span class="arb-calc-leg-chip">${escapeHtml(item.bookmaker)}</span>` : '';
       const effectiveNote =
         item.is_exchange && item.effective_price && item.effective_price !== item.price
           ? `<span class="mono net-note">${t('net_at', { odds: formatOddsDisplay(item.effective_price) })}</span>`
           : '';
+      const availableChip = availableValue !== '-' ? `<span class="arb-calc-leg-chip">${escapeHtml(available)}</span>` : '';
+      const targetUrl = opp ? normalizeUrl(resolveArbLegOpenUrl(item, opp)) : '';
+      const openLink = targetUrl
+        ? `<a class="open-books-btn arb-leg-open-link" href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('table_open'))}</a>`
+        : '';
+      const footParts = [availableChip, effectiveNote].filter(Boolean).join('');
       return `
-        <span class="outcome">
-          ${exchangeBadge}
-          <span class="outcome-main">
-            <strong>${escapeHtml(item.outcome || '')}${escapeHtml(point)}</strong>
+        <div class="arb-leg-outcome">
+          <div class="arb-leg-head">
+            <div class="arb-leg-head-tags">
+              ${legLabel}
+              ${exchangeBadge}
+              ${bookBadge}
+            </div>
+            ${openLink}
+          </div>
+          <div class="arb-leg-main">
+            <strong class="arb-leg-title">${escapeHtml(item.outcome || '')}${escapeHtml(point)}</strong>
             <span class="mono outcome-price">@ ${formatOddsDisplay(item.price)}</span>
-          </span>
-          <span class="outcome-meta">
-            ${bookBadge}
-            <span class="outcome-availability">${escapeHtml(available)}</span>
-          </span>
-          ${effectiveNote}
-        </span>`;
+          </div>
+          <div class="arb-leg-metrics">
+            <div class="arb-leg-metric">
+              <span class="arb-leg-metric-label">${escapeHtml(t('arb_calc_stake'))}</span>
+              <strong class="mono arb-leg-metric-value">${escapeHtml(stakeValue)}</strong>
+            </div>
+            <div class="arb-leg-metric">
+              <span class="arb-leg-metric-label">${escapeHtml(t('arb_calc_payout'))}</span>
+              <strong class="mono arb-leg-metric-value">${escapeHtml(payoutValue)}</strong>
+            </div>
+          </div>
+          ${footParts ? `<div class="arb-leg-foot">${footParts}</div>` : ''}
+        </div>`;
+    }
+
+    function bindArbLegOpenLinks(container) {
+      if (!container || typeof container.querySelectorAll !== 'function') return;
+      container.querySelectorAll('.arb-leg-open-link').forEach((link) => {
+        link.addEventListener('click', (event) => {
+          event.stopPropagation();
+        });
+        link.addEventListener('keydown', (event) => {
+          event.stopPropagation();
+        });
+      });
+    }
+
+    function bindArbDesktopCardActions(container, opp) {
+      if (!container || !opp) return;
+      bindArbLegOpenLinks(container);
+      const openAllBtn = container.querySelector('.arb-open-all-btn');
+      if (openAllBtn) {
+        openAllBtn.addEventListener('click', (event) => {
+          event.stopPropagation();
+          openBookmakerTabs(opp);
+        });
+        openAllBtn.addEventListener('keydown', (event) => {
+          event.stopPropagation();
+        });
+      }
     }
 
     function formatTaggedEventCell(title, tags = [], detail = '') {
@@ -5216,6 +5487,7 @@
         return {
           outcome: o.outcome,
           bookmaker: o.bookmaker,
+          bookmakerKey: `${o.bookmaker_key || ''}`,
           price: displayPrice,
           effective_price: effectivePrice,
           point: o.point,
@@ -5224,6 +5496,8 @@
           payout,
           fraction,
           is_exchange: Boolean(o.is_exchange),
+          eventId: `${o.book_event_id ?? opp?.event_id ?? ''}`,
+          eventUrl: `${o.book_event_url || ''}`,
         };
       });
       if (breakdown.includes(null)) return null;
