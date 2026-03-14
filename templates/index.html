@@ -508,137 +508,169 @@
               <div id="arb-calc-empty" class="empty" data-i18n="arb_calc_empty">Select an opportunity to open the
                 calculator.</div>
               <div id="arb-calc-body" class="arb-calc-body hidden">
-                <div class="arb-calc-hero">
-                  <div class="arb-calc-context">
-                    <div class="arb-calc-context-copy">
-                      <span class="arb-calc-kicker" data-i18n="arb_calc_selected_kicker">Selected Opportunity</span>
-                      <p id="arb-calc-event" class="arb-calc-event"></p>
-                      <p id="arb-calc-market" class="helper"></p>
+                <div class="arb-calc-shell">
+                  <div class="arb-calc-strip">
+                    <div class="arb-calc-strip-score">
+                      <span class="arb-calc-strip-label">ROI</span>
+                      <strong class="mono" id="arb-calc-strip-roi">-</strong>
                     </div>
-                    <button type="button" class="secondary-btn" id="arb-calc-open-btn"
-                      data-i18n="table_open">Open</button>
+                    <div class="arb-calc-strip-sport" id="arb-calc-strip-sport">-</div>
+                    <div class="arb-calc-strip-main">
+                      <p id="arb-calc-event" class="arb-calc-event"></p>
+                      <p id="arb-calc-market" class="arb-calc-strip-copy"></p>
+                    </div>
+                    <div class="arb-calc-strip-actions">
+                      <button type="button" class="secondary-btn arb-calc-strip-btn arb-calc-strip-reset-btn"
+                        id="arb-calc-reset-btn" data-i18n="arb_calc_clear" data-i18n-title="arb_calc_clear"
+                        aria-label="Clear">Clear</button>
+                      <button type="button" class="secondary-btn arb-calc-strip-btn" id="arb-calc-open-btn"
+                        data-i18n="open_books" data-i18n-title="open_books">Open</button>
+                    </div>
                   </div>
-                  <div id="arb-calc-meta" class="arb-calc-meta"></div>
-                  <div id="arb-calc-badges" class="arb-calc-badges"></div>
-                </div>
-
-                <div class="arb-calc-total">
-                  <label class="field-label" for="arb-calc-total-input" data-i18n="arb_calc_total_stake">Total Stake
-                    ($)</label>
-                  <div class="arb-calc-total-row">
-                    <input type="number" id="arb-calc-total-input" min="0" step="0.01" />
-                    <button type="button" class="secondary-btn" id="arb-calc-auto-split"
-                      data-i18n="arb_calc_apply_total">Auto Split</button>
+                  <div class="arb-calc-strip-subrow">
+                    <div class="arb-calc-kickoff" id="arb-calc-kickoff"></div>
+                    <div id="arb-calc-meta" class="arb-calc-meta"></div>
+                    <div id="arb-calc-badges" class="arb-calc-badges"></div>
                   </div>
-                </div>
+                  <div class="arb-calc-grid-head">
+                    <span class="arb-calc-grid-head-spacer"></span>
+                    <span class="arb-calc-grid-head-spacer"></span>
+                    <span class="arb-calc-grid-head-spacer"></span>
+                    <span data-i18n="arb_calc_odds">Odds</span>
+                    <span data-i18n="arb_calc_income">Income</span>
+                    <span data-i18n="arb_calc_stake_short">Stake</span>
+                    <span data-i18n="arb_calc_currency">Currency</span>
+                    <span class="arb-calc-grid-head-spacer"></span>
+                  </div>
 
-                <div class="arb-calc-legs">
+                  <div class="arb-calc-legs">
                   <section class="arb-calc-leg" id="arb-calc-leg-a">
-                    <div class="arb-calc-leg-head">
+                    <div class="arb-calc-leg-side">
                       <div class="arb-calc-leg-copy">
                         <span class="arb-calc-leg-kicker" data-i18n="arb_calc_leg_1">Leg 1</span>
                         <h4 id="arb-calc-leg-a-title"></h4>
-                      </div>
-                      <div class="arb-calc-leg-payout-group">
-                        <span class="status-label" data-i18n="arb_calc_payout">Payout</span>
-                        <span class="mono arb-calc-leg-payout" id="arb-calc-payout-a">-</span>
+                        <div class="arb-calc-leg-subcopy" id="arb-calc-leg-a-sub"></div>
                       </div>
                     </div>
-                    <div class="arb-calc-leg-meta" id="arb-calc-leg-a-book"></div>
-                    <div class="arb-calc-inputs">
-                      <label>
+                    <div class="arb-calc-leg-book" id="arb-calc-leg-a-book"></div>
+                    <button type="button" class="arb-calc-sync-btn" id="arb-calc-base-a"
+                      data-i18n-title="arb_calc_use_this_stake" aria-label="Use This Stake"
+                      title="Use This Stake">&#8635;</button>
+                    <label class="arb-calc-cell arb-calc-input-cell">
                         <span data-i18n="arb_calc_odds">Odds</span>
                         <input type="number" id="arb-calc-odds-a" min="1.01" step="0.01" />
                       </label>
-                      <label>
+                    <div class="arb-calc-cell arb-calc-payout-cell">
+                      <span class="arb-calc-cell-label" data-i18n="arb_calc_payout">Payout</span>
+                      <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-a">-</strong>
+                    </div>
+                    <label class="arb-calc-cell arb-calc-input-cell">
                         <span data-i18n="arb_calc_stake">Stake ($)</span>
                         <input type="number" id="arb-calc-stake-a" min="0" step="0.01" />
                       </label>
+                    <div class="arb-calc-cell arb-calc-currency-cell">
+                      <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
+                      <strong>USD</strong>
                     </div>
-                    <div class="arb-calc-leg-actions">
-                      <button type="button" class="secondary-btn" id="arb-calc-open-a"
-                        data-i18n="table_open">Open</button>
-                      <button type="button" class="secondary-btn" id="arb-calc-base-a"
-                        data-i18n="arb_calc_use_this_stake">Use This Stake</button>
-                    </div>
+                    <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-a"
+                      data-i18n="arb_calc_bet">BET</button>
                   </section>
 
                   <section class="arb-calc-leg" id="arb-calc-leg-b">
-                    <div class="arb-calc-leg-head">
+                    <div class="arb-calc-leg-side">
                       <div class="arb-calc-leg-copy">
                         <span class="arb-calc-leg-kicker" data-i18n="arb_calc_leg_2">Leg 2</span>
                         <h4 id="arb-calc-leg-b-title"></h4>
-                      </div>
-                      <div class="arb-calc-leg-payout-group">
-                        <span class="status-label" data-i18n="arb_calc_payout">Payout</span>
-                        <span class="mono arb-calc-leg-payout" id="arb-calc-payout-b">-</span>
+                        <div class="arb-calc-leg-subcopy" id="arb-calc-leg-b-sub"></div>
                       </div>
                     </div>
-                    <div class="arb-calc-leg-meta" id="arb-calc-leg-b-book"></div>
-                    <div class="arb-calc-inputs">
-                      <label>
+                    <div class="arb-calc-leg-book" id="arb-calc-leg-b-book"></div>
+                    <button type="button" class="arb-calc-sync-btn" id="arb-calc-base-b"
+                      data-i18n-title="arb_calc_use_this_stake" aria-label="Use This Stake"
+                      title="Use This Stake">&#8635;</button>
+                    <label class="arb-calc-cell arb-calc-input-cell">
                         <span data-i18n="arb_calc_odds">Odds</span>
                         <input type="number" id="arb-calc-odds-b" min="1.01" step="0.01" />
                       </label>
-                      <label>
+                    <div class="arb-calc-cell arb-calc-payout-cell">
+                      <span class="arb-calc-cell-label" data-i18n="arb_calc_payout">Payout</span>
+                      <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-b">-</strong>
+                    </div>
+                    <label class="arb-calc-cell arb-calc-input-cell">
                         <span data-i18n="arb_calc_stake">Stake ($)</span>
                         <input type="number" id="arb-calc-stake-b" min="0" step="0.01" />
                       </label>
+                    <div class="arb-calc-cell arb-calc-currency-cell">
+                      <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
+                      <strong>USD</strong>
                     </div>
-                    <div class="arb-calc-leg-actions">
-                      <button type="button" class="secondary-btn" id="arb-calc-open-b"
-                        data-i18n="table_open">Open</button>
-                      <button type="button" class="secondary-btn" id="arb-calc-base-b"
-                        data-i18n="arb_calc_use_this_stake">Use This Stake</button>
-                    </div>
+                    <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-b"
+                      data-i18n="arb_calc_bet">BET</button>
                   </section>
 
                   <section class="arb-calc-leg hidden" id="arb-calc-leg-c">
-                    <div class="arb-calc-leg-head">
+                    <div class="arb-calc-leg-side">
                       <div class="arb-calc-leg-copy">
                         <span class="arb-calc-leg-kicker" data-i18n="arb_calc_leg_3">Leg 3</span>
                         <h4 id="arb-calc-leg-c-title"></h4>
-                      </div>
-                      <div class="arb-calc-leg-payout-group">
-                        <span class="status-label" data-i18n="arb_calc_payout">Payout</span>
-                        <span class="mono arb-calc-leg-payout" id="arb-calc-payout-c">-</span>
+                        <div class="arb-calc-leg-subcopy" id="arb-calc-leg-c-sub"></div>
                       </div>
                     </div>
-                    <div class="arb-calc-leg-meta" id="arb-calc-leg-c-book"></div>
-                    <div class="arb-calc-inputs">
-                      <label>
+                    <div class="arb-calc-leg-book" id="arb-calc-leg-c-book"></div>
+                    <button type="button" class="arb-calc-sync-btn" id="arb-calc-base-c"
+                      data-i18n-title="arb_calc_use_this_stake" aria-label="Use This Stake"
+                      title="Use This Stake">&#8635;</button>
+                    <label class="arb-calc-cell arb-calc-input-cell">
                         <span data-i18n="arb_calc_odds">Odds</span>
                         <input type="number" id="arb-calc-odds-c" min="1.01" step="0.01" />
                       </label>
-                      <label>
+                    <div class="arb-calc-cell arb-calc-payout-cell">
+                      <span class="arb-calc-cell-label" data-i18n="arb_calc_payout">Payout</span>
+                      <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-c">-</strong>
+                    </div>
+                    <label class="arb-calc-cell arb-calc-input-cell">
                         <span data-i18n="arb_calc_stake">Stake ($)</span>
                         <input type="number" id="arb-calc-stake-c" min="0" step="0.01" />
                       </label>
+                    <div class="arb-calc-cell arb-calc-currency-cell">
+                      <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
+                      <strong>USD</strong>
                     </div>
-                    <div class="arb-calc-leg-actions">
-                      <button type="button" class="secondary-btn" id="arb-calc-open-c"
-                        data-i18n="table_open">Open</button>
-                      <button type="button" class="secondary-btn" id="arb-calc-base-c"
-                        data-i18n="arb_calc_use_this_stake">Use This Stake</button>
-                    </div>
+                    <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-c"
+                      data-i18n="arb_calc_bet">BET</button>
                   </section>
-                </div>
+                  </div>
 
-                <div class="arb-calc-summary">
-                  <div class="arb-calc-metric">
-                    <span class="stat-label" data-i18n="arb_calc_min_payout">Min Payout</span>
-                    <strong class="mono" id="arb-calc-min-payout">-</strong>
+                  <div class="arb-calc-footer">
+                    <div class="arb-calc-footer-actions">
+                      <button type="button" class="secondary-btn arb-calc-auto-btn" id="arb-calc-auto-split"
+                        data-i18n="arb_calc_apply_total">Auto Split</button>
+                      <span class="arb-calc-mode-chip" id="arb-calc-mode-chip">-</span>
+                    </div>
+                    <div class="arb-calc-total">
+                      <label class="arb-calc-total-field" for="arb-calc-total-input">
+                        <span class="arb-calc-total-prefix" data-i18n="arb_calc_total_in">Stake In</span>
+                        <input type="number" id="arb-calc-total-input" min="0" step="0.01" />
+                        <span class="arb-calc-total-currency mono">USD</span>
+                      </label>
+                    </div>
+                    <div class="arb-calc-summary">
+                      <div class="arb-calc-metric">
+                        <span class="stat-label" data-i18n="arb_calc_min_payout">Min Payout</span>
+                        <strong class="mono" id="arb-calc-min-payout">-</strong>
+                      </div>
+                      <div class="arb-calc-metric">
+                        <span class="stat-label" data-i18n="arb_calc_profit">Guaranteed Profit</span>
+                        <strong class="mono" id="arb-calc-profit">-</strong>
+                      </div>
+                      <div class="arb-calc-metric">
+                        <span class="stat-label" data-i18n="arb_calc_roi">ROI</span>
+                        <strong class="mono" id="arb-calc-roi">-</strong>
+                      </div>
+                    </div>
                   </div>
-                  <div class="arb-calc-metric">
-                    <span class="stat-label" data-i18n="arb_calc_profit">Guaranteed Profit</span>
-                    <strong class="mono" id="arb-calc-profit">-</strong>
-                  </div>
-                  <div class="arb-calc-metric">
-                    <span class="stat-label" data-i18n="arb_calc_roi">ROI</span>
-                    <strong class="mono" id="arb-calc-roi">-</strong>
-                  </div>
+                  <p class="helper arb-calc-warning hidden" id="arb-calc-warning"></p>
                 </div>
-                <p class="helper arb-calc-warning hidden" id="arb-calc-warning"></p>
               </div>
             </aside>
           </div>
@@ -1004,15 +1036,20 @@
     const arbCalculator = document.getElementById('arb-calculator');
     const arbCalcEmpty = document.getElementById('arb-calc-empty');
     const arbCalcBody = document.getElementById('arb-calc-body');
+    const arbCalcStripRoi = document.getElementById('arb-calc-strip-roi');
+    const arbCalcStripSport = document.getElementById('arb-calc-strip-sport');
     const arbCalcEvent = document.getElementById('arb-calc-event');
     const arbCalcMarket = document.getElementById('arb-calc-market');
+    const arbCalcKickoff = document.getElementById('arb-calc-kickoff');
     const arbCalcMeta = document.getElementById('arb-calc-meta');
     const arbCalcBadges = document.getElementById('arb-calc-badges');
+    const arbCalcResetBtn = document.getElementById('arb-calc-reset-btn');
     const arbCalcOpenBtn = document.getElementById('arb-calc-open-btn');
     const arbCalcTotalInput = document.getElementById('arb-calc-total-input');
     const arbCalcAutoSplitBtn = document.getElementById('arb-calc-auto-split');
     const arbCalcLegA = document.getElementById('arb-calc-leg-a');
     const arbCalcLegATitle = document.getElementById('arb-calc-leg-a-title');
+    const arbCalcLegASub = document.getElementById('arb-calc-leg-a-sub');
     const arbCalcLegAInfo = document.getElementById('arb-calc-leg-a-book');
     const arbCalcOddsAInput = document.getElementById('arb-calc-odds-a');
     const arbCalcStakeAInput = document.getElementById('arb-calc-stake-a');
@@ -1021,6 +1058,7 @@
     const arbCalcPayoutA = document.getElementById('arb-calc-payout-a');
     const arbCalcLegB = document.getElementById('arb-calc-leg-b');
     const arbCalcLegBTitle = document.getElementById('arb-calc-leg-b-title');
+    const arbCalcLegBSub = document.getElementById('arb-calc-leg-b-sub');
     const arbCalcLegBInfo = document.getElementById('arb-calc-leg-b-book');
     const arbCalcOddsBInput = document.getElementById('arb-calc-odds-b');
     const arbCalcStakeBInput = document.getElementById('arb-calc-stake-b');
@@ -1029,6 +1067,7 @@
     const arbCalcPayoutB = document.getElementById('arb-calc-payout-b');
     const arbCalcLegC = document.getElementById('arb-calc-leg-c');
     const arbCalcLegCTitle = document.getElementById('arb-calc-leg-c-title');
+    const arbCalcLegCSub = document.getElementById('arb-calc-leg-c-sub');
     const arbCalcLegCInfo = document.getElementById('arb-calc-leg-c-book');
     const arbCalcOddsCInput = document.getElementById('arb-calc-odds-c');
     const arbCalcStakeCInput = document.getElementById('arb-calc-stake-c');
@@ -1039,10 +1078,12 @@
     const arbCalcProfit = document.getElementById('arb-calc-profit');
     const arbCalcRoi = document.getElementById('arb-calc-roi');
     const arbCalcWarning = document.getElementById('arb-calc-warning');
+    const arbCalcModeChip = document.getElementById('arb-calc-mode-chip');
     const arbCalcLegRefs = [
       {
         section: arbCalcLegA,
         title: arbCalcLegATitle,
+        sub: arbCalcLegASub,
         info: arbCalcLegAInfo,
         oddsInput: arbCalcOddsAInput,
         stakeInput: arbCalcStakeAInput,
@@ -1053,6 +1094,7 @@
       {
         section: arbCalcLegB,
         title: arbCalcLegBTitle,
+        sub: arbCalcLegBSub,
         info: arbCalcLegBInfo,
         oddsInput: arbCalcOddsBInput,
         stakeInput: arbCalcStakeBInput,
@@ -1063,6 +1105,7 @@
       {
         section: arbCalcLegC,
         title: arbCalcLegCTitle,
+        sub: arbCalcLegCSub,
         info: arbCalcLegCInfo,
         oddsInput: arbCalcOddsCInput,
         stakeInput: arbCalcStakeCInput,
@@ -1448,12 +1491,21 @@
         arb_calc_leg_1: 'Leg 1',
         arb_calc_leg_2: 'Leg 2',
         arb_calc_leg_3: 'Leg 3',
+        arb_calc_base_leg: 'Base',
+        arb_calc_clear: 'Clear',
         arb_calc_total_stake: 'Total Stake ($)',
-        arb_calc_apply_total: 'Auto Split',
+        arb_calc_total_in: 'Stake In',
+        arb_calc_apply_total: 'Auto',
+        arb_calc_mode_total: 'AUTO',
+        arb_calc_mode_base: 'BASE {index}',
         arb_calc_odds: 'Odds',
         arb_calc_stake: 'Stake ($)',
         arb_calc_use_this_stake: 'Use This Stake',
+        arb_calc_bet: 'BET',
         arb_calc_payout: 'Payout',
+        arb_calc_income: 'Income',
+        arb_calc_currency: 'Currency',
+        arb_calc_stake_short: 'Stake',
         arb_calc_market_time: 'Market: {market} | Start: {time}',
         arb_calc_min_payout: 'Min Payout',
         arb_calc_profit: 'Guaranteed Profit',
@@ -1764,12 +1816,21 @@
         arb_calc_leg_1: '第 1 腿',
         arb_calc_leg_2: '第 2 腿',
         arb_calc_leg_3: '第 3 腿',
+        arb_calc_base_leg: '基准',
+        arb_calc_clear: '清除',
         arb_calc_total_stake: '总下注金额 ($)',
-        arb_calc_apply_total: '按总额拆分',
+        arb_calc_total_in: '金额',
+        arb_calc_apply_total: '自动',
+        arb_calc_mode_total: '自动',
+        arb_calc_mode_base: '基准 {index}',
         arb_calc_odds: '赔率',
         arb_calc_stake: '下注额 ($)',
         arb_calc_use_this_stake: '以此金额为准',
+        arb_calc_bet: '下注',
         arb_calc_payout: '返还',
+        arb_calc_income: '收入',
+        arb_calc_currency: '货币',
+        arb_calc_stake_short: '注金',
         arb_calc_market_time: '盘口：{market} | 开赛：{time}',
         arb_calc_min_payout: '最低返还',
         arb_calc_profit: '保底利润',
@@ -2024,6 +2085,14 @@
         const key = el.dataset.i18nHtml;
         el.innerHTML = t(key);
       });
+      document.querySelectorAll('[data-i18n-title]').forEach((el) => {
+        const key = el.dataset.i18nTitle;
+        const translated = t(key);
+        el.setAttribute('title', translated);
+        if (el.hasAttribute('aria-label')) {
+          el.setAttribute('aria-label', translated);
+        }
+      });
       if (themeToggle) {
         themeToggle.title = t('toggle_theme');
       }
@@ -2039,6 +2108,7 @@
       updateLanguageToggle();
       updateOddsToggle();
       updateDensityToggle();
+      updateArbCalculatorButtonChrome();
       updateSportLabels();
       updateRegionLabels();
       updateKellyOptions();
@@ -2060,6 +2130,23 @@
       renderPartialWarning(lastScanData);
       renderArbCalculator();
       renderCrossProviderReport(crossProviderReportCache);
+    }
+
+    function updateArbCalculatorButtonChrome() {
+      if (arbCalcOpenBtn) {
+        arbCalcOpenBtn.innerHTML = arbIcon('external');
+      }
+      if (arbCalcResetBtn) {
+        arbCalcResetBtn.innerHTML = arbIcon('trash');
+      }
+      if (arbCalcAutoSplitBtn) {
+        arbCalcAutoSplitBtn.innerHTML = `${arbIcon('refresh')}<span>${escapeHtml(t('arb_calc_apply_total'))}</span>`;
+      }
+      arbCalcLegRefs.forEach((refs) => {
+        if (refs.baseBtn) {
+          refs.baseBtn.innerHTML = arbIcon('target');
+        }
+      });
     }
 
     function setLanguage(nextLang) {
@@ -2339,6 +2426,12 @@
           return '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M9.5 3.25H12.75V6.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path><path d="M7 9L12.75 3.25" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path><path d="M6.25 4H4.75A1.5 1.5 0 0 0 3.25 5.5v5.75a1.5 1.5 0 0 0 1.5 1.5h5.75a1.5 1.5 0 0 0 1.5-1.5v-1.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>';
         case 'note':
           return '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M5.25 2.75h4.8l2.2 2.2v7.3a1.5 1.5 0 0 1-1.5 1.5h-5.5a1.5 1.5 0 0 1-1.5-1.5v-8a1.5 1.5 0 0 1 1.5-1.5Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.4"></path><path d="M9.9 2.9v2.1h2.1" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.4"></path><path d="M5.8 7h4.4M5.8 9.3h4.4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.4"></path></svg>';
+        case 'refresh':
+          return '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13 5.75A5.5 5.5 0 0 0 3.6 4.1" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path><path d="M3.75 1.9v2.55H6.3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path><path d="M3 10.25A5.5 5.5 0 0 0 12.4 11.9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path><path d="M12.25 14.1v-2.55H9.7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path></svg>';
+        case 'trash':
+          return '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3.75 4.5h8.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"></path><path d="M6.1 4.5V3.6c0-.47.38-.85.85-.85h2.1c.47 0 .85.38.85.85v.9" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"></path><path d="M4.75 4.5l.48 7.2c.04.61.55 1.08 1.16 1.08h3.22c.61 0 1.12-.47 1.16-1.08l.48-7.2" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="1.5"></path><path d="M6.8 6.55v4.2M9.2 6.55v4.2" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"></path></svg>';
+        case 'target':
+          return '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"></circle><circle cx="8" cy="8" r="2.35" fill="none" stroke="currentColor" stroke-width="1.5"></circle><path d="M8 1.75v1.5M8 12.75v1.5M14.25 8h-1.5M3.25 8h-1.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"></path></svg>';
         default:
           return '';
       }
@@ -3297,6 +3390,9 @@
         }
         openBookmakerTabs(selectedArbOpp);
       });
+    }
+    if (arbCalcResetBtn) {
+      arbCalcResetBtn.addEventListener('click', () => clearArbCalculatorSelection());
     }
     if (arbCalcTotalInput) {
       arbCalcTotalInput.addEventListener('change', () => rebalanceArbCalculator('total'));
@@ -4569,11 +4665,33 @@
       if (!arbCalculatorState || !selectedArbOpp || legs.length < 2) {
         arbCalcEmpty.classList.remove('hidden');
         arbCalcBody.classList.add('hidden');
+        if (arbCalcStripRoi) {
+          arbCalcStripRoi.textContent = '-';
+          arbCalcStripRoi.parentElement?.classList.remove('is-gain', 'is-loss');
+        }
+        if (arbCalcStripSport) arbCalcStripSport.textContent = '-';
+        if (arbCalcEvent) arbCalcEvent.textContent = '';
+        if (arbCalcMarket) arbCalcMarket.textContent = '';
+        if (arbCalcKickoff) arbCalcKickoff.innerHTML = '';
+        if (arbCalcProfit) arbCalcProfit.classList.remove('gain', 'loss');
+        if (arbCalcRoi) arbCalcRoi.classList.remove('gain', 'loss');
         if (arbCalcMeta) arbCalcMeta.innerHTML = '';
         if (arbCalcBadges) arbCalcBadges.innerHTML = '';
+        if (arbCalcModeChip) {
+          arbCalcModeChip.textContent = '-';
+          arbCalcModeChip.classList.remove('is-total', 'is-base');
+        }
+        if (arbCalcAutoSplitBtn) arbCalcAutoSplitBtn.classList.remove('is-active');
+        if (arbCalcResetBtn) arbCalcResetBtn.disabled = true;
         if (arbCalcOpenBtn) arbCalcOpenBtn.disabled = true;
         arbCalcLegRefs.forEach((refs) => {
           refs.section?.classList.add('hidden');
+          refs.section?.classList.remove('is-base-leg');
+          if (refs.baseBtn) {
+            refs.baseBtn.classList.remove('is-active');
+            refs.baseBtn.setAttribute('aria-pressed', 'false');
+          }
+          if (refs.sub) refs.sub.innerHTML = '';
           if (refs.openBtn) refs.openBtn.disabled = true;
         });
         return;
@@ -4597,15 +4715,29 @@
       const sportLabel = translateSportLabel(selectedArbOpp.sport_display || selectedArbOpp.sport || '');
       const marketLabel = formatMarket(selectedArbOpp);
       const startLabel = formatDateTime(selectedArbOpp.commence_time);
+      const kickoffParts = formatCompactDateParts(selectedArbOpp.commence_time);
+      const kickoffCountdown = formatKickoffCountdown(selectedArbOpp.commence_time);
+      const baseRoi = Number(selectedArbOpp.roi_percent);
+      if (arbCalcStripRoi) {
+        arbCalcStripRoi.textContent = Number.isFinite(baseRoi) ? formatPercent(baseRoi) : '-';
+        arbCalcStripRoi.parentElement?.classList.toggle('is-gain', baseRoi > 0);
+        arbCalcStripRoi.parentElement?.classList.toggle('is-loss', baseRoi < 0);
+      }
+      if (arbCalcStripSport) {
+        arbCalcStripSport.textContent = sportLabel || '-';
+      }
       arbCalcEvent.textContent = selectedArbOpp.event || '';
-      arbCalcMarket.textContent = t('arb_calc_market_time', {
-        market: marketLabel,
-        time: startLabel,
-      });
+      arbCalcMarket.textContent = marketLabel;
+      if (arbCalcKickoff) {
+        arbCalcKickoff.innerHTML = `
+          <span class="arb-calc-kickoff-date">${escapeHtml(kickoffParts.date || t('tbd'))}</span>
+          ${kickoffParts.time ? `<span class="arb-calc-kickoff-time mono">${escapeHtml(kickoffParts.time)}</span>` : ''}
+          <span class="arb-calc-kickoff-countdown" title="${escapeHtml(startLabel)}">${arbIcon('clock')}<span>${escapeHtml(kickoffCountdown)}</span></span>
+        `;
+      }
       const hasExchange = Boolean(selectedArbOpp.has_exchange);
       if (arbCalcMeta) {
         const metaHtml = [
-          formatArbMetaPill(sportLabel),
           formatArbMetaPill(marketLabel),
           formatArbMetaPill(startLabel),
         ].filter(Boolean).join('');
@@ -4616,6 +4748,24 @@
       if (arbCalcOpenBtn) {
         const hasOpenTargets = collectBookTargets(selectedArbOpp).length > 0;
         arbCalcOpenBtn.disabled = !hasOpenTargets;
+      }
+      if (arbCalcResetBtn) {
+        arbCalcResetBtn.disabled = false;
+      }
+      if (arbCalcAutoSplitBtn) {
+        const isTotalMode = !arbCalculatorState?.mode || arbCalculatorState.mode === 'total';
+        arbCalcAutoSplitBtn.classList.toggle('is-active', isTotalMode);
+        arbCalcAutoSplitBtn.setAttribute('aria-pressed', isTotalMode ? 'true' : 'false');
+      }
+      if (arbCalcModeChip) {
+        const mode = arbCalculatorState?.mode || 'total';
+        const isBaseMode = typeof mode === 'string' && mode.startsWith('base_');
+        const baseIndex = isBaseMode ? Number(mode.slice(5)) + 1 : null;
+        arbCalcModeChip.textContent = isBaseMode && Number.isFinite(baseIndex)
+          ? t('arb_calc_mode_base', { index: baseIndex })
+          : t('arb_calc_mode_total');
+        arbCalcModeChip.classList.toggle('is-total', !isBaseMode);
+        arbCalcModeChip.classList.toggle('is-base', isBaseMode);
       }
 
       if (arbCalcBadges) {
@@ -4633,6 +4783,7 @@
         if (!leg) {
           refs.section?.classList.add('hidden');
           refs.section?.classList.remove('is-over-limit');
+          if (refs.sub) refs.sub.innerHTML = '';
           if (refs.info) {
             refs.info.innerHTML = '';
             refs.info.classList.add('hidden');
@@ -4644,14 +4795,43 @@
         refs.section?.classList.remove('hidden');
         const point = leg.point !== undefined && leg.point !== null ? ` (${formatLine(leg.point)})` : '';
         if (refs.title) refs.title.textContent = `${leg.outcome || '-'}${point}`;
+        const isBaseMode = arbCalculatorState?.mode === `base_${idx}`;
         const maxStake = Number(leg.maxStake);
         const currentStake = Number(leg.stake || 0);
+        const legPayout = Number.isFinite(leg.odds) && Number.isFinite(currentStake)
+          ? roundMoney(currentStake * leg.odds)
+          : NaN;
+        const legReturnPercent = totalStake > 0 && Number.isFinite(legPayout)
+          ? ((legPayout - totalStake) / totalStake) * 100
+          : NaN;
         const metaHtml = formatArbCalcLegMeta(leg);
+        if (refs.sub) {
+          const subParts = [];
+          if (isBaseMode) {
+            subParts.push(`<span class="arb-calc-leg-detail arb-calc-leg-detail-chip">${escapeHtml(t('arb_calc_base_leg'))}</span>`);
+          }
+          if (Number.isFinite(legReturnPercent)) {
+            subParts.push(`
+              <span class="arb-calc-leg-edge ${legReturnPercent > 0 ? 'gain' : legReturnPercent < 0 ? 'loss' : ''}">
+                ${escapeHtml(formatPercent(legReturnPercent))}
+              </span>
+            `);
+          }
+          if (Number.isFinite(legPayout)) {
+            subParts.push(`<span class="arb-calc-leg-detail">${escapeHtml(t('arb_calc_payout'))}: ${escapeHtml(formatCurrency(legPayout))}</span>`);
+          }
+          refs.sub.innerHTML = subParts.join('');
+        }
         if (refs.info) {
           refs.info.innerHTML = metaHtml;
           refs.info.classList.toggle('hidden', !metaHtml);
         }
         if (refs.openBtn) refs.openBtn.disabled = !normalizeUrl(resolveArbLegOpenUrl(leg, selectedArbOpp));
+        if (refs.baseBtn) {
+          refs.baseBtn.classList.toggle('is-active', isBaseMode);
+          refs.baseBtn.setAttribute('aria-pressed', isBaseMode ? 'true' : 'false');
+        }
+        refs.section?.classList.toggle('is-base-leg', isBaseMode);
         refs.section?.classList.toggle('is-over-limit', Number.isFinite(maxStake) && currentStake > maxStake + 1e-9);
         if (refs.oddsInput) refs.oddsInput.value = leg.odds ? leg.odds.toFixed(2) : '';
         if (refs.stakeInput) refs.stakeInput.value = roundMoney(currentStake).toFixed(2);
@@ -4665,6 +4845,12 @@
         arbCalcProfit.textContent = '-';
         arbCalcProfit.classList.remove('gain', 'loss');
         arbCalcRoi.textContent = '-';
+        arbCalcRoi.classList.remove('gain', 'loss');
+        if (arbCalcStripRoi) {
+          arbCalcStripRoi.textContent = Number.isFinite(baseRoi) ? formatPercent(baseRoi) : '-';
+          arbCalcStripRoi.parentElement?.classList.toggle('is-gain', baseRoi > 0);
+          arbCalcStripRoi.parentElement?.classList.toggle('is-loss', baseRoi < 0);
+        }
         arbCalcWarning.textContent = t('arb_calc_invalid');
         arbCalcWarning.classList.remove('hidden');
         return;
@@ -4682,6 +4868,13 @@
       arbCalcMinPayout.textContent = formatCurrency(minPayout);
       arbCalcProfit.textContent = formatCurrency(profit);
       arbCalcRoi.textContent = formatPercent(roi);
+      arbCalcRoi.classList.toggle('gain', roi > 0);
+      arbCalcRoi.classList.toggle('loss', roi < 0);
+      if (arbCalcStripRoi) {
+        arbCalcStripRoi.textContent = formatPercent(roi);
+        arbCalcStripRoi.parentElement?.classList.toggle('is-gain', roi > 0);
+        arbCalcStripRoi.parentElement?.classList.toggle('is-loss', roi < 0);
+      }
       arbCalcProfit.classList.toggle('gain', profit > 0);
       arbCalcProfit.classList.toggle('loss', profit < 0);
       if (arbCalcBadges) {
@@ -5312,18 +5505,26 @@
 
     function formatArbCalcLegMeta(leg) {
       if (!leg) return '';
-      const chips = [];
       const maxStake = Number(leg.maxStake);
-      if (leg.bookmaker) {
-        chips.push(`<span class="arb-calc-leg-chip">${escapeHtml(leg.bookmaker)}</span>`);
+      const noteParts = [];
+      const bookmaker = leg.bookmaker || t('unknown');
+      const odds = Number.isFinite(Number(leg.odds)) ? formatOddsDisplay(leg.odds) : '-';
+      if (Number.isFinite(maxStake)) {
+        noteParts.push(t('available_label', { amount: formatCurrency(maxStake) }));
       }
       if (leg.is_exchange) {
-        chips.push(`<span class="arb-calc-leg-chip exchange">${escapeHtml(t('exchange'))}</span>`);
+        noteParts.push(t('exchange'));
       }
-      if (Number.isFinite(maxStake)) {
-        chips.push(`<span class="arb-calc-leg-chip">${escapeHtml(t('available_label', { amount: formatCurrency(maxStake) }))}</span>`);
-      }
-      return chips.join('');
+      return `
+        <div class="arb-calc-bookbox ${leg.is_exchange ? 'exchange' : ''}">
+          <div class="arb-calc-bookbox-main">
+            <span class="arb-calc-bookbox-book">${escapeHtml(bookmaker)}</span>
+            <span class="mono arb-calc-bookbox-price">${escapeHtml(odds)}</span>
+            <span class="arb-calc-bookbox-caret" aria-hidden="true">&#709;</span>
+          </div>
+          ${noteParts.length ? `<div class="arb-calc-bookbox-sub">${escapeHtml(noteParts.join(' | '))}</div>` : ''}
+        </div>
+      `;
     }
 
     function formatArbMetaPill(label, extraClass = '') {
