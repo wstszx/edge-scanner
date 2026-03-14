@@ -1,0 +1,320 @@
+{
+  "source_saved_at": "2026-03-14T07:38:29Z",
+  "polymarket_h2h": {
+    "id": "265359",
+    "sport_key": "basketball_nba",
+    "home_team": "76ers",
+    "away_team": "Kings",
+    "commence_time": "2026-03-20T02:00:00Z",
+    "bookmakers": [
+      {
+        "key": "polymarket",
+        "title": "Polymarket",
+        "event_id": "265359",
+        "event_url": "https://polymarket.com/event/nba-phi-sac-2026-03-19",
+        "markets": [
+          {
+            "key": "h2h",
+            "outcomes": [
+              {
+                "name": "76ers",
+                "price": 1.904762
+              },
+              {
+                "name": "Kings",
+                "price": 2.105263
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "pairs": {
+    "san_jose_totals_bookmaker_vs_sx": {
+      "market": "totals",
+      "events": {
+        "bookmaker_xyz": {
+          "id": "1006000000000029214404",
+          "sport_key": "icehockey_nhl",
+          "home_team": "San Jose Sharks",
+          "away_team": "Montreal Canadiens",
+          "commence_time": "2026-03-14T23:07:00Z",
+          "bookmakers": [
+            {
+              "key": "bookmaker_xyz",
+              "title": "bookmaker.xyz",
+              "event_id": "1006000000000029214404",
+              "event_url": "https://bookmaker.xyz/sports/san-jose-sharks-montreal-canadiens-1006000000000029214404",
+              "markets": [
+                {
+                  "key": "totals",
+                  "outcomes": [
+                    {
+                      "name": "Over",
+                      "price": 1.99,
+                      "point": 6.5
+                    },
+                    {
+                      "name": "Under",
+                      "price": 1.81,
+                      "point": 6.5
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "sx_bet": {
+          "id": "L18004876",
+          "sport_key": "icehockey_nhl",
+          "home_team": "Montreal Canadiens",
+          "away_team": "San Jose Sharks",
+          "commence_time": "2026-03-14T23:00:00Z",
+          "bookmakers": [
+            {
+              "key": "sx_bet",
+              "title": "SX Bet",
+              "event_id": "L18004876",
+              "event_url": "https://sx.bet/event/L18004876",
+              "markets": [
+                {
+                  "key": "totals",
+                  "outcomes": [
+                    {
+                      "name": "Over",
+                      "price": 1.891253,
+                      "point": 6.5,
+                      "stake": 12.106392
+                    },
+                    {
+                      "name": "Under",
+                      "price": 2.203857,
+                      "point": 6.5,
+                      "stake": 806.425294
+                    }
+                  ]
+                },
+                {
+                  "key": "spreads",
+                  "outcomes": [
+                    {
+                      "name": "Montreal Canadiens",
+                      "price": 2.622951,
+                      "point": -1.5,
+                      "stake": 10.0
+                    },
+                    {
+                      "name": "San Jose Sharks",
+                      "price": 1.742919,
+                      "point": 1.5,
+                      "stake": 989.89
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expected": {
+        "roi_percent": 4.57,
+        "best_odds": [
+          {
+            "outcome": "Over",
+            "bookmaker_key": "bookmaker_xyz",
+            "price": 1.99,
+            "point": 6.5
+          },
+          {
+            "outcome": "Under",
+            "bookmaker_key": "sx_bet",
+            "price": 2.203857,
+            "point": 6.5
+          }
+        ]
+      }
+    },
+    "san_jose_spreads_betdex_vs_sx": {
+      "market": "spreads",
+      "events": {
+        "betdex": {
+          "id": "20583",
+          "sport_key": "icehockey_nhl",
+          "home_team": "Montreal Canadiens",
+          "away_team": "San Jose Sharks",
+          "commence_time": "2026-03-14T23:00:00Z",
+          "bookmakers": [
+            {
+              "key": "betdex",
+              "title": "BetDEX",
+              "event_id": "20583",
+              "event_url": "https://www.betdex.com/events/icehky/nhl/20583?market=359460",
+              "markets": [
+                {
+                  "key": "spreads",
+                  "outcomes": [
+                    {
+                      "name": "Montreal Canadiens",
+                      "price": 2.48,
+                      "point": -1.5,
+                      "stake": 582.92
+                    },
+                    {
+                      "name": "San Jose Sharks",
+                      "price": 1.59,
+                      "point": 1.5,
+                      "stake": 1462.24
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "sx_bet": {
+          "id": "L18004876",
+          "sport_key": "icehockey_nhl",
+          "home_team": "Montreal Canadiens",
+          "away_team": "San Jose Sharks",
+          "commence_time": "2026-03-14T23:00:00Z",
+          "bookmakers": [
+            {
+              "key": "sx_bet",
+              "title": "SX Bet",
+              "event_id": "L18004876",
+              "event_url": "https://sx.bet/event/L18004876",
+              "markets": [
+                {
+                  "key": "spreads",
+                  "outcomes": [
+                    {
+                      "name": "Montreal Canadiens",
+                      "price": 2.622951,
+                      "point": -1.5,
+                      "stake": 10.0
+                    },
+                    {
+                      "name": "San Jose Sharks",
+                      "price": 1.742919,
+                      "point": 1.5,
+                      "stake": 989.89
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expected": {
+        "roi_percent": 2.35,
+        "best_odds": [
+          {
+            "outcome": "Montreal Canadiens",
+            "bookmaker_key": "betdex",
+            "price": 2.48,
+            "point": -1.5
+          },
+          {
+            "outcome": "San Jose Sharks",
+            "bookmaker_key": "sx_bet",
+            "price": 1.742919,
+            "point": 1.5
+          }
+        ]
+      }
+    },
+    "atlanta_totals_betdex_vs_sx": {
+      "market": "totals",
+      "events": {
+        "betdex": {
+          "id": "20351",
+          "sport_key": "soccer_usa_mls",
+          "home_team": "Atlanta United",
+          "away_team": "Philadelphia Union",
+          "commence_time": "2026-03-14T19:15:00Z",
+          "bookmakers": [
+            {
+              "key": "betdex",
+              "title": "BetDEX",
+              "event_id": "20351",
+              "event_url": "https://www.betdex.com/events/football/mls/20351?market=354189",
+              "markets": [
+                {
+                  "key": "totals",
+                  "outcomes": [
+                    {
+                      "name": "Over",
+                      "price": 1.92,
+                      "point": 2.5,
+                      "stake": 525.8
+                    },
+                    {
+                      "name": "Under",
+                      "price": 2.0,
+                      "point": 2.5,
+                      "stake": 6.12
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "sx_bet": {
+          "id": "L18225577",
+          "sport_key": "soccer_usa_mls",
+          "home_team": "Atlanta United",
+          "away_team": "Philadelphia Union FC",
+          "commence_time": "2026-03-14T19:15:00Z",
+          "bookmakers": [
+            {
+              "key": "sx_bet",
+              "title": "SX Bet",
+              "event_id": "L18225577",
+              "event_url": "https://sx.bet/event/L18225577",
+              "markets": [
+                {
+                  "key": "totals",
+                  "outcomes": [
+                    {
+                      "name": "Over",
+                      "price": 2.083333,
+                      "point": 2.5,
+                      "stake": 264.72
+                    },
+                    {
+                      "name": "Under",
+                      "price": 2.150538,
+                      "point": 2.5,
+                      "stake": 264.76
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "expected": {
+        "roi_percent": 1.43,
+        "best_odds": [
+          {
+            "outcome": "Over",
+            "bookmaker_key": "betdex",
+            "price": 1.92,
+            "point": 2.5
+          },
+          {
+            "outcome": "Under",
+            "bookmaker_key": "sx_bet",
+            "price": 2.150538,
+            "point": 2.5
+          }
+        ]
+      }
+    }
+  }
+}

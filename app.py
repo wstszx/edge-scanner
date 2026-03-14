@@ -453,6 +453,8 @@ def _normalize_server_auto_scan_config(raw: object) -> Optional[dict]:
         interval_minutes = (
             int(float(raw.get("intervalMinutes")))
             if raw.get("intervalMinutes") is not None
+            else int(float(raw.get("interval_minutes")))
+            if raw.get("interval_minutes") is not None
             else ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES
         )
     except (TypeError, ValueError):

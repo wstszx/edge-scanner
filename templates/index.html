@@ -943,6 +943,7 @@
     data-kelly-options='{{ kelly_options | tojson }}' data-bookmaker-links='{{ bookmaker_links | tojson }}'
     data-custom-provider-keys='{{ custom_provider_keys | tojson }}' hidden></div>
 
+  <script src="{{ url_for('static', filename='scan_form_helpers.js') }}"></script>
   <script>
     const configEl = document.getElementById('edge-scanner-config');
     const parseConfigJson = (value, fallback) => {
@@ -972,6 +973,7 @@
         customProviderKeys: parseConfigJson(configEl.dataset.customProviderKeys, []),
       }
       : {};
+    const scanFormHelpers = window.EdgeScannerScanFormHelpers || {};
     let bookmakerLinks = { ...(appConfig.bookmakerLinks || {}) };
     const hasEnvKey = appConfig.hasEnvKey === true || appConfig.hasEnvKey === 'true';
     const providerOnlyMode = appConfig.providerOnlyMode === true || appConfig.providerOnlyMode === 'true';
@@ -2890,35 +2892,67 @@
     }
 
     function selectedBookmakers(useAllBookmakers) {
-      const values = useAllBookmakers
-        ? Array.from(form?.querySelectorAll('input[name="bookmakers"]') || []).map((el) => el.value)
-        : Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
-      if (!providerOnlyMode) return values;
-      const providerSet = new Set(appConfig.customProviderKeys || []);
-      return values.filter((value) => providerSet.has(value));
+      const allBookmakers = Array.from(form?.querySelectorAll('input[name="bookmakers"]') || []).map((el) => el.value);
+      const checkedBookmakers = Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
+      if (scanFormHelpers.selectedBookmakers) {
+        return scanFormHelpers.selectedBookmakers({
+          useAllBookmakers,
+          allBookmakers,
+          checkedBookmakers,
+          providerOnlyMode,
+          customProviderKeys: appConfig.customProviderKeys || [],
+        });
+      }
+      return useAllBookmakers ? allBookmakers : checkedBookmakers;
     }
 
     function selectedIncludeProviders(useAllBookmakers, bookmakers) {
-      const providerSet = new Set(appConfig.customProviderKeys || []);
-      if (useAllBookmakers) return Array.from(providerSet);
-      const picked = [];
-      for (const key of bookmakers || []) {
-        if (!providerSet.has(key)) continue;
-        if (!picked.includes(key)) picked.push(key);
+      if (scanFormHelpers.selectedIncludeProviders) {
+        return scanFormHelpers.selectedIncludeProviders({
+          useAllBookmakers,
+          providerOnlyMode,
+          bookmakers,
+          customProviderKeys: appConfig.customProviderKeys || [],
+        });
       }
-      if (picked.length || !providerOnlyMode) return picked;
-      return Array.from(providerSet);
+      return [];
     }
 
     function buildServerAutoScanConfigPayload() {
       const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
       const regions = selectedRegions();
       const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
-      const bookmakers = selectedBookmakers(useAllBookmakers);
-      const includeProviders = selectedIncludeProviders(useAllBookmakers, bookmakers);
       const commissionValue = commissionInput && Number.isFinite(parseFloat(commissionInput.value))
         ? parseFloat(commissionInput.value)
         : defaultCommissionPercent;
+      if (scanFormHelpers.buildServerAutoScanConfigPayload) {
+        return scanFormHelpers.buildServerAutoScanConfigPayload({
+          sports,
+          regions,
+          useAllBookmakers,
+          allBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]') || []).map((el) => el.value),
+          checkedBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value),
+          providerOnlyMode,
+          customProviderKeys: appConfig.customProviderKeys || [],
+          allSports: allSportsToggle ? allSportsToggle.checked : false,
+          allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
+          stake: parseFloat(stakeInput?.value) || 100,
+          commission: commissionValue,
+          sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
+          minEdgePercent: parseFloat(minEdgeInput?.value) || appConfig.defaultMinEdgePercent || 1,
+          bankroll: parseFloat(bankrollInput?.value) || appConfig.defaultBankroll || 1000,
+          kellyFraction: parseFloat(kellySelect?.value) || appConfig.defaultKellyFraction || 0.25,
+          intervalMinutes: readAutoScanMinutes(),
+          defaults: {
+            allMarkets: Boolean(appConfig.defaultAllMarkets),
+            sharpBook: appConfig.defaultSharpBook,
+            minEdgePercent: appConfig.defaultMinEdgePercent || 1,
+            bankroll: appConfig.defaultBankroll || 1000,
+            kellyFraction: appConfig.defaultKellyFraction || 0.25,
+            commission: defaultCommissionPercent,
+          },
+        });
+      }
       return {
         enabled: true,
         intervalMinutes: readAutoScanMinutes(),
@@ -2928,8 +2962,8 @@
           allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
           stake: parseFloat(stakeInput?.value) || 100,
           regions,
-          bookmakers,
-          includeProviders,
+          bookmakers: selectedBookmakers(useAllBookmakers),
+          includeProviders: selectedIncludeProviders(useAllBookmakers, selectedBookmakers(useAllBookmakers)),
           commission: commissionValue,
           sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
           minEdgePercent: parseFloat(minEdgeInput?.value) || appConfig.defaultMinEdgePercent || 1,
@@ -2980,22 +3014,50 @@
       const commissionValue = commissionInput && Number.isFinite(parseFloat(commissionInput.value))
         ? parseFloat(commissionInput.value)
         : defaultCommissionPercent;
-      runScan({
-        apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
-        sports,
-        bookmakers,
-        includeProviders,
-        regions,
-        commission: commissionValue,
-        allSports: useAllSports,
-        allBookmakers: useAllBookmakers,
-        allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
-        stake: stakeValue,
-        sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
-        minEdgePercent: parseFloat(minEdgeInput?.value) || appConfig.defaultMinEdgePercent || 1,
-        bankroll: parseFloat(bankrollInput?.value) || appConfig.defaultBankroll || 1000,
-        kellyFraction: parseFloat(kellySelect?.value) || appConfig.defaultKellyFraction || 0.25,
-      });
+      const requestPayload = scanFormHelpers.buildRunScanPayload
+        ? scanFormHelpers.buildRunScanPayload({
+          apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
+          sports,
+          regions,
+          useAllBookmakers,
+          allBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]') || []).map((el) => el.value),
+          checkedBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value),
+          providerOnlyMode,
+          customProviderKeys: appConfig.customProviderKeys || [],
+          commission: commissionValue,
+          allSports: useAllSports,
+          allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
+          stake: stakeValue,
+          sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
+          minEdgePercent: parseFloat(minEdgeInput?.value) || appConfig.defaultMinEdgePercent || 1,
+          bankroll: parseFloat(bankrollInput?.value) || appConfig.defaultBankroll || 1000,
+          kellyFraction: parseFloat(kellySelect?.value) || appConfig.defaultKellyFraction || 0.25,
+          defaults: {
+            allMarkets: Boolean(appConfig.defaultAllMarkets),
+            sharpBook: appConfig.defaultSharpBook,
+            minEdgePercent: appConfig.defaultMinEdgePercent || 1,
+            bankroll: appConfig.defaultBankroll || 1000,
+            kellyFraction: appConfig.defaultKellyFraction || 0.25,
+            commission: defaultCommissionPercent,
+          },
+        })
+        : {
+          apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
+          sports,
+          bookmakers,
+          includeProviders,
+          regions,
+          commission: commissionValue,
+          allSports: useAllSports,
+          allBookmakers: useAllBookmakers,
+          allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
+          stake: stakeValue,
+          sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
+          minEdgePercent: parseFloat(minEdgeInput?.value) || appConfig.defaultMinEdgePercent || 1,
+          bankroll: parseFloat(bankrollInput?.value) || appConfig.defaultBankroll || 1000,
+          kellyFraction: parseFloat(kellySelect?.value) || appConfig.defaultKellyFraction || 0.25,
+        };
+      runScan(requestPayload);
     }
 
     function configureAutoScan() {
@@ -3169,22 +3231,50 @@
         ? parseFloat(commissionInput.value)
         : defaultCommissionPercent;
       await syncServerAutoScanConfig();
-      await runScan({
-        apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
-        sports,
-        regions,
-        bookmakers,
-        includeProviders,
-        commission: commissionValue,
-        allSports: allSportsToggle.checked,
-        allBookmakers: useAllBookmakers,
-        allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
-        stake: stakeValue,
-        sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
-        minEdgePercent: parseFloat(minEdgeInput?.value) || appConfig.defaultMinEdgePercent || 1,
-        bankroll: parseFloat(bankrollInput?.value) || appConfig.defaultBankroll || 1000,
-        kellyFraction: parseFloat(kellySelect?.value) || appConfig.defaultKellyFraction || 0.25,
-      });
+      const requestPayload = scanFormHelpers.buildRunScanPayload
+        ? scanFormHelpers.buildRunScanPayload({
+          apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
+          sports,
+          regions,
+          useAllBookmakers,
+          allBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]') || []).map((el) => el.value),
+          checkedBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value),
+          providerOnlyMode,
+          customProviderKeys: appConfig.customProviderKeys || [],
+          commission: commissionValue,
+          allSports: allSportsToggle.checked,
+          allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
+          stake: stakeValue,
+          sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
+          minEdgePercent: parseFloat(minEdgeInput?.value) || appConfig.defaultMinEdgePercent || 1,
+          bankroll: parseFloat(bankrollInput?.value) || appConfig.defaultBankroll || 1000,
+          kellyFraction: parseFloat(kellySelect?.value) || appConfig.defaultKellyFraction || 0.25,
+          defaults: {
+            allMarkets: Boolean(appConfig.defaultAllMarkets),
+            sharpBook: appConfig.defaultSharpBook,
+            minEdgePercent: appConfig.defaultMinEdgePercent || 1,
+            bankroll: appConfig.defaultBankroll || 1000,
+            kellyFraction: appConfig.defaultKellyFraction || 0.25,
+            commission: defaultCommissionPercent,
+          },
+        })
+        : {
+          apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
+          sports,
+          regions,
+          bookmakers,
+          includeProviders,
+          commission: commissionValue,
+          allSports: allSportsToggle.checked,
+          allBookmakers: useAllBookmakers,
+          allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
+          stake: stakeValue,
+          sharpBook: sharpSelect?.value || appConfig.defaultSharpBook,
+          minEdgePercent: parseFloat(minEdgeInput?.value) || appConfig.defaultMinEdgePercent || 1,
+          bankroll: parseFloat(bankrollInput?.value) || appConfig.defaultBankroll || 1000,
+          kellyFraction: parseFloat(kellySelect?.value) || appConfig.defaultKellyFraction || 0.25,
+        };
+      await runScan(requestPayload);
     });
 
     stakeInput.addEventListener('input', () => {

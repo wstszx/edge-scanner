@@ -245,6 +245,7 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(polymarket, "_websocket_realtime_enabled", return_value=True),
             patch.object(polymarket, "_market_websocket_enabled", return_value=True),
             patch.object(polymarket, "_sports_websocket_enabled", return_value=False),
+            patch.object(polymarket, "_http_clob_depth_enabled", return_value=True),
             patch.object(polymarket, "_ws_warmup_seconds", return_value=0.0),
             patch.object(polymarket, "_get_realtime_manager", return_value=manager),
             patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={})),
