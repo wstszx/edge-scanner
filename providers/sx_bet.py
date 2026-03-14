@@ -82,6 +82,23 @@ SPORT_LEAGUE_HINTS: Dict[str, Sequence[str]] = {
     "soccer_france_ligue_one": ("ligue 1", "ligue one"),
     "soccer_usa_mls": ("mls", "major league soccer"),
 }
+SX_PUBLIC_SPORT_SLUGS_BY_PREFIX: Dict[str, str] = {
+    "basketball": "basketball",
+    "baseball": "baseball",
+    "icehockey": "hockey",
+    "soccer": "soccer",
+    "americanfootball": "football",
+}
+SX_PUBLIC_SPORT_SLUGS_BY_ID: Dict[int, str] = {
+    1: "basketball",
+    2: "hockey",
+    3: "baseball",
+    5: "soccer",
+    8: "football",
+}
+SX_PUBLIC_LEAGUE_SLUG_OVERRIDES: Dict[str, str] = {
+    "major league soccer": "mls",
+}
 
 UPCOMING_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
@@ -850,8 +867,46 @@ def _moneyline_decimal_from_outcome_payload(payload) -> Optional[float]:
     return _moneyline_decimal_from_american(payload.get("americanOdds"))
 
 
-def _event_url(event_id: object) -> str:
-    raw = _normalize_text(event_id)
+def _slugify_public_segment(value: object) -> str:
+    token = _normalize_token(value)
+    if not token:
+        return ""
+    return token.replace(" ", "-")
+
+
+def _public_sport_slug(event: dict) -> str:
+    sport_key = _normalize_text(event.get("sport_key")).lower()
+    for prefix, slug in SX_PUBLIC_SPORT_SLUGS_BY_PREFIX.items():
+        if sport_key.startswith(prefix):
+            return slug
+    sport_id = _as_int(event.get("sport_id") or event.get("sportId"))
+    if sport_id is not None and sport_id in SX_PUBLIC_SPORT_SLUGS_BY_ID:
+        return SX_PUBLIC_SPORT_SLUGS_BY_ID[sport_id]
+    sport_label = _normalize_text(event.get("sport_label") or event.get("sportLabel"))
+    return _slugify_public_segment(sport_label)
+
+
+def _public_league_slug(event: dict) -> str:
+    league_label = _normalize_text(event.get("league_label") or event.get("leagueLabel"))
+    if not league_label:
+        return ""
+    override = SX_PUBLIC_LEAGUE_SLUG_OVERRIDES.get(league_label.strip().lower())
+    if override:
+        return override
+    return _slugify_public_segment(league_label)
+
+
+def _event_url(event: object) -> str:
+    if isinstance(event, dict):
+        event_id = _normalize_text(event.get("event_id") or event.get("eventId") or event.get("id"))
+        sport_slug = _public_sport_slug(event)
+        league_slug = _public_league_slug(event)
+        if event_id and sport_slug and league_slug:
+            return f"{_public_base()}/{sport_slug}/{league_slug}/game-lines/{event_id}"
+        if event_id:
+            return f"{_public_base()}/event/{event_id}"
+        return ""
+    raw = _normalize_text(event)
     if not raw:
         return ""
     return f"{_public_base()}/event/{raw}"
@@ -1196,6 +1251,8 @@ def _build_fixtures_from_markets_active(
                 "teamOne": team_one,
                 "teamTwo": team_two,
                 "gameTime": row.get("gameTime"),
+                "sportId": row.get("sportId"),
+                "sportLabel": row.get("sportLabel"),
                 "leagueLabel": row.get("leagueLabel"),
                 "leagueId": row.get("leagueId"),
                 "markets": [],
@@ -1249,6 +1306,14 @@ def _load_upcoming_fixtures_summary(
                 if not isinstance(fixture, dict):
                     continue
                 fixture_obj = dict(fixture)
+                if not fixture_obj.get("sportId"):
+                    fixture_obj["sportId"] = sport.get("sportId")
+                if not fixture_obj.get("sportLabel"):
+                    fixture_obj["sportLabel"] = (
+                        sport.get("sportLabel")
+                        or sport.get("label")
+                        or sport.get("name")
+                    )
                 if not fixture_obj.get("leagueLabel"):
                     fixture_obj["leagueLabel"] = league.get("leagueLabel")
                 if not fixture_obj.get("leagueId"):
@@ -1298,6 +1363,14 @@ async def _load_upcoming_fixtures_summary_async(
                 if not isinstance(fixture, dict):
                     continue
                 fixture_obj = dict(fixture)
+                if not fixture_obj.get("sportId"):
+                    fixture_obj["sportId"] = sport.get("sportId")
+                if not fixture_obj.get("sportLabel"):
+                    fixture_obj["sportLabel"] = (
+                        sport.get("sportLabel")
+                        or sport.get("label")
+                        or sport.get("name")
+                    )
                 if not fixture_obj.get("leagueLabel"):
                     fixture_obj["leagueLabel"] = league.get("leagueLabel")
                 if not fixture_obj.get("leagueId"):
@@ -2035,6 +2108,9 @@ async def fetch_events_async(
                     {
                         "id": fixture_id or str(market_hash or ""),
                         "event_id": fixture_event_id or str(market_hash or ""),
+                        "sport_id": fixture.get("sportId"),
+                        "sport_label": fixture.get("sportLabel"),
+                        "league_label": fixture.get("leagueLabel"),
                         "home_team": team_one,
                         "away_team": team_two,
                         "commence_time": commence,
@@ -2167,6 +2243,9 @@ async def fetch_events_async(
                 "id": candidate.get("id") or event_id,
                 "event_id": str(event_id),
                 "sport_key": sport_key,
+                "sport_id": candidate.get("sport_id"),
+                "sport_label": candidate.get("sport_label"),
+                "league_label": candidate.get("league_label"),
                 "home_team": home_team,
                 "away_team": away_team,
                 "commence_time": candidate.get("commence_time"),
@@ -2226,7 +2305,7 @@ async def fetch_events_async(
                         "key": PROVIDER_KEY,
                         "title": PROVIDER_TITLE,
                         "event_id": event["event_id"],
-                        "event_url": _event_url(event["event_id"]),
+                        "event_url": _event_url(event),
                         "markets": market_list,
                     }
                 ],

@@ -45,7 +45,7 @@
               "key": "bookmaker_xyz",
               "title": "bookmaker.xyz",
               "event_id": "1006000000000029214404",
-              "event_url": "https://bookmaker.xyz/sports/san-jose-sharks-montreal-canadiens-1006000000000029214404",
+              "event_url": "https://bookmaker.xyz/polygon/sports/ice-hockey/usa/nhl/1006000000000029214404",
               "markets": [
                 {
                   "key": "totals",
@@ -77,7 +77,7 @@
               "key": "sx_bet",
               "title": "SX Bet",
               "event_id": "L18004876",
-              "event_url": "https://sx.bet/event/L18004876",
+              "event_url": "https://sx.bet/hockey/nhl/game-lines/L18004876",
               "markets": [
                 {
                   "key": "totals",
@@ -184,7 +184,7 @@
               "key": "sx_bet",
               "title": "SX Bet",
               "event_id": "L18004876",
-              "event_url": "https://sx.bet/event/L18004876",
+              "event_url": "https://sx.bet/hockey/nhl/game-lines/L18004876",
               "markets": [
                 {
                   "key": "spreads",
@@ -274,7 +274,7 @@
               "key": "sx_bet",
               "title": "SX Bet",
               "event_id": "L18225577",
-              "event_url": "https://sx.bet/event/L18225577",
+              "event_url": "https://sx.bet/soccer/mls/game-lines/L18225577",
               "markets": [
                 {
                   "key": "totals",

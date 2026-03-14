@@ -90,6 +90,14 @@ CHAIN_ID_TO_ENVIRONMENT = {
     137: "PolygonUSDT",
     8453: "BaseWETH",
 }
+ENVIRONMENT_TO_SLUG = {
+    environment.strip().lower(): CHAIN_ID_TO_SLUG[chain_id]
+    for chain_id, environment in CHAIN_ID_TO_ENVIRONMENT.items()
+    if chain_id in CHAIN_ID_TO_SLUG and environment.strip()
+}
+PUBLIC_COUNTRY_SLUG_OVERRIDES = {
+    "united-states": "usa",
+}
 
 BOOKMAKER_XYZ_SPORT_FILTERS: Dict[str, Dict[str, str]] = {
     "americanfootball_nfl": {
@@ -1599,10 +1607,22 @@ async def _load_conditions_snapshot_async(
 
 def _event_url(game: dict) -> str:
     base = _public_base()
+    environment = _normalize_text(game.get("__environment") or game.get("environment")).lower()
+    environment_slug = ENVIRONMENT_TO_SLUG.get(environment, environment if environment in CHAIN_ID_TO_SLUG.values() else "")
+    sport_slug = _normalize_text(((game.get("sport") if isinstance(game, dict) else {}) or {}).get("slug"))
+    country_slug = _normalize_text(((game.get("country") if isinstance(game, dict) else {}) or {}).get("slug"))
+    country_slug = PUBLIC_COUNTRY_SLUG_OVERRIDES.get(country_slug.lower(), country_slug) if country_slug else ""
+    league_slug = _normalize_text(((game.get("league") if isinstance(game, dict) else {}) or {}).get("slug"))
+    game_id = _normalize_text(game.get("gameId"))
+    if environment_slug and sport_slug and league_slug and game_id:
+        path_parts = [environment_slug, "sports", sport_slug]
+        if country_slug:
+            path_parts.append(country_slug)
+        path_parts.extend([league_slug, game_id])
+        return f"{base}/{'/'.join(quote(part, safe='') for part in path_parts)}"
     slug = _normalize_text(game.get("slug"))
     if slug:
         return f"{base}/sports/{quote(slug, safe='')}"
-    game_id = _normalize_text(game.get("gameId"))
     if game_id:
         return f"{base}/games/{quote(game_id, safe='')}"
     return base
