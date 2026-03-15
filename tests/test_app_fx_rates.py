@@ -89,6 +89,7 @@ class FxRateRouteTests(unittest.TestCase):
         self.assertIn('id="arb-calc-fx-refresh-btn"', html)
         self.assertIn('id="arb-calc-stake-base-a"', html)
         self.assertIn('id="arb-calc-payout-base-a"', html)
+        self.assertIn('id="arb-calc-leg-profit-a"', html)
         self.assertIn('id="arb-calc-total-note"', html)
         self.assertIn('id="arb-calc-min-payout-currency"', html)
         self.assertIn('id="arb-calc-profit-currency"', html)

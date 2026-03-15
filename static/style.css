@@ -4722,10 +4722,10 @@ body {
 .arb-calculator-card .arb-calc-grid-head {
   display: grid;
   min-width: 690px;
-  grid-template-columns: minmax(148px, 1.12fr) minmax(148px, 1.08fr) 30px 72px 84px 78px 58px 74px;
-  gap: 0.3rem;
+  grid-template-columns: minmax(122px, 1.08fr) minmax(126px, 1fr) 24px 58px 74px 68px 56px 78px 58px;
+  gap: 0.22rem;
   align-items: center;
-  padding: 0.22rem 0.62rem 0.16rem;
+  padding: 0.2rem 0.5rem 0.14rem;
   background: #efefef;
   color: #7f8c99;
   font-size: 0.6rem;
@@ -4747,11 +4747,11 @@ body {
 .arb-calculator-card .arb-calc-leg {
   display: grid;
   min-width: 690px;
-  grid-template-columns: minmax(148px, 1.12fr) minmax(148px, 1.08fr) 30px 72px 84px 78px 58px 74px;
-  gap: 0.3rem;
+  grid-template-columns: minmax(122px, 1.08fr) minmax(126px, 1fr) 24px 58px 74px 68px 56px 78px 58px;
+  gap: 0.22rem;
   align-items: center;
   min-height: 56px;
-  padding: 0.22rem 0.62rem;
+  padding: 0.22rem 0.5rem;
   border: 0;
   border-radius: 0;
   border-top: 1px solid rgba(111, 137, 161, 0.22);
@@ -4850,7 +4850,7 @@ body {
   display: grid;
   gap: 0.1rem;
   min-width: 0;
-  padding: 0.22rem 0.34rem;
+  padding: 0.2rem 0.28rem;
   border: 1px solid #5b6e84;
   border-radius: 6px;
   background: rgba(246, 255, 220, 0.92);
@@ -4873,14 +4873,14 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #4c6277;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
 }
 
 .arb-calculator-card .arb-calc-bookbox-price {
   margin-left: auto;
   color: #61778d;
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   font-weight: 700;
 }
 
@@ -4894,13 +4894,13 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #718495;
-  font-size: 0.54rem;
+  font-size: 0.52rem;
   font-weight: 700;
 }
 
 .arb-calculator-card .arb-calc-sync-btn {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
   border-radius: 999px;
@@ -4912,8 +4912,8 @@ body {
 }
 
 .arb-calculator-card .arb-calc-sync-btn svg {
-  width: 0.82rem;
-  height: 0.82rem;
+  width: 0.74rem;
+  height: 0.74rem;
 }
 
 .arb-calculator-card .arb-calc-sync-btn:hover,
@@ -4941,13 +4941,13 @@ body {
 .arb-calculator-card .arb-calc-input-cell input {
   width: 100%;
   min-height: 32px;
-  padding: 0.22rem 0.34rem;
+  padding: 0.2rem 0.28rem;
   border: 1px solid #5b6e84;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.96);
   color: #465c72;
   box-shadow: none;
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-weight: 700;
 }
 
@@ -4969,17 +4969,38 @@ body {
 
 .arb-calculator-card .arb-calc-payout-cell {
   min-height: 32px;
-  padding: 0.18rem 0.06rem;
+  padding: 0.16rem 0.04rem;
 }
 
 .arb-calculator-card .arb-calc-payout-cell strong {
   color: #5a7289;
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   line-height: 1;
 }
 
 .arb-calculator-card .arb-calc-payout-cell .arb-calc-cell-note {
   text-align: left;
+}
+
+.arb-calculator-card .arb-calc-profit-cell {
+  min-height: 32px;
+  padding: 0.16rem 0.04rem;
+}
+
+.arb-calculator-card .arb-calc-profit-cell strong {
+  display: block;
+  color: #4f657c;
+  font-size: 0.7rem;
+  line-height: 1;
+  text-align: right;
+}
+
+.arb-calculator-card .arb-calc-profit-cell strong.gain {
+  color: #2f7d4a;
+}
+
+.arb-calculator-card .arb-calc-profit-cell strong.loss {
+  color: #9e4e4e;
 }
 
 .arb-calculator-card .arb-calc-currency-cell {
@@ -4993,12 +5014,12 @@ body {
 .arb-calculator-card .arb-calc-total-currency {
   width: 100%;
   min-height: 32px;
-  padding: 0.18rem 1.5rem 0.18rem 0.34rem;
+  padding: 0.16rem 1.3rem 0.16rem 0.28rem;
   border: 1px solid #5b6e84;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.94);
   color: #52677d;
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   font-weight: 800;
   letter-spacing: 0.03em;
   appearance: none;
@@ -5008,9 +5029,9 @@ body {
     linear-gradient(45deg, transparent 50%, #5c7187 50%),
     linear-gradient(135deg, #5c7187 50%, transparent 50%);
   background-position:
-    calc(100% - 13px) calc(50% - 2px),
-    calc(100% - 8px) calc(50% - 2px);
-  background-size: 5px 5px, 5px 5px;
+    calc(100% - 11px) calc(50% - 2px),
+    calc(100% - 7px) calc(50% - 2px);
+  background-size: 4px 4px, 4px 4px;
   background-repeat: no-repeat;
 }
 
@@ -5023,12 +5044,12 @@ body {
 
 .arb-calculator-card .arb-calc-bet-btn {
   min-height: 32px;
-  padding: 0.26rem 0.34rem;
+  padding: 0.24rem 0.18rem;
   border: 0;
   border-radius: 6px;
   background: #4d5e71;
   color: #fff;
-  font-size: 0.68rem;
+  font-size: 0.64rem;
   font-weight: 800;
   letter-spacing: 0.05em;
   box-shadow: none;
@@ -5260,8 +5281,8 @@ body {
   .arb-calculator-card .arb-calc-grid-head,
   .arb-calculator-card .arb-calc-leg {
     min-width: 648px;
-    grid-template-columns: minmax(140px, 1.04fr) minmax(140px, 1fr) 28px 68px 80px 74px 54px 68px;
-    gap: 0.26rem;
+    grid-template-columns: minmax(114px, 1.02fr) minmax(118px, 0.98fr) 22px 54px 68px 64px 52px 72px 54px;
+    gap: 0.2rem;
   }
 
   .arb-calculator-card .arb-calc-footer {

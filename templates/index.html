@@ -552,6 +552,7 @@
                       <span data-i18n="arb_calc_income">Income</span>
                       <span data-i18n="arb_calc_stake_short">Stake</span>
                       <span data-i18n="arb_calc_currency">Currency</span>
+                      <span data-i18n="arb_calc_profit_short">Profit</span>
                       <span class="arb-calc-grid-head-spacer"></span>
                     </div>
 
@@ -589,6 +590,10 @@
                             <option value="{{ currency }}" {% if currency == default_arb_calc_currency %}selected{% endif %}>{{ currency }}</option>
                             {% endfor %}
                           </select>
+                        </div>
+                        <div class="arb-calc-cell arb-calc-profit-cell">
+                          <span class="arb-calc-cell-label" data-i18n="arb_calc_profit_short">Profit</span>
+                          <strong class="mono" id="arb-calc-leg-profit-a">-</strong>
                         </div>
                         <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-a"
                           data-i18n="arb_calc_bet">BET</button>
@@ -628,6 +633,10 @@
                             {% endfor %}
                           </select>
                         </div>
+                        <div class="arb-calc-cell arb-calc-profit-cell">
+                          <span class="arb-calc-cell-label" data-i18n="arb_calc_profit_short">Profit</span>
+                          <strong class="mono" id="arb-calc-leg-profit-b">-</strong>
+                        </div>
                         <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-b"
                           data-i18n="arb_calc_bet">BET</button>
                       </section>
@@ -665,6 +674,10 @@
                             <option value="{{ currency }}" {% if currency == default_arb_calc_currency %}selected{% endif %}>{{ currency }}</option>
                             {% endfor %}
                           </select>
+                        </div>
+                        <div class="arb-calc-cell arb-calc-profit-cell">
+                          <span class="arb-calc-cell-label" data-i18n="arb_calc_profit_short">Profit</span>
+                          <strong class="mono" id="arb-calc-leg-profit-c">-</strong>
                         </div>
                         <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-c"
                           data-i18n="arb_calc_bet">BET</button>
@@ -1107,6 +1120,7 @@
     const arbCalcBaseABtn = document.getElementById('arb-calc-base-a');
     const arbCalcPayoutA = document.getElementById('arb-calc-payout-a');
     const arbCalcPayoutABaseNote = document.getElementById('arb-calc-payout-base-a');
+    const arbCalcLegProfitA = document.getElementById('arb-calc-leg-profit-a');
     const arbCalcLegB = document.getElementById('arb-calc-leg-b');
     const arbCalcLegBTitle = document.getElementById('arb-calc-leg-b-title');
     const arbCalcLegBSub = document.getElementById('arb-calc-leg-b-sub');
@@ -1119,6 +1133,7 @@
     const arbCalcBaseBBtn = document.getElementById('arb-calc-base-b');
     const arbCalcPayoutB = document.getElementById('arb-calc-payout-b');
     const arbCalcPayoutBBaseNote = document.getElementById('arb-calc-payout-base-b');
+    const arbCalcLegProfitB = document.getElementById('arb-calc-leg-profit-b');
     const arbCalcLegC = document.getElementById('arb-calc-leg-c');
     const arbCalcLegCTitle = document.getElementById('arb-calc-leg-c-title');
     const arbCalcLegCSub = document.getElementById('arb-calc-leg-c-sub');
@@ -1131,6 +1146,7 @@
     const arbCalcBaseCBtn = document.getElementById('arb-calc-base-c');
     const arbCalcPayoutC = document.getElementById('arb-calc-payout-c');
     const arbCalcPayoutCBaseNote = document.getElementById('arb-calc-payout-base-c');
+    const arbCalcLegProfitC = document.getElementById('arb-calc-leg-profit-c');
     const arbCalcMinPayout = document.getElementById('arb-calc-min-payout');
     const arbCalcMinPayoutCurrency = document.getElementById('arb-calc-min-payout-currency');
     const arbCalcProfit = document.getElementById('arb-calc-profit');
@@ -1152,6 +1168,7 @@
         baseBtn: arbCalcBaseABtn,
         payoutEl: arbCalcPayoutA,
         payoutNoteEl: arbCalcPayoutABaseNote,
+        profitEl: arbCalcLegProfitA,
       },
       {
         section: arbCalcLegB,
@@ -1166,6 +1183,7 @@
         baseBtn: arbCalcBaseBBtn,
         payoutEl: arbCalcPayoutB,
         payoutNoteEl: arbCalcPayoutBBaseNote,
+        profitEl: arbCalcLegProfitB,
       },
       {
         section: arbCalcLegC,
@@ -1180,6 +1198,7 @@
         baseBtn: arbCalcBaseCBtn,
         payoutEl: arbCalcPayoutC,
         payoutNoteEl: arbCalcPayoutCBaseNote,
+        profitEl: arbCalcLegProfitC,
       },
     ];
     const arbCalcConfiguredCurrencies = Array.from(arbCalcTotalCurrencySelect?.options || [])
@@ -1591,6 +1610,7 @@
         arb_calc_bet: 'BET',
         arb_calc_payout: 'Payout',
         arb_calc_income: 'Income',
+        arb_calc_profit_short: 'Profit',
         arb_calc_currency: 'Currency',
         arb_calc_stake_short: 'Stake',
         arb_calc_fx_label: 'FX',
@@ -1928,6 +1948,7 @@
         arb_calc_bet: '下注',
         arb_calc_payout: '返还',
         arb_calc_income: '收入',
+        arb_calc_profit_short: '利润',
         arb_calc_currency: '货币',
         arb_calc_stake_short: '注金',
         arb_calc_fx_label: '汇率',
@@ -5396,6 +5417,10 @@
             refs.payoutNoteEl.textContent = '';
             refs.payoutNoteEl.classList.add('hidden');
           }
+          if (refs.profitEl) {
+            refs.profitEl.textContent = '-';
+            refs.profitEl.classList.remove('gain', 'loss');
+          }
           if (refs.stakeNoteEl) {
             refs.stakeNoteEl.textContent = '';
             refs.stakeNoteEl.classList.add('hidden');
@@ -5417,6 +5442,9 @@
           : NaN;
         const legStakeBase = Number.isFinite(currentStake)
           ? convertArbCalcCurrencyAmount(currentStake, legCurrency, baseCurrency)
+          : NaN;
+        const legProfitBase = validInputs && fxCovered && payoutsReady && Number.isFinite(totalStake) && totalStake > 0 && Number.isFinite(legPayoutBase)
+          ? roundMoney(legPayoutBase - totalStake)
           : NaN;
         const legReturnPercent = totalStake > 0 && Number.isFinite(legPayoutBase)
           ? ((legPayoutBase - totalStake) / totalStake) * 100
@@ -5482,6 +5510,13 @@
             : '';
           refs.stakeNoteEl.textContent = stakeNote;
           refs.stakeNoteEl.classList.toggle('hidden', !stakeNote);
+        }
+        if (refs.profitEl) {
+          refs.profitEl.textContent = Number.isFinite(legProfitBase)
+            ? formatCurrencyForCode(legProfitBase, baseCurrency)
+            : '-';
+          refs.profitEl.classList.toggle('gain', Number.isFinite(legProfitBase) && legProfitBase > 0);
+          refs.profitEl.classList.toggle('loss', Number.isFinite(legProfitBase) && legProfitBase < 0);
         }
       });
 
