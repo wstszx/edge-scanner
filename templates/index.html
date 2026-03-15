@@ -3209,7 +3209,6 @@
         bankroll: bankrollInput ? bankrollInput.value : '',
         kellyFraction: kellySelect ? kellySelect.value : '',
         plusEvSort: plusEvSortSelect ? plusEvSortSelect.value : '',
-        activeTab,
         bookmakerUrls: collectBookmakerLinks(),
         autoScanEnabled: autoScanToggle ? autoScanToggle.checked : false,
         autoScanMinutes: autoScanIntervalInput ? autoScanIntervalInput.value : '',
@@ -3253,7 +3252,6 @@
       if (notifyPopupToggle && settings.notifyPopupEnabled !== undefined) {
         notifyPopupToggle.checked = Boolean(settings.notifyPopupEnabled);
       }
-      if (settings.activeTab) setActiveTab(settings.activeTab);
       if (settings.bookmakerUrls) {
         applyBookmakerLinks(settings.bookmakerUrls);
       } else {
@@ -3271,6 +3269,10 @@
       if (!raw) return;
       try {
         const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && 'activeTab' in parsed) {
+          delete parsed.activeTab;
+          localStorage.setItem('edge-scan-settings', JSON.stringify(parsed));
+        }
         applySettings(parsed);
       } catch (err) {
         return;
