@@ -95,6 +95,95 @@ class ScannerRegressionTests(unittest.TestCase):
             },
         )
 
+    def test_fetch_provider_events_for_sport_passes_context_when_supported(self) -> None:
+        async def _fake_fetcher(
+            sport_key: str,
+            markets: list[str],
+            regions: list[str],
+            bookmakers=None,
+            context=None,
+        ):
+            _fake_fetcher.last_stats = {
+                "sport_key": sport_key,
+                "context": dict(context or {}),
+            }
+            return [{"id": "event-1"}]
+
+        _fake_fetcher.last_stats = {}
+
+        with patch.dict(scanner.PROVIDER_FETCHERS, {"sx_bet": _fake_fetcher}):
+            result = asyncio.run(
+                scanner._fetch_provider_events_for_sport(
+                    provider_key="sx_bet",
+                    sport_key="basketball_nba",
+                    provider_markets=["h2h"],
+                    regions=["us"],
+                    bookmakers=["sx_bet"],
+                    provider_context={"scan_mode": "live", "live": True},
+                )
+            )
+
+        self.assertEqual(result.get("events"), [{"id": "event-1"}])
+        stats = result.get("stats") or {}
+        self.assertEqual(stats.get("context"), {"scan_mode": "live", "live": True})
+
+    def test_run_scan_async_live_mode_skips_odds_api_and_passes_scan_mode(self) -> None:
+        def _fake_scan_single_sport(**kwargs):
+            return {
+                "skipped": False,
+                "sport_key": kwargs["sport"]["key"],
+                "sport_timing": {"sport_key": kwargs["sport"]["key"], "total_ms": 0.0},
+                "timing_steps": [],
+                "api_market_skips": [],
+                "sport_errors": [],
+                "provider_updates": {},
+                "provider_snapshot_updates": {},
+                "purebet_update": {
+                    "events_merged": 0,
+                    "sports": [],
+                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
+                    "league_sync": {
+                        "live_updates": 0,
+                        "cache_hits": 0,
+                        "stale_cache_uses": 0,
+                        "dynamic_added": 0,
+                        "unresolved": 0,
+                    },
+                },
+                "events_scanned": 0,
+                "total_profit": 0.0,
+                "arb_opportunities": [],
+                "middle_opportunities": [],
+                "plus_ev_opportunities": [],
+                "stale_event_filters": [],
+                "successful": 1,
+            }
+
+        with (
+            patch.object(scanner, "fetch_sports", side_effect=AssertionError("Odds API should not be called")),
+            patch.object(scanner, "_scan_single_sport", side_effect=_fake_scan_single_sport) as mocked_scan,
+        ):
+            result = asyncio.run(
+                scanner.run_scan_async(
+                    api_key="",
+                    sports=["basketball_nba"],
+                    scan_mode="live",
+                    regions=["us"],
+                )
+            )
+
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("scan_mode"), "live")
+        self.assertEqual(mocked_scan.call_args.kwargs.get("scan_mode"), "live")
+        self.assertEqual(
+            mocked_scan.call_args.kwargs.get("enabled_provider_keys"),
+            scanner._default_live_provider_keys(),
+        )
+
+    def test_default_live_provider_keys_prefers_curated_supported_list(self) -> None:
+        defaults = scanner._default_live_provider_keys()
+        self.assertEqual(defaults, ["sx_bet", "betdex", "polymarket"])
+
     def test_registered_provider_fetchers_use_async_entrypoints_for_migrated_providers(self) -> None:
         self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["purebet"]))
         self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["betdex"]))
@@ -152,6 +241,7 @@ class ScannerRegressionTests(unittest.TestCase):
             result = asyncio.run(
                 scanner._scan_single_sport(
                     sport={"key": "americanfootball_nfl", "title": "NFL"},
+                    scan_mode="prematch",
                     all_markets=False,
                     should_fetch_api=False,
                     api_pool=scanner.ApiKeyPool([]),
@@ -265,6 +355,7 @@ class ScannerRegressionTests(unittest.TestCase):
             result = asyncio.run(
                 scanner._scan_single_sport(
                     sport={"key": "basketball_nba", "title": "NBA"},
+                    scan_mode="prematch",
                     all_markets=False,
                     should_fetch_api=False,
                     api_pool=scanner.ApiKeyPool([]),
@@ -539,6 +630,328 @@ class ScannerRegressionTests(unittest.TestCase):
         )
         self.assertTrue(entries)
         self.assertGreater(entries[0].get("roi_percent", 0.0), 0.0)
+
+    def test_filter_live_events_prefers_explicit_live_state_over_time_window(self) -> None:
+        now_epoch = 1_700_000_000
+        future_live_event = {
+            "id": "future-live",
+            "commence_time": "2030-01-01T00:00:00Z",
+            "live_state": {"status": "live"},
+        }
+        current_scheduled_event = {
+            "id": "current-scheduled",
+            "commence_time": "2023-11-14T22:13:20Z",
+            "live_state": {"status": "scheduled"},
+        }
+
+        with patch("scanner.time.time", return_value=now_epoch):
+            filtered, stats = scanner._filter_live_events_for_scan(
+                [future_live_event, current_scheduled_event]
+            )
+
+        filtered_ids = {event.get("id") for event in filtered}
+        self.assertIn("future-live", filtered_ids)
+        self.assertNotIn("current-scheduled", filtered_ids)
+        self.assertEqual(stats.get("dropped_not_live_state"), 1)
+
+    def test_collect_market_entries_filters_stale_live_quotes(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "live_state": {"status": "live", "updated_at": 99},
+            "bookmakers": [
+                {
+                    "key": "book_a",
+                    "title": "Book A",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.2, "last_updated": 90},
+                                {"name": "Away Team", "price": 1.8, "last_updated": 90},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_b",
+                    "title": "Book B",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 1.8, "last_updated": 99},
+                                {"name": "Away Team", "price": 2.2, "last_updated": 99},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        with patch("scanner.time.time", return_value=100.0), patch.object(
+            scanner, "LIVE_QUOTE_MAX_AGE_SECONDS_RAW", "5"
+        ):
+            live_entries = scanner._collect_market_entries(
+                game,
+                market_key="h2h",
+                stake_total=100.0,
+                commission_rate=0.0,
+                scan_mode="live",
+            )
+            prematch_entries = scanner._collect_market_entries(
+                game,
+                market_key="h2h",
+                stake_total=100.0,
+                commission_rate=0.0,
+                scan_mode="prematch",
+            )
+
+        self.assertEqual(live_entries, [])
+        self.assertTrue(prematch_entries)
+
+    def test_collect_plus_ev_filters_stale_live_quotes(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "live_state": {"status": "live", "updated_at": 99},
+            "bookmakers": [
+                {
+                    "key": "pinnacle",
+                    "title": "Pinnacle",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 1.9, "last_updated": 99},
+                                {"name": "Away Team", "price": 1.9, "last_updated": 99},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "DraftKings",
+                    "title": "DraftKings",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.2, "last_updated": 90},
+                                {"name": "Away Team", "price": 1.7, "last_updated": 90},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        with patch("scanner.time.time", return_value=100.0), patch.object(
+            scanner, "LIVE_QUOTE_MAX_AGE_SECONDS_RAW", "5"
+        ):
+            live_entries = scanner._collect_plus_ev_opportunities(
+                game,
+                markets=["h2h"],
+                sharp_priority=scanner._sharp_priority("pinnacle"),
+                commission_rate=0.0,
+                min_edge_percent=0.0,
+                bankroll=1000.0,
+                kelly_fraction=0.25,
+                scan_mode="live",
+            )
+            prematch_entries = scanner._collect_plus_ev_opportunities(
+                game,
+                markets=["h2h"],
+                sharp_priority=scanner._sharp_priority("pinnacle"),
+                commission_rate=0.0,
+                min_edge_percent=0.0,
+                bankroll=1000.0,
+                kelly_fraction=0.25,
+                scan_mode="prematch",
+            )
+
+        self.assertEqual(live_entries, [])
+        self.assertTrue(prematch_entries)
+
+    def test_collect_market_entries_filters_mismatched_live_state_context(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "live_state": {"status": "live"},
+            "bookmakers": [
+                {
+                    "key": "book_a",
+                    "title": "Book A",
+                    "live_state": {"status": "live", "period": "Q2", "score": "55-50", "clock": "05:40"},
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.2},
+                                {"name": "Away Team", "price": 1.8},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_b",
+                    "title": "Book B",
+                    "live_state": {"status": "live", "period": "Q3", "score": "55-50", "clock": "11:58"},
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 1.8},
+                                {"name": "Away Team", "price": 2.2},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        live_entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.0,
+            scan_mode="live",
+        )
+        prematch_entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.0,
+            scan_mode="prematch",
+        )
+
+        self.assertEqual(live_entries, [])
+        self.assertTrue(prematch_entries)
+
+    def test_collect_middle_filters_mismatched_live_state_context(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "live_state": {"status": "live"},
+            "bookmakers": [
+                {
+                    "key": "book_a",
+                    "title": "Book A",
+                    "live_state": {"status": "live", "period": "Q2", "score": "55-50"},
+                    "markets": [
+                        {
+                            "key": "totals",
+                            "outcomes": [
+                                {"name": "Over", "point": 210.5, "price": 2.0},
+                                {"name": "Under", "point": 211.5, "price": 2.0},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_b",
+                    "title": "Book B",
+                    "live_state": {"status": "live", "period": "Q3", "score": "55-50"},
+                    "markets": [
+                        {
+                            "key": "totals",
+                            "outcomes": [
+                                {"name": "Over", "point": 210.5, "price": 2.0},
+                                {"name": "Under", "point": 211.5, "price": 2.0},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        live_entries = scanner._collect_middle_opportunities(
+            game,
+            market_key="totals",
+            stake_total=100.0,
+            commission_rate=0.0,
+            scan_mode="live",
+        )
+        prematch_entries = scanner._collect_middle_opportunities(
+            game,
+            market_key="totals",
+            stake_total=100.0,
+            commission_rate=0.0,
+            scan_mode="prematch",
+        )
+
+        self.assertEqual(live_entries, [])
+        self.assertTrue(prematch_entries)
+
+    def test_collect_plus_ev_filters_mismatched_live_state_context(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "live_state": {"status": "live"},
+            "bookmakers": [
+                {
+                    "key": "pinnacle",
+                    "title": "Pinnacle",
+                    "live_state": {"status": "live", "period": "Q2", "score": "55-50", "clock": "05:40"},
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 1.9},
+                                {"name": "Away Team", "price": 1.9},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "DraftKings",
+                    "title": "DraftKings",
+                    "live_state": {"status": "live", "period": "Q3", "score": "55-50", "clock": "11:58"},
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.2},
+                                {"name": "Away Team", "price": 1.7},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        live_entries = scanner._collect_plus_ev_opportunities(
+            game,
+            markets=["h2h"],
+            sharp_priority=scanner._sharp_priority("pinnacle"),
+            commission_rate=0.0,
+            min_edge_percent=0.0,
+            bankroll=1000.0,
+            kelly_fraction=0.25,
+            scan_mode="live",
+        )
+        prematch_entries = scanner._collect_plus_ev_opportunities(
+            game,
+            markets=["h2h"],
+            sharp_priority=scanner._sharp_priority("pinnacle"),
+            commission_rate=0.0,
+            min_edge_percent=0.0,
+            bankroll=1000.0,
+            kelly_fraction=0.25,
+            scan_mode="prematch",
+        )
+
+        self.assertEqual(live_entries, [])
+        self.assertTrue(prematch_entries)
 
     def test_collect_middle_opportunities_applies_commission_for_mixed_case_exchange_key(self) -> None:
         game = {

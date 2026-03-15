@@ -18,10 +18,7 @@ from .sx_bet import PROVIDER_TITLE as SX_BET_TITLE
 from .sx_bet import fetch_events as fetch_sx_bet_events
 from .sx_bet import fetch_events_async as fetch_sx_bet_events_async
 
-ProviderFetcher = Callable[
-    [str, Sequence[str], Sequence[str], Optional[Sequence[str]]],
-    List[dict] | Awaitable[List[dict]],
-]
+ProviderFetcher = Callable[..., List[dict] | Awaitable[List[dict]]]
 
 PROVIDER_FETCHERS: Dict[str, ProviderFetcher] = {
     "purebet": fetch_purebet_events_async,

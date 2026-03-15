@@ -951,6 +951,53 @@ def _sports_result_is_tradeable(payload: object) -> bool:
     return True
 
 
+def _event_live_state_payload(event: object, realtime_state: object = None) -> Optional[dict]:
+    payload: Dict[str, object] = {}
+    if isinstance(realtime_state, dict):
+        status = _normalize_text(
+            realtime_state.get("status")
+            or realtime_state.get("gameStatus")
+            or realtime_state.get("matchStatus")
+            or realtime_state.get("state")
+        ).lower()
+        if status:
+            payload["status"] = status
+        updated_at = _normalize_text(
+            realtime_state.get("updated_at")
+            or realtime_state.get("updatedAt")
+            or realtime_state.get("timestamp")
+            or realtime_state.get("ts")
+        )
+        if updated_at:
+            payload["updated_at"] = updated_at
+        for key in ("score", "homeScore", "awayScore", "period", "clock"):
+            value = realtime_state.get(key)
+            if value not in (None, ""):
+                payload[key] = value
+        if "ended" in realtime_state:
+            payload["ended"] = bool(realtime_state.get("ended"))
+        if "closed" in realtime_state:
+            payload["closed"] = bool(realtime_state.get("closed"))
+    if not payload and isinstance(event, dict):
+        status = _normalize_text(
+            event.get("status")
+            or event.get("gameStatus")
+            or event.get("matchStatus")
+            or event.get("state")
+        ).lower()
+        if status:
+            payload["status"] = status
+        updated_at = _normalize_text(
+            event.get("updatedAt")
+            or event.get("updated_at")
+            or event.get("lastUpdated")
+            or event.get("startTime")
+        )
+        if updated_at:
+            payload["updated_at"] = updated_at
+    return payload or None
+
+
 def _read_json_file(path: object) -> Optional[dict]:
     target = _normalize_text(path)
     if not target or not os.path.exists(target):
@@ -2435,8 +2482,10 @@ async def fetch_events_async(
     markets: Sequence[str],
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]] = None,
+    context: Optional[dict] = None,
 ) -> List[dict]:
     _ = regions  # Reserved for future region-specific routing.
+    _ = context
     stats = {
         "provider": PROVIDER_KEY,
         "source": POLYMARKET_SOURCE or "api",
@@ -2532,7 +2581,7 @@ async def fetch_events_async(
     events_out: List[dict] = []
     now_utc = dt.datetime.now(dt.timezone.utc)
     stats["events_payload_count"] = len(payload)
-    filtered_events: List[Tuple[dict, str, str]] = []
+    filtered_events: List[Tuple[dict, str, str, Optional[dict]]] = []
     clob_token_ids: List[str] = []
     if True:
         for event in payload:
@@ -2547,6 +2596,7 @@ async def fetch_events_async(
             if not _event_is_tradeable(event, now_utc):
                 stats["events_status_filtered_count"] += 1
                 continue
+            realtime_state = None
             if realtime_manager is not None and _sports_websocket_enabled():
                 realtime_state = realtime_manager.get_sport_result(event.get("slug"))
                 if isinstance(realtime_state, dict):
@@ -2561,7 +2611,7 @@ async def fetch_events_async(
                 continue
             home_team, away_team = matchup
             stats["events_matchup_count"] += 1
-            filtered_events.append((event, home_team, away_team))
+            filtered_events.append((event, home_team, away_team, realtime_state))
 
             for market in (event.get("markets") or []):
                 if not isinstance(market, dict):
@@ -2622,7 +2672,7 @@ async def fetch_events_async(
                 if token_id in clob_depth_map and _safe_float(clob_depth_map[token_id]) is not None
             )
 
-        for event, home_team, away_team in filtered_events:
+        for event, home_team, away_team, realtime_state in filtered_events:
             market_list = _pick_match_markets(
                 event,
                 home_team,
@@ -2663,12 +2713,14 @@ async def fetch_events_async(
                     "home_team": home_team,
                     "away_team": away_team,
                     "commence_time": commence,
+                    "live_state": _event_live_state_payload(event, realtime_state),
                     "bookmakers": [
                         {
                             "key": PROVIDER_KEY,
                             "title": PROVIDER_TITLE,
                             "event_id": event_id,
                             "event_url": _event_url(event),
+                            "live_state": _event_live_state_payload(event, realtime_state),
                             "markets": market_list,
                         }
                     ],
@@ -2685,6 +2737,7 @@ def fetch_events(
     markets: Sequence[str],
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]] = None,
+    context: Optional[dict] = None,
 ) -> List[dict]:
     try:
         asyncio.get_running_loop()
@@ -2695,6 +2748,7 @@ def fetch_events(
                 markets,
                 regions,
                 bookmakers=bookmakers,
+                context=context,
             )
         )
     raise RuntimeError("fetch_events() cannot be used inside an active event loop; use await fetch_events_async()")

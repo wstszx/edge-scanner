@@ -156,6 +156,33 @@ class TestSxBetSegmentation(unittest.TestCase):
         self.assertEqual(len(fixture_markets), 1)
         self.assertEqual(meta.get("markets_rows_main_line_filtered"), 0)
 
+    def test_markets_active_rows_capture_live_state(self) -> None:
+        rows = [
+            {
+                "sportId": 1,
+                "sportXeventId": "evt-live",
+                "teamOneName": "Home Team",
+                "teamTwoName": "Away Team",
+                "gameTime": 1770000000,
+                "type": 226,
+                "marketHash": "mh-live",
+                "outcomeOneName": "Home Team",
+                "outcomeTwoName": "Away Team",
+                "status": "ACTIVE",
+                "liveEnabled": True,
+            }
+        ]
+        fixtures, _ = sx_bet._build_fixtures_from_markets_active(
+            rows=rows,
+            sport_id=1,
+            only_main_line=False,
+        )
+        self.assertEqual(len(fixtures), 1)
+        live_state = fixtures[0].get("live_state") or {}
+        self.assertTrue(live_state.get("is_live"))
+        self.assertEqual(live_state.get("status"), "live")
+        self.assertEqual(live_state.get("provider_status"), "active")
+
     def test_auto_fixture_loader_falls_back_to_summary_when_markets_active_fails(self) -> None:
         with (
             patch("providers.sx_bet._load_upcoming_fixtures_markets_active", side_effect=sx_bet.ProviderError("boom")),

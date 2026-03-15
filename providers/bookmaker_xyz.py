@@ -751,6 +751,12 @@ def _market_manager_base() -> str:
     return base.rstrip("/")
 
 
+def _include_live_games(context: Optional[dict] = None) -> bool:
+    if isinstance(context, dict) and bool(context.get("live")):
+        return True
+    return bool(BOOKMAKER_XYZ_INCLUDE_LIVE)
+
+
 def _market_manager_environments() -> List[str]:
     environments: List[str] = []
     for chain_id in _parse_chain_ids():
@@ -1296,6 +1302,7 @@ async def _load_market_manager_snapshot_async(
     retries: int,
     backoff_seconds: float,
     timeout: int,
+    context: Optional[dict] = None,
 ) -> Tuple[List[dict], dict]:
     filter_config = _sport_filter_config(sport_key)
     if not isinstance(filter_config, dict):
@@ -1315,7 +1322,7 @@ async def _load_market_manager_snapshot_async(
     cache_key = json.dumps(
         {
             "sport_key": _normalize_text(sport_key).lower(),
-            "include_live": bool(BOOKMAKER_XYZ_INCLUDE_LIVE),
+            "include_live": _include_live_games(context),
             "filters": filter_config,
             "environments": _market_manager_environments(),
         },
@@ -1333,7 +1340,7 @@ async def _load_market_manager_snapshot_async(
     per_page = max(10, _int_or_default(BOOKMAKER_XYZ_GAMES_PER_PAGE_RAW, 100, min_value=10))
     max_pages = _int_or_default(BOOKMAKER_XYZ_MAX_GAME_PAGES_RAW, 10, min_value=1)
     batch_size = _int_or_default(BOOKMAKER_XYZ_CONDITION_BATCH_SIZE_RAW, 50, min_value=1)
-    game_states = ["Prematch", "Live"] if BOOKMAKER_XYZ_INCLUDE_LIVE else ["Prematch"]
+    game_states = ["Prematch", "Live"] if _include_live_games(context) else ["Prematch"]
     base_url = _market_manager_base()
     pages_fetched = 0
     requests_made = 0
@@ -2012,6 +2019,30 @@ def _turnover_value(condition: dict) -> float:
     return 0.0
 
 
+def _game_live_state_payload(game: object) -> Optional[dict]:
+    if not isinstance(game, dict):
+        return None
+    status = _normalize_text(
+        game.get("gameState")
+        or game.get("status")
+        or game.get("state")
+    )
+    updated_at = _normalize_text(
+        game.get("updatedAt")
+        or game.get("lastUpdated")
+        or game.get("startsAt")
+    )
+    payload: Dict[str, object] = {}
+    if status:
+        normalized_status = status.lower()
+        payload["status"] = normalized_status
+        payload["gameState"] = normalized_status
+        payload["is_live"] = normalized_status == "live"
+    if updated_at:
+        payload["updated_at"] = updated_at
+    return payload or None
+
+
 def _normalize_snapshot_to_events(
     conditions: Sequence[dict],
     sport_key: str,
@@ -2062,12 +2093,17 @@ def _normalize_snapshot_to_events(
                 "home_team": home_team,
                 "away_team": away_team,
                 "commence_time": commence,
+                "live_state": _game_live_state_payload(game),
                 "event_url": _event_url(game),
                 "markets_by_sig": {},
                 "fallback_candidate": None,
             }
             events_by_id[event_id] = entry
             stats["events_sport_filtered_count"] += 1
+        elif not isinstance(entry.get("live_state"), dict):
+            live_state = _game_live_state_payload(game)
+            if isinstance(live_state, dict):
+                entry["live_state"] = live_state
 
         market = _normalize_condition_market(
             condition,
@@ -2111,12 +2147,14 @@ def _normalize_snapshot_to_events(
                 "home_team": event["home_team"],
                 "away_team": event["away_team"],
                 "commence_time": event["commence_time"],
+                "live_state": event.get("live_state"),
                 "bookmakers": [
                     {
                         "key": PROVIDER_KEY,
                         "title": PROVIDER_TITLE,
                         "event_id": event["id"],
                         "event_url": event.get("event_url"),
+                        "live_state": event.get("live_state"),
                         "markets": market_list,
                     }
                 ],
@@ -2150,6 +2188,7 @@ async def fetch_events_async(
     markets: Sequence[str],
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]] = None,
+    context: Optional[dict] = None,
 ) -> List[dict]:
     _ = regions  # Reserved for future region-specific routing.
     stats = {
@@ -2167,6 +2206,7 @@ async def fetch_events_async(
         "payload_cache": "miss",
         "dictionary_cache": "miss",
         "dictionary_loaded": False,
+        "include_live": _include_live_games(context),
     }
     _set_last_stats(stats)
 
@@ -2262,24 +2302,30 @@ async def fetch_events_async(
                             "cache": "scan_hit",
                         }
                     else:
-                        conditions, payload_meta = await _load_market_manager_snapshot_async(
-                            client=client,
-                            sport_key=sport_key,
-                            retries=retries,
-                            backoff_seconds=backoff,
-                            timeout=timeout,
-                        )
+                        snapshot_kwargs = {
+                            "client": client,
+                            "sport_key": sport_key,
+                            "retries": retries,
+                            "backoff_seconds": backoff,
+                            "timeout": timeout,
+                        }
+                        if context is not None:
+                            snapshot_kwargs["context"] = context
+                        conditions, payload_meta = await _load_market_manager_snapshot_async(**snapshot_kwargs)
                         with SCAN_CACHE_LOCK:
                             SCAN_CACHE_CONTEXT["conditions"] = conditions
                             SCAN_CACHE_CONTEXT["conditions_meta"] = dict(payload_meta or {})
         else:
-            conditions, payload_meta = await _load_market_manager_snapshot_async(
-                client=client,
-                sport_key=sport_key,
-                retries=retries,
-                backoff_seconds=backoff,
-                timeout=timeout,
-            )
+            snapshot_kwargs = {
+                "client": client,
+                "sport_key": sport_key,
+                "retries": retries,
+                "backoff_seconds": backoff,
+                "timeout": timeout,
+            }
+            if context is not None:
+                snapshot_kwargs["context"] = context
+            conditions, payload_meta = await _load_market_manager_snapshot_async(**snapshot_kwargs)
     stats["payload_cache"] = _normalize_text(payload_meta.get("cache") or "miss")
     stats["pages_fetched"] = int(payload_meta.get("pages_fetched", 0) or 0)
     stats["requests_made"] = int(payload_meta.get("requests_made", 0) or 0)
@@ -2305,6 +2351,7 @@ def fetch_events(
     markets: Sequence[str],
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]] = None,
+    context: Optional[dict] = None,
 ) -> List[dict]:
     try:
         asyncio.get_running_loop()
@@ -2315,6 +2362,7 @@ def fetch_events(
                 markets,
                 regions,
                 bookmakers=bookmakers,
+                context=context,
             )
         )
     raise RuntimeError("fetch_events() cannot be used inside an active event loop; use await fetch_events_async()")

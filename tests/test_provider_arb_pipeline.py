@@ -441,11 +441,31 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
                 },
             )
 
+        async def _fake_load_best_odds_map_async(*args, **kwargs):
+            return (
+                {
+                    "sx-h2h": {
+                        "odds_one": 2.25,
+                        "odds_two": 1.70,
+                        "updated_at_one": "2026-03-14T08:00:00Z",
+                        "updated_at_two": "2026-03-14T08:00:01Z",
+                    }
+                },
+                0,
+                {
+                    "best_odds_items": 1,
+                    "best_odds_null_count": 0,
+                    "best_odds_with_any_odds": 1,
+                    "best_odds_with_both_odds": 1,
+                },
+            )
+
         counterparty_fetcher = _make_counterparty_fetcher("betdex", betdex.PROVIDER_TITLE)
 
         with (
             patch.object(sx_bet, "get_shared_client", new=_fake_shared_client),
             patch.object(sx_bet, "_load_upcoming_fixtures_async", new=_fake_load_upcoming_fixtures_async),
+            patch.object(sx_bet, "_load_best_odds_map_async", new=_fake_load_best_odds_map_async),
             patch.object(sx_bet, "_load_best_stake_map_async", new=_fake_load_best_stake_map_async),
         ):
             events = asyncio.run(
@@ -462,8 +482,11 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
             self.assertEqual(outcomes[AWAY_TEAM]["price"], 1.7)
             self.assertEqual(outcomes[HOME_TEAM]["stake"], 150.0)
             self.assertEqual(outcomes[AWAY_TEAM]["stake"], 120.0)
+            self.assertEqual(outcomes[HOME_TEAM]["last_updated"], "2026-03-14T08:00:00Z")
+            self.assertEqual(outcomes[AWAY_TEAM]["last_updated"], "2026-03-14T08:00:01Z")
             direct_stats = dict(sx_bet.fetch_events_async.last_stats)
             self.assertEqual(direct_stats.get("fixture_source_used"), "summary")
+            self.assertEqual(direct_stats.get("odds_lookup_requested"), 1)
             self.assertEqual(direct_stats.get("orders_lookup_with_any_stake"), 1)
 
             result = self._run_provider_only_scan(
@@ -479,6 +502,7 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
             counterparty_title=betdex.PROVIDER_TITLE,
             stats_assertion=lambda stats: (
                 self.assertEqual(stats.get("fixture_source_used"), "summary"),
+                self.assertEqual(stats.get("odds_lookup_requested"), 1),
                 self.assertEqual(stats.get("orders_lookup_with_any_stake"), 1),
             ),
         )

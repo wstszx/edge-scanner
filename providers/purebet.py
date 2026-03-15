@@ -124,6 +124,12 @@ def _purebet_headers() -> Dict[str, str]:
     return headers
 
 
+def _purebet_live_requested(context: Optional[dict] = None) -> bool:
+    if isinstance(context, dict) and bool(context.get("live")):
+        return True
+    return bool(PUREBET_LIVE)
+
+
 def _purebet_status_error_message(status_code: int) -> str:
     if int(status_code) in {521, 522, 523, 524}:
         return f"Purebet API upstream unavailable ({status_code})"
@@ -1244,10 +1250,12 @@ def fetch_events(
     markets: Sequence[str],
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]] = None,
+    context: Optional[dict] = None,
 ) -> List[dict]:
     source = PUREBET_SOURCE or "api"
     stats = {
         "source": source,
+        "live_mode": _purebet_live_requested(context),
         "events_payload_count": 0,
         "events_normalized_count": 0,
         "events_returned_count": 0,
@@ -1422,11 +1430,13 @@ async def fetch_events_async(
     markets: Sequence[str],
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]] = None,
+    context: Optional[dict] = None,
 ) -> List[dict]:
     _ = regions
     source = PUREBET_SOURCE or "api"
     stats = {
         "source": source,
+        "live_mode": _purebet_live_requested(context),
         "events_payload_count": 0,
         "events_normalized_count": 0,
         "events_returned_count": 0,
@@ -1464,7 +1474,7 @@ async def fetch_events_async(
             )
         client = await get_shared_client(PROVIDER_KEY, timeout=30.0, follow_redirects=True)
         url = f"{base_url.rstrip('/')}/events"
-        params = {"live": "true" if PUREBET_LIVE else "false"}
+        params = {"live": "true" if _purebet_live_requested(context) else "false"}
         headers = _purebet_headers()
         payload, retries_used = await _purebet_get_json_async(
             client,

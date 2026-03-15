@@ -41,29 +41,63 @@
     return new Set(uniqueStrings(customProviderKeys));
   }
 
+  function liveProviderKeys(options) {
+    const allProviders = uniqueStrings(options && options.customProviderKeys);
+    const supported = uniqueStrings(options && options.liveSupportedProviderKeys);
+    if (!supported.length) return allProviders;
+    const allProviderSet = new Set(allProviders);
+    return supported.filter((key) => !allProviders.length || allProviderSet.has(key));
+  }
+
+  function defaultLiveProviderKeys(options) {
+    const supported = liveProviderKeys(options);
+    const supportedSet = new Set(supported);
+    const preferred = uniqueStrings(options && options.defaultLiveProviderKeys)
+      .filter((key) => supportedSet.has(key));
+    if (preferred.length) return preferred;
+    return supported;
+  }
+
+  function normalizeScanMode(value) {
+    const text = String(value == null ? '' : value).trim().toLowerCase();
+    return text === 'live' ? 'live' : 'prematch';
+  }
+
   function selectedBookmakers(options) {
     const useAllBookmakers = options && options.useAllBookmakers === true;
     const providerOnlyMode = options && options.providerOnlyMode === true;
+    const scanMode = normalizeScanMode(options && options.scanMode);
     const allBookmakers = uniqueStrings(options && options.allBookmakers);
     const checkedBookmakers = uniqueStrings(options && options.checkedBookmakers);
     const providerSet = providerKeySet(options && options.customProviderKeys);
     const values = useAllBookmakers ? allBookmakers : checkedBookmakers;
-    if (!providerOnlyMode) return values;
+    if (scanMode === 'live') {
+      if (useAllBookmakers) return defaultLiveProviderKeys(options);
+      const supportedSet = new Set(liveProviderKeys(options));
+      return values.filter((value) => supportedSet.has(value));
+    }
+    if (!providerOnlyMode && scanMode !== 'live') return values;
     return values.filter((value) => providerSet.has(value));
   }
 
   function selectedIncludeProviders(options) {
     const useAllBookmakers = options && options.useAllBookmakers === true;
     const providerOnlyMode = options && options.providerOnlyMode === true;
+    const scanMode = normalizeScanMode(options && options.scanMode);
     const bookmakers = uniqueStrings(options && options.bookmakers);
     const providerSet = providerKeySet(options && options.customProviderKeys);
+    if (scanMode === 'live' && useAllBookmakers) return defaultLiveProviderKeys(options);
     if (useAllBookmakers) return Array.from(providerSet);
+    const eligibleProviderSet = scanMode === 'live'
+      ? new Set(liveProviderKeys(options))
+      : providerSet;
     const picked = [];
     for (const key of bookmakers) {
-      if (!providerSet.has(key) || picked.includes(key)) continue;
+      if (!eligibleProviderSet.has(key) || picked.includes(key)) continue;
       picked.push(key);
     }
-    if (picked.length || !providerOnlyMode) return picked;
+    if (scanMode === 'live' && !picked.length) return defaultLiveProviderKeys(options);
+    if (picked.length || (!providerOnlyMode && scanMode !== 'live')) return picked;
     return Array.from(providerSet);
   }
 
@@ -72,14 +106,18 @@
     const bookmakers = selectedBookmakers(options);
     const includeProviders = selectedIncludeProviders({
       useAllBookmakers: options && options.useAllBookmakers,
+      scanMode: options && options.scanMode,
       providerOnlyMode: options && options.providerOnlyMode,
       customProviderKeys: options && options.customProviderKeys,
+      defaultLiveProviderKeys: options && options.defaultLiveProviderKeys,
+      liveSupportedProviderKeys: options && options.liveSupportedProviderKeys,
       bookmakers,
     });
     return {
       enabled: true,
       intervalMinutes: positiveNumber(options && options.intervalMinutes, 10),
       payload: {
+        scanMode: normalizeScanMode(options && options.scanMode),
         sports: uniqueStrings(options && options.sports),
         allSports: options && options.allSports === true,
         allMarkets: options && options.allMarkets !== undefined
@@ -107,12 +145,16 @@
     const bookmakers = selectedBookmakers(options);
     const includeProviders = selectedIncludeProviders({
       useAllBookmakers: options && options.useAllBookmakers,
+      scanMode: options && options.scanMode,
       providerOnlyMode: options && options.providerOnlyMode,
       customProviderKeys: options && options.customProviderKeys,
+      defaultLiveProviderKeys: options && options.defaultLiveProviderKeys,
+      liveSupportedProviderKeys: options && options.liveSupportedProviderKeys,
       bookmakers,
     });
     return {
       apiKey: stringValue(options && options.apiKey, ''),
+      scanMode: normalizeScanMode(options && options.scanMode),
       sports: uniqueStrings(options && options.sports),
       bookmakers,
       includeProviders,

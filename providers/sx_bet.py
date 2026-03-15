@@ -156,7 +156,9 @@ def _as_int(value: object) -> Optional[int]:
         return None
 
 
-def _fixture_source_mode() -> str:
+def _fixture_source_mode(context: Optional[dict] = None) -> str:
+    if isinstance(context, dict) and bool(context.get("live")):
+        return "markets_active"
     mode = _normalize_text(SX_BET_FIXTURE_SOURCE_RAW).lower()
     if mode in {"summary", "summary_upcoming", "legacy"}:
         return "summary"
@@ -311,6 +313,65 @@ def _normalize_commence_time(value: object) -> Optional[str]:
         )
     except ValueError:
         return None
+
+
+def _normalize_status_token(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", _normalize_text(value).lower()).strip("_")
+
+
+def _merge_live_state_payload(existing: Optional[dict], incoming: Optional[dict]) -> Optional[dict]:
+    if not isinstance(existing, dict) or not existing:
+        return dict(incoming) if isinstance(incoming, dict) and incoming else None
+    if not isinstance(incoming, dict) or not incoming:
+        return dict(existing)
+    merged = dict(existing)
+    incoming_status = _normalize_status_token(incoming.get("status"))
+    existing_status = _normalize_status_token(merged.get("status"))
+    if incoming.get("is_live") is True:
+        merged["is_live"] = True
+        if incoming_status:
+            merged["status"] = incoming_status
+    elif "is_live" not in merged and "is_live" in incoming:
+        merged["is_live"] = bool(incoming.get("is_live"))
+    if incoming_status in {"final", "finished", "closed", "resolved", "settled", "cancelled", "canceled"}:
+        merged["status"] = incoming_status
+        merged["is_live"] = False
+    elif not existing_status and incoming_status:
+        merged["status"] = incoming_status
+    for key in ("provider_status", "updated_at", "market_status"):
+        if not merged.get(key) and incoming.get(key) not in (None, ""):
+            merged[key] = incoming.get(key)
+    return merged
+
+
+def _sx_live_state_payload(*payloads: object) -> Optional[dict]:
+    merged: Optional[dict] = None
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        current: Dict[str, object] = {}
+        live_enabled = payload.get("liveEnabled")
+        if live_enabled is not None:
+            is_live = bool(live_enabled)
+            current["is_live"] = is_live
+            current["status"] = "live" if is_live else "scheduled"
+        status_token = _normalize_status_token(
+            payload.get("orderStatus")
+            or payload.get("marketStatus")
+            or payload.get("status")
+        )
+        if status_token:
+            current["provider_status"] = status_token
+            if status_token in {"settled", "closed", "resolved", "cancelled", "canceled", "finished", "final"}:
+                current["status"] = "final"
+                current["is_live"] = False
+            elif status_token in {"active", "open"} and current.get("is_live") is True:
+                current["market_status"] = status_token
+        updated_at = payload.get("updatedAt") or payload.get("lastUpdated") or payload.get("modifiedAt")
+        if updated_at not in (None, ""):
+            current["updated_at"] = updated_at
+        merged = _merge_live_state_payload(merged, current)
+    return merged
 
 
 def _safe_float(value) -> Optional[float]:
@@ -1255,8 +1316,13 @@ def _build_fixtures_from_markets_active(
                 "sportLabel": row.get("sportLabel"),
                 "leagueLabel": row.get("leagueLabel"),
                 "leagueId": row.get("leagueId"),
+                "live_state": _sx_live_state_payload(row),
                 "markets": [],
             },
+        )
+        fixture["live_state"] = _merge_live_state_payload(
+            fixture.get("live_state") if isinstance(fixture.get("live_state"), dict) else None,
+            _sx_live_state_payload(row),
         )
         fixture_markets = fixture.get("markets")
         if not isinstance(fixture_markets, list):
@@ -1535,8 +1601,9 @@ def _load_upcoming_fixtures(
     base_token: str,
     retries: int,
     backoff_seconds: float,
+    context: Optional[dict] = None,
 ) -> Tuple[List[dict], dict]:
-    source_mode = _fixture_source_mode()
+    source_mode = _fixture_source_mode(context)
     if source_mode == "summary":
         return _load_upcoming_fixtures_summary(
             sport_id=sport_id,
@@ -1578,8 +1645,9 @@ async def _load_upcoming_fixtures_async(
     base_token: str,
     retries: int,
     backoff_seconds: float,
+    context: Optional[dict] = None,
 ) -> Tuple[List[dict], dict]:
-    source_mode = _fixture_source_mode()
+    source_mode = _fixture_source_mode(context)
     if source_mode == "summary":
         return await _load_upcoming_fixtures_summary_async(
             client=client,
@@ -1624,17 +1692,26 @@ def _load_best_odds_map(
     base_token: str,
     retries: int,
     backoff_seconds: float,
-) -> Tuple[Dict[str, Tuple[Optional[float], Optional[float]]], int, dict]:
+) -> Tuple[Dict[str, dict], int, dict]:
     ttl = _int_or_default(SX_BET_ODDS_CACHE_TTL_RAW, 4, min_value=0)
     now = time.time()
     cache_valid = ttl > 0 and now < float(ODDS_CACHE.get("expires_at", 0.0))
     cache_entries = ODDS_CACHE.get("entries") if isinstance(ODDS_CACHE.get("entries"), dict) else {}
-    odds_map: Dict[str, Tuple[Optional[float], Optional[float]]] = {}
+    odds_map: Dict[str, dict] = {}
     unresolved: List[str] = []
     for market_hash in market_hashes:
         key = f"{base_token}:{market_hash}"
         if cache_valid and key in cache_entries:
-            odds_map[market_hash] = cache_entries[key]
+            cached = cache_entries[key]
+            if isinstance(cached, dict):
+                odds_map[market_hash] = dict(cached)
+            elif isinstance(cached, (list, tuple)) and len(cached) >= 2:
+                odds_map[market_hash] = {
+                    "odds_one": _safe_float(cached[0]),
+                    "odds_two": _safe_float(cached[1]),
+                    "updated_at_one": None,
+                    "updated_at_two": None,
+                }
         else:
             unresolved.append(market_hash)
 
@@ -1670,7 +1747,13 @@ def _load_best_odds_map(
             out_two = item.get("outcomeTwo") if isinstance(item.get("outcomeTwo"), dict) else {}
             odds_one = _moneyline_decimal_from_outcome_payload(out_one)
             odds_two = _moneyline_decimal_from_outcome_payload(out_two)
-            odds_map[market_hash] = (odds_one, odds_two)
+            odds_entry = {
+                "odds_one": odds_one,
+                "odds_two": odds_two,
+                "updated_at_one": out_one.get("updatedAt") or out_one.get("updated_at"),
+                "updated_at_two": out_two.get("updatedAt") or out_two.get("updated_at"),
+            }
+            odds_map[market_hash] = odds_entry
             if odds_one is None and odds_two is None:
                 lookup_meta["best_odds_null_count"] += 1
             elif odds_one is not None and odds_two is not None:
@@ -1678,7 +1761,7 @@ def _load_best_odds_map(
                 lookup_meta["best_odds_with_any_odds"] += 1
             else:
                 lookup_meta["best_odds_with_any_odds"] += 1
-            cache_entries[f"{base_token}:{market_hash}"] = (odds_one, odds_two)
+            cache_entries[f"{base_token}:{market_hash}"] = odds_entry
 
     ODDS_CACHE["entries"] = cache_entries
     ODDS_CACHE["expires_at"] = now + ttl if ttl > 0 else now
@@ -1691,17 +1774,26 @@ async def _load_best_odds_map_async(
     base_token: str,
     retries: int,
     backoff_seconds: float,
-) -> Tuple[Dict[str, Tuple[Optional[float], Optional[float]]], int, dict]:
+) -> Tuple[Dict[str, dict], int, dict]:
     ttl = _int_or_default(SX_BET_ODDS_CACHE_TTL_RAW, 4, min_value=0)
     now = time.time()
     cache_valid = ttl > 0 and now < float(ODDS_CACHE.get("expires_at", 0.0))
     cache_entries = ODDS_CACHE.get("entries") if isinstance(ODDS_CACHE.get("entries"), dict) else {}
-    odds_map: Dict[str, Tuple[Optional[float], Optional[float]]] = {}
+    odds_map: Dict[str, dict] = {}
     unresolved: List[str] = []
     for market_hash in market_hashes:
         key = f"{base_token}:{market_hash}"
         if cache_valid and key in cache_entries:
-            odds_map[market_hash] = cache_entries[key]
+            cached = cache_entries[key]
+            if isinstance(cached, dict):
+                odds_map[market_hash] = dict(cached)
+            elif isinstance(cached, (list, tuple)) and len(cached) >= 2:
+                odds_map[market_hash] = {
+                    "odds_one": _safe_float(cached[0]),
+                    "odds_two": _safe_float(cached[1]),
+                    "updated_at_one": None,
+                    "updated_at_two": None,
+                }
         else:
             unresolved.append(market_hash)
 
@@ -1738,7 +1830,13 @@ async def _load_best_odds_map_async(
             out_two = item.get("outcomeTwo") if isinstance(item.get("outcomeTwo"), dict) else {}
             odds_one = _moneyline_decimal_from_outcome_payload(out_one)
             odds_two = _moneyline_decimal_from_outcome_payload(out_two)
-            odds_map[market_hash] = (odds_one, odds_two)
+            odds_entry = {
+                "odds_one": odds_one,
+                "odds_two": odds_two,
+                "updated_at_one": out_one.get("updatedAt") or out_one.get("updated_at"),
+                "updated_at_two": out_two.get("updatedAt") or out_two.get("updated_at"),
+            }
+            odds_map[market_hash] = odds_entry
             if odds_one is None and odds_two is None:
                 lookup_meta["best_odds_null_count"] += 1
             elif odds_one is not None and odds_two is not None:
@@ -1746,7 +1844,7 @@ async def _load_best_odds_map_async(
                 lookup_meta["best_odds_with_any_odds"] += 1
             else:
                 lookup_meta["best_odds_with_any_odds"] += 1
-            cache_entries[f"{base_token}:{market_hash}"] = (odds_one, odds_two)
+            cache_entries[f"{base_token}:{market_hash}"] = odds_entry
 
     ODDS_CACHE["entries"] = cache_entries
     ODDS_CACHE["expires_at"] = now + ttl if ttl > 0 else now
@@ -1953,12 +2051,13 @@ async def fetch_events_async(
     markets: Sequence[str],
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]] = None,
+    context: Optional[dict] = None,
 ) -> List[dict]:
     _ = regions
     stats = {
         "provider": PROVIDER_KEY,
         "source": SX_BET_SOURCE or "api",
-        "fixture_source_mode": _fixture_source_mode(),
+        "fixture_source_mode": _fixture_source_mode(context),
         "fixture_source_used": "",
         "fixture_source_fallback": False,
         "fixture_source_fallback_reason": "",
@@ -2037,6 +2136,7 @@ async def fetch_events_async(
         base_token=base_token,
         retries=retries,
         backoff_seconds=backoff,
+        context=context,
     )
     stats["payload_cache"] = meta.get("cache", "miss")
     stats["pages_fetched"] = int(meta.get("pages_fetched", 0) or 0)
@@ -2114,17 +2214,23 @@ async def fetch_events_async(
                         "home_team": team_one,
                         "away_team": team_two,
                         "commence_time": commence,
+                        "live_state": _sx_live_state_payload(fixture, market),
                         **normalized_market,
                     }
                 )
 
     if True:
-        odds_map: Dict[str, Tuple[Optional[float], Optional[float]]] = {}
+        odds_map: Dict[str, dict] = {}
         stake_map: Dict[str, Tuple[Optional[float], Optional[float]]] = {}
         odds_task = None
         stake_task = None
-        if unresolved_hashes:
-            unique_hashes = list(dict.fromkeys(unresolved_hashes))
+        odds_lookup_hashes: List[str] = []
+        if stats.get("fixture_source_used") == "summary" and candidate_hashes:
+            odds_lookup_hashes = list(dict.fromkeys(candidate_hashes))
+        elif unresolved_hashes:
+            odds_lookup_hashes = list(dict.fromkeys(unresolved_hashes))
+        if odds_lookup_hashes:
+            unique_hashes = odds_lookup_hashes
             stats["odds_lookup_requested"] = len(unique_hashes)
             odds_task = asyncio.create_task(
                 _load_best_odds_map_async(
@@ -2158,26 +2264,26 @@ async def fetch_events_async(
                 lookup_meta.get("best_odds_with_both_odds", 0) or 0
             )
             stats["odds_lookup_resolved_partial"] = max(0, resolved_partial)
-            unresolved_unique_hashes = list(dict.fromkeys(unresolved_hashes))
-            missing_hashes = [market_hash for market_hash in unresolved_unique_hashes if market_hash not in odds_map]
+            lookup_unique_hashes = odds_lookup_hashes
+            missing_hashes = [market_hash for market_hash in lookup_unique_hashes if market_hash not in odds_map]
             null_hashes = [
                 market_hash
-                for market_hash in unresolved_unique_hashes
+                for market_hash in lookup_unique_hashes
                 if market_hash in odds_map
-                and odds_map[market_hash][0] is None
-                and odds_map[market_hash][1] is None
+                and odds_map[market_hash].get("odds_one") is None
+                and odds_map[market_hash].get("odds_two") is None
             ]
             stats["odds_lookup_missing_hash_entries"] = len(missing_hashes)
             stats["odds_lookup_sample_missing_hashes"] = missing_hashes[:5]
             stats["odds_lookup_sample_null_hashes"] = null_hashes[:5]
             stats["odds_lookup_resolved"] = sum(
                 1
-                for market_hash in unresolved_unique_hashes
+                for market_hash in lookup_unique_hashes
                 if market_hash in odds_map
-                and odds_map[market_hash][0] is not None
-                and odds_map[market_hash][1] is not None
+                and odds_map[market_hash].get("odds_one") is not None
+                and odds_map[market_hash].get("odds_two") is not None
             )
-            stats["odds_lookup_unresolved_after_lookup"] = len(unresolved_unique_hashes) - int(
+            stats["odds_lookup_unresolved_after_lookup"] = len(lookup_unique_hashes) - int(
                 stats.get("odds_lookup_resolved", 0) or 0
             )
 
@@ -2208,12 +2314,18 @@ async def fetch_events_async(
     for candidate in candidates:
         odds_one = candidate.get("odds_one")
         odds_two = candidate.get("odds_two")
+        outcome_one_last_updated = candidate.get("outcome_one_last_updated")
+        outcome_two_last_updated = candidate.get("outcome_two_last_updated")
         market_hash = candidate.get("market_hash")
-        if (odds_one is None or odds_two is None) and market_hash:
+        if market_hash:
             mapped = odds_map.get(market_hash)
             if mapped:
-                odds_one = odds_one or mapped[0]
-                odds_two = odds_two or mapped[1]
+                if odds_one is None:
+                    odds_one = mapped.get("odds_one")
+                if odds_two is None:
+                    odds_two = mapped.get("odds_two")
+                outcome_one_last_updated = outcome_one_last_updated or mapped.get("updated_at_one")
+                outcome_two_last_updated = outcome_two_last_updated or mapped.get("updated_at_two")
         if odds_one is None or odds_two is None:
             stats["dropped_missing_odds_count"] += 1
             if market_hash and len(stats["sample_dropped_market_hashes"]) < 5:
@@ -2249,8 +2361,13 @@ async def fetch_events_async(
                 "home_team": home_team,
                 "away_team": away_team,
                 "commence_time": candidate.get("commence_time"),
+                "live_state": candidate.get("live_state"),
                 "markets_by_sig": {},
             },
+        )
+        event["live_state"] = _merge_live_state_payload(
+            event.get("live_state") if isinstance(event.get("live_state"), dict) else None,
+            candidate.get("live_state") if isinstance(candidate.get("live_state"), dict) else None,
         )
 
         outcomes = [
@@ -2273,6 +2390,10 @@ async def fetch_events_async(
             outcomes[0]["stake"] = round(float(stake_one), 6)
         if stake_two is not None and stake_two > 0:
             outcomes[1]["stake"] = round(float(stake_two), 6)
+        if outcome_one_last_updated not in (None, ""):
+            outcomes[0]["last_updated"] = outcome_one_last_updated
+        if outcome_two_last_updated not in (None, ""):
+            outcomes[1]["last_updated"] = outcome_two_last_updated
 
         description = _normalize_text(candidate.get("description"))
         if description and _base_market_key(candidate.get("market_key")) not in {"h2h", "spreads", "totals"}:
@@ -2300,12 +2421,14 @@ async def fetch_events_async(
                 "home_team": event["home_team"],
                 "away_team": event["away_team"],
                 "commence_time": event["commence_time"],
+                "live_state": event.get("live_state"),
                 "bookmakers": [
                     {
                         "key": PROVIDER_KEY,
                         "title": PROVIDER_TITLE,
                         "event_id": event["event_id"],
                         "event_url": _event_url(event),
+                        "live_state": event.get("live_state"),
                         "markets": market_list,
                     }
                 ],
@@ -2322,6 +2445,7 @@ def fetch_events(
     markets: Sequence[str],
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]] = None,
+    context: Optional[dict] = None,
 ) -> List[dict]:
     try:
         asyncio.get_running_loop()
@@ -2332,6 +2456,7 @@ def fetch_events(
                 markets,
                 regions,
                 bookmakers=bookmakers,
+                context=context,
             )
         )
     raise RuntimeError("fetch_events() cannot be used inside an active event loop; use await fetch_events_async()")

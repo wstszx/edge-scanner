@@ -223,6 +223,19 @@ You can also override per request with `includeProviders`:
 ```
 `includePurebet` remains supported and overrides Purebet on/off for that request.
 
+Live arbitrage mode:
+```json
+{
+  "scanMode": "live"
+}
+```
+`scanMode` supports `prematch` (default) and `live`.
+In `live` mode the scanner:
+- skips The Odds API fetch path
+- uses custom providers only
+- keeps only in-play / already-started events inside the configured recent-event window
+- prefers provider live feeds where the provider module supports a runtime live override
+
 Optional: scan all available markets for arbitrage (per event data returned by providers):
 ```
 ARBITRAGE_ALL_MARKETS=1

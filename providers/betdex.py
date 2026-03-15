@@ -321,6 +321,91 @@ def _normalize_commence_time(value: object) -> Optional[str]:
         return None
 
 
+def _normalize_status_token(value: object) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", _normalize_text(value).lower()).strip("_")
+
+
+def _timestamp_epoch(value: object) -> Optional[float]:
+    normalized = _normalize_commence_time(value)
+    if not normalized:
+        return None
+    try:
+        if normalized.endswith("Z"):
+            parsed = dt.datetime.fromisoformat(normalized[:-1] + "+00:00")
+        else:
+            parsed = dt.datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.timestamp()
+
+
+def _latest_timestamp_value(*values: object) -> Optional[str]:
+    best_value = None
+    best_epoch = None
+    for value in values:
+        epoch = _timestamp_epoch(value)
+        if epoch is None:
+            continue
+        if best_epoch is None or epoch > best_epoch:
+            best_epoch = epoch
+            best_value = _normalize_commence_time(value)
+    return best_value
+
+
+def _betdex_live_state_payload(event: object, markets: Optional[Sequence[dict]] = None) -> Optional[dict]:
+    if not isinstance(event, dict):
+        return None
+    payload: Dict[str, object] = {}
+    actual_start = _normalize_commence_time(event.get("actualStartTime"))
+    actual_end = _normalize_commence_time(event.get("actualEndTime"))
+    in_play_status = ""
+    market_status = ""
+    suspended = False
+    market_updated_values: List[object] = []
+    for market in markets or []:
+        if not isinstance(market, dict):
+            continue
+        token = _normalize_status_token(market.get("inPlayStatus"))
+        if token == "inplay":
+            in_play_status = "in_play"
+        elif not in_play_status and token:
+            in_play_status = token
+        if not market_status:
+            market_status = _normalize_status_token(market.get("status"))
+        suspended = suspended or bool(market.get("suspended"))
+        market_updated_values.extend([market.get("modifiedAt"), market.get("createdAt"), market.get("settledAt")])
+    if actual_end:
+        payload["status"] = "final"
+        payload["is_live"] = False
+    elif actual_start:
+        payload["status"] = "live"
+        payload["is_live"] = True
+    elif in_play_status in {"in_play", "inplay"}:
+        payload["status"] = "live"
+        payload["is_live"] = True
+    elif in_play_status in {"pre_play", "preplay"}:
+        payload["status"] = "scheduled"
+        payload["is_live"] = False
+    if in_play_status:
+        payload["in_play_status"] = in_play_status
+    if suspended:
+        payload["market_status"] = "suspended"
+    elif market_status:
+        payload["market_status"] = market_status
+    updated_at = _latest_timestamp_value(
+        actual_end,
+        event.get("modifiedAt"),
+        actual_start,
+        event.get("createdAt"),
+        *market_updated_values,
+    )
+    if updated_at:
+        payload["updated_at"] = updated_at
+    return payload or None
+
+
 def _extract_access_token(payload: object) -> str:
     if not isinstance(payload, dict):
         raise ProviderError("BetDEX session endpoint returned an invalid payload")
@@ -1106,8 +1191,10 @@ async def fetch_events_async(
     markets: Sequence[str],
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]] = None,
+    context: Optional[dict] = None,
 ) -> List[dict]:
     _ = regions
+    _ = context
     requested_markets = _requested_market_keys(markets)
 
     stats = {
@@ -1347,6 +1434,7 @@ async def fetch_events_async(
             commence = _normalize_commence_time(event.get("expectedStartTime") or event.get("createdAt"))
             if not commence:
                 continue
+            event_live_state = _betdex_live_state_payload(event, event_markets)
 
             best_h2h: Optional[dict] = None
             by_signature: Dict[str, dict] = {}
@@ -1361,6 +1449,13 @@ async def fetch_events_async(
                 prices_by_outcome = _best_back_prices(
                     prices_by_market_id.get(market_id),
                     back_side=back_side,
+                )
+                market_updated_at = _latest_timestamp_value(
+                    market.get("modifiedAt"),
+                    market.get("createdAt"),
+                    market.get("settledAt"),
+                    event_live_state.get("updated_at") if isinstance(event_live_state, dict) else None,
+                    event.get("modifiedAt"),
                 )
 
                 outcomes = []
@@ -1377,6 +1472,8 @@ async def fetch_events_async(
                     row = {"title": title, "price": round(float(price), 6)}
                     if stake_value is not None and stake_value > 0:
                         row["stake"] = round(float(stake_value), 6)
+                    if market_updated_at:
+                        row["last_updated"] = market_updated_at
                     outcomes.append(row)
 
                 if len(outcomes) < 2:
@@ -1397,11 +1494,13 @@ async def fetch_events_async(
                                             {
                                                 "name": home_team,
                                                 "price": home_out["price"],
+                                                **({"last_updated": home_out["last_updated"]} if home_out.get("last_updated") else {}),
                                                 **({"stake": home_out["stake"]} if _safe_float(home_out.get("stake")) else {}),
                                             },
                                             {
                                                 "name": away_team,
                                                 "price": away_out["price"],
+                                                **({"last_updated": away_out["last_updated"]} if away_out.get("last_updated") else {}),
                                                 **({"stake": away_out["stake"]} if _safe_float(away_out.get("stake")) else {}),
                                             },
                                         ],
@@ -1413,11 +1512,13 @@ async def fetch_events_async(
                                             {
                                                 "name": outcomes[0]["title"],
                                                 "price": outcomes[0]["price"],
+                                                **({"last_updated": outcomes[0]["last_updated"]} if outcomes[0].get("last_updated") else {}),
                                                 **({"stake": outcomes[0]["stake"]} if _safe_float(outcomes[0].get("stake")) else {}),
                                             },
                                             {
                                                 "name": outcomes[1]["title"],
                                                 "price": outcomes[1]["price"],
+                                                **({"last_updated": outcomes[1]["last_updated"]} if outcomes[1].get("last_updated") else {}),
                                                 **({"stake": outcomes[1]["stake"]} if _safe_float(outcomes[1].get("stake")) else {}),
                                             },
                                         ],
@@ -1439,6 +1540,7 @@ async def fetch_events_async(
                                 "name": name or (home_team if idx == 0 else away_team),
                                 "price": outcome["price"],
                                 "point": round(float(point), 6),
+                                **({"last_updated": outcome["last_updated"]} if outcome.get("last_updated") else {}),
                                 **({"stake": outcome["stake"]} if _safe_float(outcome.get("stake")) else {}),
                             }
                         )
@@ -1464,6 +1566,7 @@ async def fetch_events_async(
                             "name": side,
                             "price": outcome["price"],
                             "point": round(float(point), 6),
+                            **({"last_updated": outcome["last_updated"]} if outcome.get("last_updated") else {}),
                             **({"stake": outcome["stake"]} if _safe_float(outcome.get("stake")) else {}),
                         }
                     if "Over" in totals and "Under" in totals:
@@ -1498,6 +1601,8 @@ async def fetch_events_async(
                                 "name": outcome["title"],
                                 "price": outcome["price"],
                             }
+                            if outcome.get("last_updated"):
+                                row["last_updated"] = outcome["last_updated"]
                             if _safe_float(outcome.get("stake")):
                                 row["stake"] = outcome["stake"]
                             _, title_point = _parse_spread_title(outcome["title"])
@@ -1533,12 +1638,14 @@ async def fetch_events_async(
                     "home_team": home_team,
                     "away_team": away_team,
                     "commence_time": commence,
+                    "live_state": event_live_state,
                     "bookmakers": [
                         {
                             "key": PROVIDER_KEY,
                             "title": PROVIDER_TITLE,
                             "event_id": event_id,
                             "event_url": _event_url(event, event_groups_by_id, first_market_id),
+                            "live_state": event_live_state,
                             "markets": market_list,
                         }
                     ],
@@ -1555,6 +1662,7 @@ def fetch_events(
     markets: Sequence[str],
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]] = None,
+    context: Optional[dict] = None,
 ) -> List[dict]:
     try:
         asyncio.get_running_loop()
@@ -1565,6 +1673,7 @@ def fetch_events(
                 markets,
                 regions,
                 bookmakers=bookmakers,
+                context=context,
             )
         )
     raise RuntimeError("fetch_events() cannot be used inside an active event loop; use await fetch_events_async()")

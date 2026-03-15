@@ -40,49 +40,53 @@ class _LiveServer:
         self._thread.join(timeout=2.0)
 
 
-def _sample_scan_result() -> dict:
+def _sample_arbitrage_opportunity() -> dict:
+    return {
+        "event": "Seattle Kraken vs Vancouver Canucks",
+        "event_id": "evt-1",
+        "sport": "icehockey_nhl",
+        "sport_display": "NHL",
+        "market": "totals",
+        "market_point": 6.5,
+        "commence_time": "2026-03-15T10:00:00Z",
+        "has_exchange": True,
+        "best_odds": [
+            {
+                "outcome": "Over",
+                "bookmaker": "SX Bet",
+                "bookmaker_key": "sx_bet",
+                "price": 2.37,
+                "effective_price": 2.37,
+                "point": 6.5,
+                "max_stake": 50.0,
+                "book_event_id": "sx-evt-1",
+                "book_event_url": "https://sx.bet/markets/evt-1",
+            },
+            {
+                "outcome": "Under",
+                "bookmaker": "BetDEX",
+                "bookmaker_key": "betdex",
+                "price": 1.86,
+                "effective_price": 1.83,
+                "point": 6.5,
+                "max_stake": 12.37,
+                "is_exchange": True,
+                "book_event_id": "betdex-evt-1",
+                "book_event_url": "https://betdex.com/markets/evt-1",
+            },
+        ],
+    }
+
+
+def _sample_scan_result(scan_mode: str = "prematch", opportunities: list[dict] | None = None) -> dict:
+    arbitrage_items = copy.deepcopy(opportunities if opportunities is not None else [_sample_arbitrage_opportunity()])
     return {
         "success": True,
+        "scan_mode": scan_mode,
         "scan_time": "2026-03-14T09:15:00Z",
         "arbitrage": {
-            "opportunities": [
-                {
-                    "event": "Seattle Kraken vs Vancouver Canucks",
-                    "event_id": "evt-1",
-                    "sport": "icehockey_nhl",
-                    "sport_display": "NHL",
-                    "market": "totals",
-                    "market_point": 6.5,
-                    "commence_time": "2026-03-15T10:00:00Z",
-                    "has_exchange": True,
-                    "best_odds": [
-                        {
-                            "outcome": "Over",
-                            "bookmaker": "SX Bet",
-                            "bookmaker_key": "sx_bet",
-                            "price": 2.37,
-                            "effective_price": 2.37,
-                            "point": 6.5,
-                            "max_stake": 50.0,
-                            "book_event_id": "sx-evt-1",
-                            "book_event_url": "https://sx.bet/markets/evt-1",
-                        },
-                        {
-                            "outcome": "Under",
-                            "bookmaker": "BetDEX",
-                            "bookmaker_key": "betdex",
-                            "price": 1.86,
-                            "effective_price": 1.83,
-                            "point": 6.5,
-                            "max_stake": 12.37,
-                            "is_exchange": True,
-                            "book_event_id": "betdex-evt-1",
-                            "book_event_url": "https://betdex.com/markets/evt-1",
-                        },
-                    ],
-                }
-            ],
-            "opportunities_count": 1,
+            "opportunities": arbitrage_items,
+            "opportunities_count": len(arbitrage_items),
         },
         "middles": {"opportunities": []},
         "plus_ev": {"opportunities": []},
@@ -216,6 +220,77 @@ class BrowserScanFlowTests(unittest.TestCase):
         self.assertEqual(kwargs.get("regions"), ["us"])
         self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])
         self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
+
+    def test_browser_scan_mode_tabs_switch_arbitrage_results_by_mode(self) -> None:
+        run_scan_calls: list[dict] = []
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+
+        def _fake_run_scan(**kwargs):
+            run_scan_calls.append(copy.deepcopy(kwargs))
+            scan_mode = kwargs.get("scan_mode") or "prematch"
+            if scan_mode == "live":
+                return _sample_scan_result(scan_mode="live", opportunities=[])
+            return _sample_scan_result(scan_mode="prematch")
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True))
+            stack.enter_context(patch.object(app_module, "_start_background_provider_services"))
+            stack.enter_context(patch.object(app_module, "get_history_manager", return_value=history_manager))
+            stack.enter_context(patch.object(app_module, "get_notifier", return_value=notifier))
+            stack.enter_context(patch.object(app_module, "run_scan", side_effect=_fake_run_scan))
+
+            server = _LiveServer(app_module.app)
+            server.start()
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(headless=True)
+                    context = browser.new_context()
+                    page = context.new_page()
+                    page.route("https://fonts.googleapis.com/*", lambda route: route.abort())
+                    page.route("https://fonts.gstatic.com/*", lambda route: route.abort())
+                    page.goto(server.base_url, wait_until="domcontentloaded")
+
+                    self._configure_selected_provider(page)
+
+                    with page.expect_response(lambda response: response.url.endswith("/scan") and response.request.method == "POST"):
+                        page.evaluate("document.getElementById('scan-form').requestSubmit()")
+
+                    page.wait_for_selector("#arb-desktop-list .arb-opportunity-card")
+                    self.assertEqual(page.locator("#arb-desktop-list .arb-opportunity-card").count(), 1)
+                    self.assertIn("Seattle Kraken vs Vancouver Canucks", page.locator("#arb-desktop-list").inner_text())
+
+                    page.click('.tab-btn[data-tab="live"]')
+                    page.wait_for_timeout(150)
+                    self.assertEqual(page.locator("#arb-desktop-list .arb-opportunity-card").count(), 0)
+                    pre_scan_empty_title = page.locator("#arb-empty-title").inner_text().strip()
+                    self.assertTrue(pre_scan_empty_title)
+
+                    with page.expect_response(lambda response: response.url.endswith("/scan") and response.request.method == "POST"):
+                        page.evaluate("document.getElementById('scan-form').requestSubmit()")
+
+                    page.wait_for_timeout(250)
+                    self.assertEqual(page.locator("#arb-desktop-list .arb-opportunity-card").count(), 0)
+                    scan_empty_title = page.locator("#arb-empty-title").inner_text().strip()
+                    self.assertTrue(scan_empty_title)
+                    self.assertNotEqual(scan_empty_title, pre_scan_empty_title)
+
+                    page.click('.tab-btn[data-tab="prematch"]')
+                    page.wait_for_timeout(150)
+                    self.assertEqual(page.locator("#arb-desktop-list .arb-opportunity-card").count(), 1)
+                    self.assertIn("Seattle Kraken vs Vancouver Canucks", page.locator("#arb-desktop-list").inner_text())
+
+                    page.click('.tab-btn[data-tab="live"]')
+                    page.wait_for_timeout(150)
+                    self.assertEqual(page.locator("#arb-desktop-list .arb-opportunity-card").count(), 0)
+                    self.assertEqual(page.locator("#arb-empty-title").inner_text().strip(), scan_empty_title)
+
+                    browser.close()
+            finally:
+                server.stop()
+
+        self.assertEqual([call.get("scan_mode") for call in run_scan_calls], ["prematch", "live"])
 
     def test_browser_auto_scan_triggers_without_manual_submit(self) -> None:
         persisted_configs: list[dict] = []

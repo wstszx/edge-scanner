@@ -358,3 +358,12 @@
   "error": "Cross-provider report file not found"
 }
 ```
+
+---
+
+## Live Mode Update
+
+- `/scan` now accepts `scanMode` with values `prematch` (default) and `live`.
+- `scanMode=live` skips the The Odds API path and scans custom providers only.
+- `scanMode=live` keeps only in-play / already-started events inside the configured recent-event window.
+- Successful scan responses now include top-level `scan_mode`.

@@ -170,6 +170,7 @@ class FrontendScanFormHelperTests(unittest.TestCase):
         history_manager.save_opportunities.assert_called_once()
         kwargs = mocked_run_scan.call_args.kwargs
         self.assertEqual(kwargs.get("api_key"), [])
+        self.assertEqual(kwargs.get("scan_mode"), "prematch")
         self.assertEqual(kwargs.get("sports"), ["icehockey_nhl"])
         self.assertEqual(kwargs.get("regions"), ["us"])
         self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])
@@ -228,6 +229,7 @@ class FrontendScanFormHelperTests(unittest.TestCase):
         mocked_start.assert_called_once_with(wait_timeout=0.0)
         kwargs = mocked_run_scan.call_args.kwargs
         self.assertEqual(kwargs.get("api_key"), [])
+        self.assertEqual(kwargs.get("scan_mode"), "prematch")
         self.assertEqual(kwargs.get("sports"), ["icehockey_nhl"])
         self.assertEqual(kwargs.get("regions"), ["us"])
         self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])

@@ -66,6 +66,14 @@ from config import (
 from providers import PROVIDER_FETCHERS, PROVIDER_TITLES, resolve_provider_key
 
 BASE_URL = "https://api.the-odds-api.com/v4"
+SCAN_MODE_PREMATCH = "prematch"
+SCAN_MODE_LIVE = "live"
+DEFAULT_LIVE_PROVIDER_KEYS = (
+    "sx_bet",
+    "betdex",
+    "polymarket",
+)
+LIVE_SUPPORTED_PROVIDER_KEYS = DEFAULT_LIVE_PROVIDER_KEYS + ("bookmaker_xyz",)
 MIDDLE_MARKETS = {"spreads", "totals"}
 ODDS_API_ALL_MARKETS_RAW = os.getenv("ODDS_API_ALL_MARKETS", "").strip()
 ODDS_API_MARKET_BATCH_SIZE_RAW = os.getenv("ODDS_API_MARKET_BATCH_SIZE", "8").strip()
@@ -103,6 +111,47 @@ try:
     SCAN_REQUEST_LOG_MAX_BODY_CHARS = max(0, int(float(SCAN_REQUEST_LOG_MAX_BODY_CHARS_RAW)))
 except (TypeError, ValueError):
     SCAN_REQUEST_LOG_MAX_BODY_CHARS = 2000
+
+LIVE_EVENT_MAX_FUTURE_SECONDS_RAW = os.getenv("LIVE_EVENT_MAX_FUTURE_SECONDS", "0").strip()
+LIVE_QUOTE_MAX_AGE_SECONDS_RAW = os.getenv("LIVE_QUOTE_MAX_AGE_SECONDS", "5").strip()
+LIVE_STATE_CLOCK_TOLERANCE_SECONDS_RAW = os.getenv(
+    "LIVE_STATE_CLOCK_TOLERANCE_SECONDS",
+    "180",
+).strip()
+
+LIVE_STATE_IN_PLAY_TOKENS = {
+    "active",
+    "in_play",
+    "inplay",
+    "live",
+    "open",
+    "running",
+    "started",
+    "tradeable",
+    "trading",
+}
+LIVE_STATE_NOT_LIVE_TOKENS = {
+    "created",
+    "not_started",
+    "pending",
+    "pre_play",
+    "preplay",
+    "scheduled",
+    "upcoming",
+}
+LIVE_STATE_TERMINAL_TOKENS = {
+    "canceled",
+    "cancelled",
+    "closed",
+    "complete",
+    "completed",
+    "ended",
+    "expired",
+    "final",
+    "finished",
+    "resolved",
+    "settled",
+}
 
 COMMON_EXTRA_MARKETS = [
     "h2h_lay",
@@ -1177,6 +1226,16 @@ def _resolve_enabled_provider_keys(
     return [key for key in PROVIDER_FETCHERS if enabled_by_key.get(key)]
 
 
+def _default_live_provider_keys() -> List[str]:
+    defaults = [key for key in DEFAULT_LIVE_PROVIDER_KEYS if key in PROVIDER_FETCHERS]
+    if defaults:
+        return defaults
+    supported = [key for key in LIVE_SUPPORTED_PROVIDER_KEYS if key in PROVIDER_FETCHERS]
+    if supported:
+        return supported
+    return list(PROVIDER_FETCHERS.keys())
+
+
 def _empty_purebet_summary(enabled: bool) -> dict:
     return {
         "enabled": enabled,
@@ -1311,6 +1370,13 @@ def _normalize_requested_sport_keys(sports: Optional[Sequence[str]]) -> List[str
         normalized.append(key)
         seen.add(key)
     return normalized or list(DEFAULT_SPORT_KEYS)
+
+
+def _normalize_scan_mode(value: object) -> str:
+    text = _normalize_line_component(value)
+    if text in {SCAN_MODE_PREMATCH, SCAN_MODE_LIVE}:
+        return text
+    return SCAN_MODE_PREMATCH
 
 
 def _provider_requested_markets(
@@ -1820,12 +1886,68 @@ def _event_time_seconds(event: dict) -> Optional[int]:
     return int(parsed.timestamp())
 
 
+def _live_quote_max_age_seconds() -> int:
+    try:
+        return max(0, int(float(LIVE_QUOTE_MAX_AGE_SECONDS_RAW)))
+    except (TypeError, ValueError):
+        return 5
+
+
+def _event_live_state(event: dict) -> dict:
+    payload = event.get("live_state")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _normalize_live_state_token(value: object) -> str:
+    text = _normalize_text(str(value) if value is not None else "")
+    return re.sub(r"[\s-]+", "_", text)
+
+
+def _live_state_token(state: Optional[dict]) -> str:
+    if not isinstance(state, dict):
+        return ""
+    for key in ("status", "game_status", "gameState", "state", "in_play_status", "market_status"):
+        token = _normalize_live_state_token(state.get(key))
+        if token:
+            return token
+    return ""
+
+
+def _event_live_state_token(event: dict) -> str:
+    return _live_state_token(_event_live_state(event))
+
+
+def _live_state_is_explicitly_live(state: Optional[dict]) -> Optional[bool]:
+    if not isinstance(state, dict):
+        return None
+    for key in ("is_live", "live", "is_in_play", "in_play"):
+        if key in state:
+            return bool(state.get(key))
+    token = _live_state_token(state)
+    if token in LIVE_STATE_IN_PLAY_TOKENS:
+        return True
+    if token in LIVE_STATE_NOT_LIVE_TOKENS or token in LIVE_STATE_TERMINAL_TOKENS:
+        return False
+    return None
+
+
+def _event_is_explicitly_live(event: dict) -> Optional[bool]:
+    return _live_state_is_explicitly_live(_event_live_state(event))
+
+
 def _event_max_past_seconds() -> int:
     try:
         minutes = int(float(EVENT_MAX_PAST_MINUTES_RAW))
     except (TypeError, ValueError):
         minutes = 30
     return max(0, minutes) * 60
+
+
+def _live_event_max_future_seconds() -> int:
+    try:
+        return max(0, int(float(LIVE_EVENT_MAX_FUTURE_SECONDS_RAW)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _filter_events_for_scan(events: Sequence[dict]) -> Tuple[List[dict], dict]:
@@ -1850,6 +1972,58 @@ def _filter_events_for_scan(events: Sequence[dict]) -> Tuple[List[dict], dict]:
         "dropped_past": dropped_past,
         "dropped_missing_time": dropped_missing_time,
     }
+
+
+def _filter_live_events_for_scan(events: Sequence[dict]) -> Tuple[List[dict], dict]:
+    now_epoch = int(time.time())
+    max_past_seconds = _event_max_past_seconds()
+    max_future_seconds = _live_event_max_future_seconds()
+    min_epoch = now_epoch - max_past_seconds
+    max_epoch = now_epoch + max_future_seconds
+    filtered: List[dict] = []
+    dropped_past = 0
+    dropped_future = 0
+    dropped_missing_time = 0
+    dropped_not_live_state = 0
+    dropped_terminal_state = 0
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        explicit_live = _event_is_explicitly_live(event)
+        if explicit_live is not None:
+            if explicit_live:
+                filtered.append(event)
+                continue
+            state_token = _event_live_state_token(event)
+            if state_token in LIVE_STATE_TERMINAL_TOKENS:
+                dropped_terminal_state += 1
+            else:
+                dropped_not_live_state += 1
+            continue
+        event_epoch = _event_time_seconds(event)
+        if event_epoch is None:
+            dropped_missing_time += 1
+            continue
+        if event_epoch < min_epoch:
+            dropped_past += 1
+            continue
+        if event_epoch > max_epoch:
+            dropped_future += 1
+            continue
+        filtered.append(event)
+    return filtered, {
+        "dropped_past": dropped_past,
+        "dropped_future": dropped_future,
+        "dropped_missing_time": dropped_missing_time,
+        "dropped_not_live_state": dropped_not_live_state,
+        "dropped_terminal_state": dropped_terminal_state,
+    }
+
+
+def _filter_events_for_scan_mode(events: Sequence[dict], scan_mode: str) -> Tuple[List[dict], dict]:
+    if _normalize_scan_mode(scan_mode) == SCAN_MODE_LIVE:
+        return _filter_live_events_for_scan(events)
+    return _filter_events_for_scan(events)
 
 
 def _merge_bookmakers(target: List[dict], incoming: List[dict]) -> None:
@@ -2249,6 +2423,338 @@ def _normalize_commence_time(value) -> Optional[str]:
             .replace("+00:00", "Z")
         )
     return None
+
+
+def _parse_timestamp_seconds(value: object) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        timestamp = float(value)
+        if timestamp <= 0:
+            return None
+        if timestamp > 1e12:
+            timestamp /= 1000.0
+        return timestamp
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        numeric = _safe_float(text)
+        if numeric is not None and re.fullmatch(r"-?\d+(?:\.\d+)?", text):
+            timestamp = float(numeric)
+            if timestamp <= 0:
+                return None
+            if timestamp > 1e12:
+                timestamp /= 1000.0
+            return timestamp
+        normalized = _normalize_commence_time(text)
+        if not normalized:
+            return None
+        try:
+            if normalized.endswith("Z"):
+                parsed = dt.datetime.fromisoformat(normalized[:-1] + "+00:00")
+            else:
+                parsed = dt.datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed.timestamp()
+    return None
+
+
+def _quote_updated_at_seconds(
+    game: Optional[dict],
+    bookmaker: Optional[dict],
+    market: Optional[dict],
+    outcome: Optional[dict],
+) -> Optional[float]:
+    live_state = _event_live_state(game or {}) if isinstance(game, dict) else {}
+    for source in (outcome, market, bookmaker, live_state, game):
+        if not isinstance(source, dict):
+            continue
+        for key in ("last_updated", "updated_at", "updatedAt", "timestamp", "ts"):
+            timestamp = _parse_timestamp_seconds(source.get(key))
+            if timestamp is not None:
+                return timestamp
+    return None
+
+
+def _live_quote_age_seconds(
+    game: Optional[dict],
+    bookmaker: Optional[dict],
+    market: Optional[dict],
+    outcome: Optional[dict],
+    now_epoch: Optional[float] = None,
+) -> Optional[float]:
+    timestamp = _quote_updated_at_seconds(game, bookmaker, market, outcome)
+    if timestamp is None:
+        return None
+    now_value = float(now_epoch if now_epoch is not None else time.time())
+    return max(0.0, now_value - timestamp)
+
+
+def _is_live_quote_fresh(
+    game: Optional[dict],
+    bookmaker: Optional[dict],
+    market: Optional[dict],
+    outcome: Optional[dict],
+    scan_mode: str,
+    now_epoch: Optional[float] = None,
+) -> bool:
+    if _normalize_scan_mode(scan_mode) != SCAN_MODE_LIVE:
+        return True
+    max_age = _live_quote_max_age_seconds()
+    if max_age <= 0:
+        return True
+    age = _live_quote_age_seconds(game, bookmaker, market, outcome, now_epoch=now_epoch)
+    if age is None:
+        return True
+    return age <= max_age
+
+
+def _bookmaker_live_state(game: Optional[dict], bookmaker: Optional[dict]) -> dict:
+    if isinstance(bookmaker, dict):
+        payload = bookmaker.get("live_state")
+        if isinstance(payload, dict):
+            return payload
+    return _event_live_state(game or {}) if isinstance(game, dict) else {}
+
+
+def _live_state_clock_tolerance_seconds() -> int:
+    try:
+        return max(0, int(float(LIVE_STATE_CLOCK_TOLERANCE_SECONDS_RAW)))
+    except (TypeError, ValueError):
+        return 180
+
+
+def _parse_live_score_value(value: object) -> Optional[int]:
+    numeric = _safe_float(value)
+    if numeric is not None and numeric >= 0:
+        return int(round(float(numeric)))
+    text = _normalize_text(value)
+    if text and re.fullmatch(r"\d+", text):
+        return int(text)
+    return None
+
+
+def _extract_live_score_pair(state: Optional[dict]) -> Optional[Tuple[int, int]]:
+    if not isinstance(state, dict):
+        return None
+    direct_pairs = (
+        (state.get("home_score"), state.get("away_score")),
+        (state.get("homeScore"), state.get("awayScore")),
+        (state.get("scoreHome"), state.get("scoreAway")),
+    )
+    for home_value, away_value in direct_pairs:
+        home_score = _parse_live_score_value(home_value)
+        away_score = _parse_live_score_value(away_value)
+        if home_score is not None and away_score is not None:
+            return tuple(sorted((home_score, away_score)))
+    score_payload = state.get("score") or state.get("scores")
+    if isinstance(score_payload, dict):
+        dict_pairs = (
+            (score_payload.get("home"), score_payload.get("away")),
+            (score_payload.get("home_score"), score_payload.get("away_score")),
+            (score_payload.get("homeScore"), score_payload.get("awayScore")),
+            (score_payload.get("team1"), score_payload.get("team2")),
+        )
+        for home_value, away_value in dict_pairs:
+            home_score = _parse_live_score_value(home_value)
+            away_score = _parse_live_score_value(away_value)
+            if home_score is not None and away_score is not None:
+                return tuple(sorted((home_score, away_score)))
+    if isinstance(score_payload, (list, tuple)) and len(score_payload) >= 2:
+        first_score = _parse_live_score_value(score_payload[0])
+        second_score = _parse_live_score_value(score_payload[1])
+        if first_score is not None and second_score is not None:
+            return tuple(sorted((first_score, second_score)))
+    text = _normalize_text(score_payload)
+    if text:
+        match = re.search(r"(\d+)\s*[-:]\s*(\d+)", text)
+        if match:
+            return tuple(sorted((int(match.group(1)), int(match.group(2)))))
+    return None
+
+
+def _normalize_live_period_token(value: object) -> str:
+    token = _normalize_live_state_token(value)
+    if not token:
+        return ""
+    token = re.sub(r"(\d)(st|nd|rd|th)", r"\1", token)
+    token = (
+        token.replace("first", "1")
+        .replace("second", "2")
+        .replace("third", "3")
+        .replace("fourth", "4")
+    )
+    if token in {"half_time", "halftime", "ht"}:
+        return "ht"
+    if token in {"ot", "overtime", "extra_time"}:
+        return "ot"
+    patterns = (
+        (r"(?:^|_)(?:q|quarter)_?(\d+)(?:_|$)", "q"),
+        (r"(?:^|_)(?:half|h)_?(\d+)(?:_|$)", "h"),
+        (r"(?:^|_)(?:period|p)_?(\d+)(?:_|$)", "p"),
+        (r"(?:^|_)(?:inning)_?(\d+)(?:_|$)", "inning_"),
+        (r"(?:^|_)(?:set)_?(\d+)(?:_|$)", "set_"),
+        (r"(?:^|_)(?:map)_?(\d+)(?:_|$)", "map_"),
+    )
+    for pattern, prefix in patterns:
+        match = re.search(pattern, token)
+        if match:
+            return f"{prefix}{match.group(1)}"
+    if re.fullmatch(r"\d+", token):
+        return f"segment_{token}"
+    return token
+
+
+def _extract_live_period_token(state: Optional[dict]) -> str:
+    if not isinstance(state, dict):
+        return ""
+    for key in (
+        "period",
+        "game_period",
+        "gamePeriod",
+        "quarter",
+        "inning",
+        "set",
+        "map",
+        "phase",
+        "stage",
+    ):
+        token = _normalize_live_period_token(state.get(key))
+        if token:
+            return token
+    return _normalize_live_period_token(_live_state_token(state))
+
+
+def _live_period_tokens_match(first: str, second: str) -> bool:
+    if not first or not second:
+        return True
+    if first == second:
+        return True
+    generic_match = re.fullmatch(r"segment_(\d+)", first)
+    if generic_match and re.search(rf"(?:^|_){generic_match.group(1)}$", second):
+        return True
+    generic_match = re.fullmatch(r"segment_(\d+)", second)
+    if generic_match and re.search(rf"(?:^|_){generic_match.group(1)}$", first):
+        return True
+    return False
+
+
+def _parse_live_clock_seconds(value: object) -> Optional[float]:
+    numeric = _safe_float(value)
+    if numeric is not None and numeric >= 0:
+        return float(numeric)
+    text = _normalize_text(value)
+    if not text:
+        return None
+    match = re.search(r"(?:(\d+):)?(\d{1,2}):(\d{2})$", text)
+    if match:
+        hours = int(match.group(1) or 0)
+        minutes = int(match.group(2))
+        seconds = int(match.group(3))
+        return float((hours * 3600) + (minutes * 60) + seconds)
+    match = re.search(r"(\d{1,2}):(\d{2})$", text)
+    if match:
+        minutes = int(match.group(1))
+        seconds = int(match.group(2))
+        return float((minutes * 60) + seconds)
+    return None
+
+
+def _extract_live_clock_seconds(state: Optional[dict]) -> Optional[float]:
+    if not isinstance(state, dict):
+        return None
+    for key in ("clock", "matchClock", "timeRemaining", "time_remaining"):
+        seconds = _parse_live_clock_seconds(state.get(key))
+        if seconds is not None:
+            return seconds
+    return None
+
+
+def _selected_live_state_payload(
+    states: Sequence[object],
+    fallback: Optional[dict] = None,
+) -> Optional[dict]:
+    candidates = [state for state in states if isinstance(state, dict) and state]
+    if isinstance(fallback, dict) and fallback:
+        candidates.append(fallback)
+    if not candidates:
+        return None
+
+    def _richness(state: dict) -> Tuple[int, float]:
+        richness = 0
+        if _live_state_token(state):
+            richness += 1
+        if _extract_live_period_token(state):
+            richness += 1
+        if _extract_live_score_pair(state) is not None:
+            richness += 1
+        if _extract_live_clock_seconds(state) is not None:
+            richness += 1
+        updated_at = 0.0
+        for key in ("updated_at", "updatedAt", "last_updated", "timestamp", "ts"):
+            parsed = _parse_timestamp_seconds(state.get(key))
+            if parsed is not None:
+                updated_at = parsed
+                break
+        return richness, updated_at
+
+    best = max(candidates, key=_richness)
+    return copy.deepcopy(best)
+
+
+def _live_states_are_compatible(states: Sequence[object], scan_mode: str) -> bool:
+    if _normalize_scan_mode(scan_mode) != SCAN_MODE_LIVE:
+        return True
+    normalized_states = [state for state in states if isinstance(state, dict) and state]
+    if len(normalized_states) < 2:
+        return True
+    explicit_values = []
+    for state in normalized_states:
+        explicit = _live_state_is_explicitly_live(state)
+        if explicit is False:
+            return False
+        if explicit is not None:
+            explicit_values.append(explicit)
+    if explicit_values and any(value != explicit_values[0] for value in explicit_values):
+        return False
+
+    period_token = ""
+    for state in normalized_states:
+        current_period = _extract_live_period_token(state)
+        if not current_period:
+            continue
+        if not period_token:
+            period_token = current_period
+            continue
+        if not _live_period_tokens_match(period_token, current_period):
+            return False
+
+    score_pair = None
+    for state in normalized_states:
+        current_score = _extract_live_score_pair(state)
+        if current_score is None:
+            continue
+        if score_pair is None:
+            score_pair = current_score
+            continue
+        if current_score != score_pair:
+            return False
+
+    if period_token:
+        clock_values = [
+            value
+            for value in (_extract_live_clock_seconds(state) for state in normalized_states)
+            if value is not None
+        ]
+        if len(clock_values) >= 2:
+            tolerance = _live_state_clock_tolerance_seconds()
+            if (max(clock_values) - min(clock_values)) > tolerance:
+                return False
+    return True
 
 
 def _resolve_purebet_sport_key(event: dict, league_map: Dict[str, str]) -> Optional[str]:
@@ -2932,15 +3438,34 @@ def _total_gap_info(over_line: float, under_line: float) -> Optional[dict]:
 
 
 def _build_sharp_reference(
-    bookmaker: dict, commission_rate: float, is_exchange: bool
+    bookmaker: dict,
+    commission_rate: float,
+    is_exchange: bool,
+    *,
+    game: Optional[dict] = None,
+    scan_mode: str = SCAN_MODE_PREMATCH,
 ) -> Dict[Tuple[str, str], dict]:
     """Return mapping of (market_key, line_key) to vig-free odds."""
     line_map: Dict[Tuple[str, str], List[dict]] = {}
+    now_epoch = time.time()
+    bookmaker_live_state = _selected_live_state_payload(
+        [_bookmaker_live_state(game, bookmaker)],
+        fallback=_event_live_state(game or {}) if isinstance(game, dict) else None,
+    )
     for market in bookmaker.get("markets", []):
         market_key = market.get("key")
         if not market_key:
             continue
         for outcome in market.get("outcomes", []):
+            if not _is_live_quote_fresh(
+                game,
+                bookmaker,
+                market,
+                outcome,
+                scan_mode,
+                now_epoch=now_epoch,
+            ):
+                continue
             price_val = _safe_float(outcome.get("price"))
             if price_val is None or price_val <= 1:
                 continue
@@ -2958,6 +3483,10 @@ def _build_sharp_reference(
                     "price": adjusted_price,
                     "raw_price": price_val,
                     "point": outcome.get("point"),
+                    "quote_updated_at": _epoch_to_iso(
+                        _quote_updated_at_seconds(game, bookmaker, market, outcome) or 0.0
+                    ),
+                    "live_state": bookmaker_live_state,
                 }
             )
     references: Dict[Tuple[str, str], dict] = {}
@@ -2979,6 +3508,8 @@ def _build_sharp_reference(
                     "opponent_name": second["display_name"],
                     "display_name": first["display_name"],
                     "point": first.get("point"),
+                    "quote_updated_at": first.get("quote_updated_at"),
+                    "live_state": first.get("live_state"),
                 },
                 second["name"]: {
                     "fair_odds": fair_b,
@@ -2988,19 +3519,40 @@ def _build_sharp_reference(
                     "opponent_name": first["display_name"],
                     "display_name": second["display_name"],
                     "point": second.get("point"),
+                    "quote_updated_at": second.get("quote_updated_at"),
+                    "live_state": second.get("live_state"),
                 },
             },
         }
     return references
 
 
-def _two_way_outcomes(bookmaker: dict) -> Dict[Tuple[str, str], List[dict]]:
+def _two_way_outcomes(
+    bookmaker: dict,
+    *,
+    game: Optional[dict] = None,
+    scan_mode: str = SCAN_MODE_PREMATCH,
+) -> Dict[Tuple[str, str], List[dict]]:
     line_map: Dict[Tuple[str, str], List[dict]] = {}
+    now_epoch = time.time()
+    bookmaker_live_state = _selected_live_state_payload(
+        [_bookmaker_live_state(game, bookmaker)],
+        fallback=_event_live_state(game or {}) if isinstance(game, dict) else None,
+    )
     for market in bookmaker.get("markets", []):
         market_key = market.get("key")
         if not market_key:
             continue
         for outcome in market.get("outcomes", []):
+            if not _is_live_quote_fresh(
+                game,
+                bookmaker,
+                market,
+                outcome,
+                scan_mode,
+                now_epoch=now_epoch,
+            ):
+                continue
             display_price = _safe_float(outcome.get("price"))
             if display_price is None or display_price <= 1:
                 continue
@@ -3016,6 +3568,10 @@ def _two_way_outcomes(bookmaker: dict) -> Dict[Tuple[str, str], List[dict]]:
                     "display_name": _outcome_display_name(outcome),
                     "price": display_price,
                     "point": outcome.get("point"),
+                    "quote_updated_at": _epoch_to_iso(
+                        _quote_updated_at_seconds(game, bookmaker, market, outcome) or 0.0
+                    ),
+                    "live_state": bookmaker_live_state,
                 }
             )
     return {key: entries for key, entries in line_map.items() if len(entries) == 2}
@@ -3323,13 +3879,23 @@ def _outcome_display_name(outcome: dict) -> str:
 
 
 def _record_line_offers(
-    markets: List[dict], market_key: str, commission_rate: float
+    markets: List[dict],
+    market_key: str,
+    commission_rate: float,
+    *,
+    game: Optional[dict] = None,
+    scan_mode: str = SCAN_MODE_PREMATCH,
 ) -> LineOfferMap:
     lines: LineOfferMap = {}
+    now_epoch = time.time()
     for book in markets:
         bookmaker = book.get("title") or book.get("key")
         bookmaker_key = str(book.get("key") or bookmaker or "").strip()
         bookmaker_key_normalized = _normalize_line_component(bookmaker_key)
+        book_live_state = _selected_live_state_payload(
+            [_bookmaker_live_state(game, book)],
+            fallback=_event_live_state(game or {}) if isinstance(game, dict) else None,
+        )
         book_event_id = (
             book.get("event_id")
             or book.get("eventId")
@@ -3344,6 +3910,8 @@ def _record_line_offers(
             if market.get("key") != market_key:
                 continue
             for outcome in market.get("outcomes", []):
+                if not _is_live_quote_fresh(game, book, market, outcome, scan_mode, now_epoch=now_epoch):
+                    continue
                 display_price = _safe_float(outcome.get("price"))
                 if display_price is None or display_price <= 1:
                     continue
@@ -3368,6 +3936,10 @@ def _record_line_offers(
                     {
                         "effective_price": effective_price,
                         "display_price": display_price,
+                        "quote_updated_at": _epoch_to_iso(
+                            _quote_updated_at_seconds(game, book, market, outcome) or 0.0
+                        ),
+                        "live_state": book_live_state,
                         "bookmaker": bookmaker,
                         "bookmaker_key": bookmaker_key_normalized or bookmaker_key,
                         "name": outcome_key,
@@ -3426,7 +3998,11 @@ def _available_markets(game: dict) -> List[str]:
 
 
 def _collect_market_entries(
-    game: dict, market_key: str, stake_total: float, commission_rate: float
+    game: dict,
+    market_key: str,
+    stake_total: float,
+    commission_rate: float,
+    scan_mode: str = SCAN_MODE_PREMATCH,
 ) -> List[dict]:
     bookmakers = game.get("bookmakers", [])
     markets = [
@@ -3435,11 +4011,18 @@ def _collect_market_entries(
             "title": book.get("title") or book.get("key"),
             "event_id": book.get("event_id") or book.get("eventId") or book.get("id"),
             "event_url": book.get("event_url") or book.get("eventUrl") or book.get("url"),
+            "live_state": copy.deepcopy(book.get("live_state")) if isinstance(book.get("live_state"), dict) else None,
             "markets": book.get("markets", []),
         }
         for book in bookmakers
     ]
-    line_offers = _record_line_offers(markets, market_key, commission_rate)
+    line_offers = _record_line_offers(
+        markets,
+        market_key,
+        commission_rate,
+        game=game,
+        scan_mode=scan_mode,
+    )
     entries = []
     for line_key, offers in line_offers.items():
         offer_count = len(offers)
@@ -3458,6 +4041,11 @@ def _collect_market_entries(
         best_score: Optional[Tuple[float, float]] = None
         for combination in itertools.product(*candidate_lists):
             outcomes = list(combination)
+            if not _live_states_are_compatible(
+                [outcome.get("live_state") for outcome in outcomes],
+                scan_mode,
+            ):
+                continue
             # Arbitrage output is meant to represent cross-book opportunities.
             # Skip lines where all selected legs come from the same bookmaker.
             bookmaker_keys = {
@@ -3510,6 +4098,7 @@ def _collect_market_entries(
                 "is_exchange": o.get("is_exchange", False),
                 "book_event_id": o.get("book_event_id"),
                 "book_event_url": o.get("book_event_url"),
+                "quote_updated_at": o.get("quote_updated_at"),
             }
             for o in outcomes
         ]
@@ -3541,6 +4130,10 @@ def _collect_market_entries(
             "away_team": game.get("away_team"),
             "event": f"{game.get('away_team')} vs {game.get('home_team')}",
             "commence_time": game.get("commence_time"),
+            "live_state": _selected_live_state_payload(
+                [outcome.get("live_state") for outcome in outcomes],
+                fallback=_event_live_state(game),
+            ),
             "market": market_key,
             "roi_percent": round(net_roi, 2),
             "gross_roi_percent": round(gross_roi, 2) if has_exchange else round(net_roi, 2),
@@ -3555,21 +4148,32 @@ def _collect_market_entries(
 
 
 def _collect_middle_opportunities(
-    game: dict, market_key: str, stake_total: float, commission_rate: float
+    game: dict,
+    market_key: str,
+    stake_total: float,
+    commission_rate: float,
+    scan_mode: str = SCAN_MODE_PREMATCH,
 ) -> List[dict]:
     if market_key not in MIDDLE_MARKETS or stake_total <= 0:
         return []
     bookmakers = game.get("bookmakers", [])
     offers = []
+    now_epoch = time.time()
     for book in bookmakers:
         bookmaker_title = book.get("title") or book.get("key")
         bookmaker_key_raw = book.get("key") or bookmaker_title
         bookmaker_key = _normalize_line_component(bookmaker_key_raw) or str(bookmaker_key_raw or "").strip()
+        book_live_state = _selected_live_state_payload(
+            [_bookmaker_live_state(game, book)],
+            fallback=_event_live_state(game),
+        )
         markets = book.get("markets", [])
         for market in markets:
             if market.get("key") != market_key:
                 continue
             for outcome in market.get("outcomes", []):
+                if not _is_live_quote_fresh(game, book, market, outcome, scan_mode, now_epoch=now_epoch):
+                    continue
                 point = outcome.get("point")
                 display_price = _safe_float(outcome.get("price"))
                 if point is None or display_price is None or display_price <= 1:
@@ -3590,6 +4194,10 @@ def _collect_middle_opportunities(
                         "line": point_value,
                         "display_price": display_price,
                         "effective_price": effective_price,
+                        "quote_updated_at": _epoch_to_iso(
+                            _quote_updated_at_seconds(game, book, market, outcome) or 0.0
+                        ),
+                        "live_state": book_live_state,
                         "max_stake": _safe_float(
                             outcome.get("stake")
                             or outcome.get("max_stake")
@@ -3602,6 +4210,11 @@ def _collect_middle_opportunities(
     seen_pairs = set()
     for offer_a, offer_b in itertools.combinations(offers, 2):
         if offer_a["bookmaker_key"] == offer_b["bookmaker_key"]:
+            continue
+        if not _live_states_are_compatible(
+            [offer_a.get("live_state"), offer_b.get("live_state")],
+            scan_mode,
+        ):
             continue
         pair_signature = tuple(sorted([offer_a["pair_key"], offer_b["pair_key"]]))
         if pair_signature in seen_pairs:
@@ -3621,6 +4234,7 @@ def _collect_plus_ev_opportunities(
     min_edge_percent: float,
     bankroll: float,
     kelly_fraction: float,
+    scan_mode: str = SCAN_MODE_PREMATCH,
 ) -> List[dict]:
     bookmakers = game.get("bookmakers", [])
     sharp_meta = None
@@ -3641,7 +4255,13 @@ def _collect_plus_ev_opportunities(
     if not sharp_bookmaker or not sharp_meta:
         return []
     is_sharp_exchange = sharp_meta.get("type") == "exchange"
-    sharp_reference = _build_sharp_reference(sharp_bookmaker, commission_rate, is_sharp_exchange)
+    sharp_reference = _build_sharp_reference(
+        sharp_bookmaker,
+        commission_rate,
+        is_sharp_exchange,
+        game=game,
+        scan_mode=scan_mode,
+    )
     if not sharp_reference:
         return []
     opportunities: List[dict] = []
@@ -3655,7 +4275,11 @@ def _collect_plus_ev_opportunities(
             continue
         bookmaker_title = book.get("title") or key
         is_exchange = key in EXCHANGE_KEYS
-        soft_lines = _two_way_outcomes(book)
+        soft_lines = _two_way_outcomes(
+            book,
+            game=game,
+            scan_mode=scan_mode,
+        )
         if not soft_lines:
             continue
         for (market_key, line_key), entries in soft_lines.items():
@@ -3668,6 +4292,11 @@ def _collect_plus_ev_opportunities(
                 name_norm = entry["name"]
                 sharp_outcome = reference["outcomes"].get(name_norm)
                 if not sharp_outcome:
+                    continue
+                if not _live_states_are_compatible(
+                    [entry.get("live_state"), sharp_outcome.get("live_state")],
+                    scan_mode,
+                ):
                     continue
                 soft_point = entry.get("point")
                 sharp_point = sharp_outcome.get("point")
@@ -3693,6 +4322,10 @@ def _collect_plus_ev_opportunities(
                     or SPORT_DISPLAY_NAMES.get(game.get("sport_key", ""), game.get("sport_key")),
                     "event": f"{game.get('away_team')} vs {game.get('home_team')}",
                     "commence_time": game.get("commence_time"),
+                    "live_state": _selected_live_state_payload(
+                        [entry.get("live_state"), sharp_outcome.get("live_state")],
+                        fallback=_event_live_state(game),
+                    ),
                     "market": market_key,
                     "market_point": sharp_outcome.get("point"),
                     "bet": {
@@ -3703,6 +4336,7 @@ def _collect_plus_ev_opportunities(
                         "effective_odds": effective_price,
                         "is_exchange": is_exchange,
                         "point": soft_point,
+                        "quote_updated_at": entry.get("quote_updated_at"),
                     },
                     "sharp": {
                         "book": sharp_meta.get("name") or sharp_bookmaker.get("title") or sharp_meta.get("key"),
@@ -3714,6 +4348,7 @@ def _collect_plus_ev_opportunities(
                         "true_probability": sharp_outcome["true_probability"],
                         "true_probability_percent": round(sharp_outcome["true_probability"] * 100, 2),
                         "vig_percent": reference.get("vig_percent"),
+                        "quote_updated_at": sharp_outcome.get("quote_updated_at"),
                     },
                     "edge_percent": round(net_edge, 2),
                     "net_edge_percent": round(net_edge, 2),
@@ -3880,6 +4515,7 @@ def _build_middle_entry(
             "bookmaker": side_a["bookmaker"],
             "max_stake": side_a.get("max_stake"),
             "is_exchange": side_a["is_exchange"],
+            "quote_updated_at": side_a.get("quote_updated_at"),
         },
         {
             "team": side_b["team"],
@@ -3889,6 +4525,7 @@ def _build_middle_entry(
             "bookmaker": side_b["bookmaker"],
             "max_stake": side_b.get("max_stake"),
             "is_exchange": side_b["is_exchange"],
+            "quote_updated_at": side_b.get("quote_updated_at"),
         },
     )
     stakes_payload = {
@@ -3913,6 +4550,10 @@ def _build_middle_entry(
         or SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
         "event": f"{game.get('away_team', away_team)} vs {game.get('home_team', home_team)}",
         "commence_time": game.get("commence_time"),
+        "live_state": _selected_live_state_payload(
+            [side_a.get("live_state"), side_b.get("live_state")],
+            fallback=_event_live_state(game),
+        ),
         "market": market_key,
         "side_a": best_odds[0],
         "side_b": best_odds[1],
@@ -4242,6 +4883,7 @@ async def _fetch_provider_events_for_sport(
     provider_markets: Sequence[str],
     regions: Sequence[str],
     bookmakers: Optional[Sequence[str]],
+    provider_context: Optional[dict] = None,
 ) -> dict:
     provider_title = PROVIDER_TITLES.get(provider_key, provider_key)
     fetch_provider_events = PROVIDER_FETCHERS.get(provider_key)
@@ -4253,12 +4895,25 @@ async def _fetch_provider_events_for_sport(
         provider_error = "Provider fetcher is not callable"
     else:
         try:
+            call_kwargs = {"bookmakers": bookmakers}
+            if provider_context:
+                supports_context = False
+                try:
+                    parameters = inspect.signature(fetch_provider_events).parameters.values()
+                    supports_context = any(
+                        parameter.name == "context" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+                        for parameter in parameters
+                    )
+                except (TypeError, ValueError):
+                    supports_context = False
+                if supports_context:
+                    call_kwargs["context"] = provider_context
             provider_events = await _call_with_request_logger_async(
                 fetch_provider_events,
                 sport_key,
                 provider_markets,
                 regions,
-                bookmakers=bookmakers,
+                **call_kwargs,
             )
             if not isinstance(provider_events, list):
                 provider_events = []
@@ -4277,6 +4932,7 @@ async def _fetch_provider_events_for_sport(
 
 async def _scan_single_sport(
     sport: dict,
+    scan_mode: str,
     all_markets: bool,
     should_fetch_api: bool,
     api_pool: ApiKeyPool,
@@ -4326,9 +4982,11 @@ async def _scan_single_sport(
         }
 
     sport_name = sport.get("title") or SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
+    normalized_scan_mode = _normalize_scan_mode(scan_mode)
     sport_timing = {
         "sport_key": sport_key,
         "sport": sport_name,
+        "scan_mode": normalized_scan_mode,
         "api_fetch_ms": 0.0,
         "provider_fetch_ms": 0.0,
         "analysis_ms": 0.0,
@@ -4415,6 +5073,7 @@ async def _scan_single_sport(
     provider_keys_to_fetch = [
         key for key in enabled_provider_keys if callable(PROVIDER_FETCHERS.get(key))
     ]
+    provider_context = {"scan_mode": normalized_scan_mode, "live": normalized_scan_mode == SCAN_MODE_LIVE}
     if provider_markets and provider_keys_to_fetch:
         max_workers = min(_provider_fetch_max_workers(), len(provider_keys_to_fetch))
         async def _provider_job(provider_key: str) -> Tuple[str, dict]:
@@ -4425,6 +5084,7 @@ async def _scan_single_sport(
                     provider_markets=provider_markets,
                     regions=normalized_regions,
                     bookmakers=normalized_bookmakers,
+                    provider_context=provider_context,
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 result = {
@@ -4484,6 +5144,7 @@ async def _scan_single_sport(
                 provider_markets=provider_markets,
                 regions=normalized_regions,
                 bookmakers=normalized_bookmakers,
+                provider_context=provider_context,
             )
             provider_fetch_ms += float(retry_result.get("ms") or 0.0)
             retry_events = retry_result.get("events")
@@ -4636,17 +5297,20 @@ async def _scan_single_sport(
         timing_steps.append(provider_step)
 
     stale_event_filters: List[dict] = []
-    events, time_filter_stats = _filter_events_for_scan(events)
+    events, time_filter_stats = _filter_events_for_scan_mode(events, normalized_scan_mode)
     dropped_past = int(time_filter_stats.get("dropped_past", 0) or 0)
+    dropped_future = int(time_filter_stats.get("dropped_future", 0) or 0)
     dropped_missing = int(time_filter_stats.get("dropped_missing_time", 0) or 0)
-    if dropped_past or dropped_missing:
-        stale_event_filters.append(
-            {
-                "sport_key": sport_key,
-                "dropped_past": dropped_past,
-                "dropped_missing_time": dropped_missing,
-            }
-        )
+    if dropped_past or dropped_future or dropped_missing:
+        filter_payload = {
+            "sport_key": sport_key,
+            "scan_mode": normalized_scan_mode,
+            "dropped_past": dropped_past,
+            "dropped_missing_time": dropped_missing,
+        }
+        if dropped_future:
+            filter_payload["dropped_future"] = dropped_future
+        stale_event_filters.append(filter_payload)
 
     arb_opportunities: List[dict] = []
     middle_opportunities: List[dict] = []
@@ -4660,14 +5324,22 @@ async def _scan_single_sport(
         arb_markets = _available_markets(game) if all_markets else base_markets
         for market_key in arb_markets:
             new_entries = _collect_market_entries(
-                game, market_key, stake_amount, commission_rate
+                game,
+                market_key,
+                stake_amount,
+                commission_rate,
+                scan_mode=scan_mode,
             )
             for entry in new_entries:
                 total_profit += entry["stakes"].get("guaranteed_profit", 0.0)
             arb_opportunities.extend(new_entries)
             if market_key in MIDDLE_MARKETS:
                 middle_entries = _collect_middle_opportunities(
-                    game, market_key, stake_amount, commission_rate
+                    game,
+                    market_key,
+                    stake_amount,
+                    commission_rate,
+                    scan_mode=scan_mode,
                 )
                 middle_opportunities.extend(middle_entries)
         plus_entries = _collect_plus_ev_opportunities(
@@ -4678,6 +5350,7 @@ async def _scan_single_sport(
             min_edge_percent,
             bankroll,
             kelly_fraction,
+            scan_mode=scan_mode,
         )
         plus_ev_opportunities.extend(plus_entries)
     analysis_ms = _elapsed_ms(analysis_started_at)
@@ -4725,6 +5398,7 @@ async def _scan_single_sport(
 async def run_scan_async(
     api_key: str | Sequence[str],
     sports: Optional[List[str]] = None,
+    scan_mode: str = SCAN_MODE_PREMATCH,
     all_sports: bool = False,
     all_markets: bool = False,
     stake_amount: float = DEFAULT_STAKE_AMOUNT,
@@ -4754,6 +5428,7 @@ async def run_scan_async(
 
     setup_started_at = time.perf_counter()
     api_keys = _normalize_api_keys(api_key)
+    normalized_scan_mode = _normalize_scan_mode(scan_mode)
     if stake_amount is None or stake_amount <= 0:
         stake_amount = DEFAULT_STAKE_AMOUNT
     all_markets = bool(all_markets)
@@ -4777,6 +5452,21 @@ async def run_scan_async(
         explicit_provider_keys=list(explicit_provider_selection),
     )
     enabled_provider_set = set(enabled_provider_keys)
+    if normalized_scan_mode == SCAN_MODE_LIVE:
+        if not enabled_provider_keys:
+            enabled_provider_keys = _dedupe_proxy_provider_keys(
+                _default_live_provider_keys(),
+                explicit_provider_keys=list(explicit_provider_selection),
+            )
+            enabled_provider_set = set(enabled_provider_keys)
+        live_bookmaker_filter = _dedupe_proxy_provider_keys(
+            list(explicit_provider_selection) or list(enabled_provider_keys),
+            explicit_provider_keys=list(explicit_provider_selection),
+        )
+        normalized_bookmakers = live_bookmaker_filter or list(enabled_provider_keys)
+        provider_bookmaker_keys = _normalize_provider_keys(normalized_bookmakers) or list(enabled_provider_keys)
+        api_bookmakers = []
+        include_purebet = PUREBET_BOOK_KEY in enabled_provider_set
     active_provider_scan_caches = _activate_provider_scan_caches(enabled_provider_keys)
     provider_target_sport_keys = set(requested_sport_keys) if enabled_provider_keys else set()
     provider_only_via_bookmakers = bool(normalized_bookmakers) and not api_bookmakers
@@ -4787,11 +5477,14 @@ async def run_scan_async(
         and not api_keys
     )
     should_fetch_api = not (provider_only_via_bookmakers or provider_only_via_missing_api_key)
+    if normalized_scan_mode == SCAN_MODE_LIVE:
+        should_fetch_api = False
     include_purebet = PUREBET_BOOK_KEY in enabled_provider_set
     request_logger.log_meta(
         {
             "type": "scan_config",
             "time": _iso_now(),
+            "scan_mode": normalized_scan_mode,
             "requested_sports": list(requested_sport_keys),
             "bookmakers": list(normalized_bookmakers),
             "enabled_provider_keys": list(enabled_provider_keys),
@@ -4803,6 +5496,7 @@ async def run_scan_async(
             "name": "prepare_inputs",
             "label": "Prepare scan inputs",
             "ms": _elapsed_ms(setup_started_at),
+            "scan_mode": normalized_scan_mode,
             "sports_requested": len(requested_sport_keys),
             "providers_enabled": len(enabled_provider_keys),
         }
@@ -4824,8 +5518,11 @@ async def run_scan_async(
     if not should_fetch_api and not enabled_provider_keys:
         return _finish({
             "success": False,
-            "error": "No enabled providers selected",
+            "error": "Live mode requires at least one enabled custom provider"
+            if normalized_scan_mode == SCAN_MODE_LIVE
+            else "No enabled providers selected",
             "error_code": 400,
+            "scan_mode": normalized_scan_mode,
             "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
         })
     commission_rate = _clamp_commission(commission_rate)
@@ -4901,6 +5598,7 @@ async def run_scan_async(
         plus_ev_summary = _plus_ev_summary([])
         return _finish({
             "success": True,
+            "scan_mode": normalized_scan_mode,
             "scan_time": _iso_now(),
             "api_market_skips": [],
             "provider_snapshot_paths": {},
@@ -4969,6 +5667,7 @@ async def run_scan_async(
             sport_results_by_index[idx] = await _await_if_needed(
                 _scan_single_sport(
                     sport=sport,
+                    scan_mode=normalized_scan_mode,
                     all_markets=all_markets,
                     should_fetch_api=should_fetch_api,
                     api_pool=api_pool,
@@ -4994,6 +5693,7 @@ async def run_scan_async(
                     result = await _await_if_needed(
                         _scan_single_sport(
                             sport=sport,
+                            scan_mode=normalized_scan_mode,
                             all_markets=all_markets,
                             should_fetch_api=should_fetch_api,
                             api_pool=api_pool,
@@ -5139,6 +5839,7 @@ async def run_scan_async(
     )
     return _finish({
         "success": True,
+        "scan_mode": normalized_scan_mode,
         "scan_time": scan_time,
         "api_market_skips": api_market_skips,
         "provider_snapshot_paths": provider_snapshot_paths,
@@ -5185,6 +5886,7 @@ async def run_scan_async(
 def run_scan(
     api_key: str | Sequence[str],
     sports: Optional[List[str]] = None,
+    scan_mode: str = SCAN_MODE_PREMATCH,
     all_sports: bool = False,
     all_markets: bool = False,
     stake_amount: float = DEFAULT_STAKE_AMOUNT,
@@ -5205,6 +5907,7 @@ def run_scan(
             run_scan_async(
                 api_key=api_key,
                 sports=sports,
+                scan_mode=scan_mode,
                 all_sports=all_sports,
                 all_markets=all_markets,
                 stake_amount=stake_amount,

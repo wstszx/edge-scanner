@@ -150,6 +150,14 @@ class ProviderContractReplayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event["away_team"], provider_fixture["expected"]["away_team"])
         market_keys = _unique_keys(event["bookmakers"][0]["markets"])
         self.assertEqual(sorted(market_keys), sorted(provider_fixture["expected"]["market_keys"]))
+        live_state = event.get("live_state") or {}
+        self.assertEqual(live_state.get("status"), "scheduled")
+        self.assertFalse(live_state.get("is_live"))
+        self.assertEqual(live_state.get("in_play_status"), "preplay")
+        self.assertTrue(event["bookmakers"][0].get("live_state"))
+        first_market = (event["bookmakers"][0].get("markets") or [])[0]
+        first_outcome = (first_market.get("outcomes") or [])[0]
+        self.assertTrue(first_outcome.get("last_updated"))
         self.assertEqual(betdex.fetch_events_async.last_stats.get("events_returned_count"), 1)
         self.assertEqual(betdex.fetch_events_async.last_stats.get("session_cache"), "miss")
 
@@ -182,6 +190,13 @@ class ProviderContractReplayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event["away_team"], provider_fixture["expected"]["away_team"])
         market_keys = _unique_keys(event["bookmakers"][0]["markets"])
         self.assertEqual(sorted(market_keys), sorted(provider_fixture["expected"]["market_keys"]))
+        normalized_markets = event["bookmakers"][0].get("markets") or []
+        self.assertTrue(
+            any(
+                any(outcome.get("last_updated") for outcome in (market.get("outcomes") or []))
+                for market in normalized_markets
+            )
+        )
         self.assertEqual(sx_bet.fetch_events_async.last_stats.get("events_returned_count"), 1)
         self.assertEqual(sx_bet.fetch_events_async.last_stats.get("fixture_source_used"), "summary")
 

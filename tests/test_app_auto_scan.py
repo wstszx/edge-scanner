@@ -53,6 +53,7 @@ class ServerAutoScanAppTests(unittest.TestCase):
             "enabled": "true",
             "intervalMinutes": "15",
             "payload": {
+                "scanMode": "live",
                 "sports": ["icehockey_nhl"],
                 "allSports": "false",
                 "allMarkets": "true",
@@ -71,6 +72,7 @@ class ServerAutoScanAppTests(unittest.TestCase):
             "enabled": True,
             "interval_minutes": 15,
             "payload": {
+                "scanMode": "live",
                 "sports": ["icehockey_nhl"],
                 "allSports": False,
                 "allMarkets": True,
@@ -118,6 +120,7 @@ class ServerAutoScanAppTests(unittest.TestCase):
             "enabled": True,
             "intervalMinutes": 10,
             "payload": {
+                "scanMode": "prematch",
                 "sports": ["icehockey_nhl"],
                 "allSports": False,
                 "allMarkets": False,
@@ -164,6 +167,7 @@ class ServerAutoScanAppTests(unittest.TestCase):
         history_manager.save_opportunities.assert_called_once()
         kwargs = mocked_run_scan.call_args.kwargs
         self.assertEqual(kwargs.get("api_key"), [])
+        self.assertEqual(kwargs.get("scan_mode"), "prematch")
         self.assertEqual(kwargs.get("sports"), ["icehockey_nhl"])
         self.assertEqual(kwargs.get("regions"), ["us"])
         self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])

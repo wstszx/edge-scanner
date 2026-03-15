@@ -59,7 +59,13 @@ from config import (  # noqa: E402
     SPORT_OPTIONS,
 )
 from providers import PROVIDER_FETCHERS, resolve_provider_key  # noqa: E402
-from scanner import run_scan  # noqa: E402
+from scanner import (  # noqa: E402
+    DEFAULT_LIVE_PROVIDER_KEYS,
+    LIVE_SUPPORTED_PROVIDER_KEYS,
+    SCAN_MODE_LIVE,
+    SCAN_MODE_PREMATCH,
+    run_scan,
+)
 from history import get_history_manager  # noqa: E402
 from notifier import get_notifier  # noqa: E402
 
@@ -355,9 +361,18 @@ def _extract_opportunity_list(payload: object) -> list[dict]:
     return []
 
 
+def _normalize_scan_mode(value: object) -> str:
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {SCAN_MODE_PREMATCH, SCAN_MODE_LIVE}:
+            return text
+    return SCAN_MODE_PREMATCH
+
+
 def _server_auto_scan_payload() -> dict:
     provider_keys = list(PROVIDER_FETCHERS.keys())
     payload = {
+        "scanMode": SCAN_MODE_PREMATCH,
         "sports": list(DEFAULT_SPORT_KEYS),
         "allSports": DEFAULT_ALL_SPORTS,
         "allMarkets": ENV_ALL_MARKETS,
@@ -395,10 +410,11 @@ def _server_auto_scan_config_summary(config: Optional[dict]) -> str:
         else []
     )
     providers_label = ",".join(str(item) for item in include_providers[:6]) or "-"
+    scan_mode = _normalize_scan_mode(payload.get("scanMode"))
     return (
         f"enabled={bool(config.get('enabled'))} "
         f"interval={int(config.get('interval_minutes') or ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES)}m "
-        f"sports={len(sports)} bookmakers={len(bookmakers)} providers={providers_label}"
+        f"mode={scan_mode} sports={len(sports)} bookmakers={len(bookmakers)} providers={providers_label}"
     )
 
 
@@ -443,6 +459,7 @@ def _normalize_server_auto_scan_config(raw: object) -> Optional[dict]:
         ]
     else:
         include_providers = []
+    scan_mode = _normalize_scan_mode(scan_payload.get("scanMode"))
 
     try:
         stake_value = (
@@ -511,6 +528,7 @@ def _normalize_server_auto_scan_config(raw: object) -> Optional[dict]:
         "enabled": _coerce_bool(raw.get("enabled"), default=ENV_SERVER_AUTO_SCAN_ENABLED),
         "interval_minutes": interval_minutes,
         "payload": {
+            "scanMode": scan_mode,
             "sports": sports,
             "allSports": _coerce_bool(scan_payload.get("allSports"), default=DEFAULT_ALL_SPORTS),
             "allMarkets": _coerce_bool(scan_payload.get("allMarkets"), default=ENV_ALL_MARKETS),
@@ -596,6 +614,7 @@ def _execute_scan_payload(
     try:
         _start_background_provider_services(wait_timeout=0.0)
         api_keys = ENV_API_KEYS or _payload_api_keys(payload)
+        scan_mode = _normalize_scan_mode(payload.get("scanMode"))
         sports = payload.get("sports") or []
         all_sports = _coerce_bool(payload.get("allSports"), default=DEFAULT_ALL_SPORTS)
         all_markets = _coerce_bool(payload.get("allMarkets"), default=ENV_ALL_MARKETS)
@@ -717,6 +736,7 @@ def _execute_scan_payload(
         result = run_scan(
             api_key=api_keys,
             sports=sports,
+            scan_mode=scan_mode,
             all_sports=all_sports,
             all_markets=all_markets,
             stake_amount=stake_value,
@@ -730,6 +750,8 @@ def _execute_scan_payload(
             include_purebet=include_purebet,
             include_providers=include_providers_value,
         )
+        if isinstance(result, dict) and "scan_mode" not in result:
+            result["scan_mode"] = scan_mode
         if result.get("success"):
             scan_time = result.get("scan_time", "")
             arbitrage_items = _extract_opportunity_list(result.get("arbitrage"))
@@ -1000,6 +1022,7 @@ def index() -> str:
         default_arb_calc_currency=DEFAULT_ARB_CALC_CURRENCY,
         default_auto_scan_enabled=DEFAULT_AUTO_SCAN_ENABLED,
         default_auto_scan_minutes=DEFAULT_AUTO_SCAN_MINUTES,
+        default_scan_mode=SCAN_MODE_PREMATCH,
         default_notify_sound_enabled=DEFAULT_NOTIFY_SOUND_ENABLED,
         default_notify_popup_enabled=DEFAULT_NOTIFY_POPUP_ENABLED,
         default_odds_format=DEFAULT_ODDS_FORMAT,
@@ -1012,6 +1035,8 @@ def index() -> str:
         kelly_options=KELLY_OPTIONS,
         bookmaker_links=BOOKMAKER_URLS,
         custom_provider_keys=list(PROVIDER_FETCHERS.keys()),
+        default_live_provider_keys=list(DEFAULT_LIVE_PROVIDER_KEYS),
+        live_supported_provider_keys=list(LIVE_SUPPORTED_PROVIDER_KEYS),
     )
 
 

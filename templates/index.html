@@ -48,7 +48,7 @@
           <form id="scan-form">
             <div class="config-grid">
               {% if not has_env_key %}
-              <div class="field">
+              <div class="field" id="api-key-field">
                 <label class="field-label" data-i18n="api_key_label">API Key</label>
                 <div class="input-wrap">
                   <input type="password" id="api-key" placeholder="sk_xxx" required />
@@ -60,6 +60,16 @@
                 <label class="field-label" data-i18n="total_stake_label">Total Stake ($)</label>
                 <input type="number" id="stake-input" min="1" step="1" value="{{ default_stake_amount }}" />
                 <p class="helper" data-i18n="stake_helper">Used for arbitrage + middles stake splits.</p>
+              </div>
+              <div class="field mode-field">
+                <label class="field-label" data-i18n="scan_mode_label">Scan Mode</label>
+                <select id="scan-mode-select" class="visually-hidden" aria-hidden="true" tabindex="-1">
+                  <option value="prematch" {% if default_scan_mode == 'prematch' %}selected{% endif %}
+                    data-i18n="scan_mode_prematch">Prematch arbitrage</option>
+                  <option value="live" {% if default_scan_mode == 'live' %}selected{% endif %}
+                    data-i18n="scan_mode_live">Live arbitrage</option>
+                </select>
+                <p class="helper" id="scan-mode-helper" data-i18n="scan_mode_tab_hint">Use the Prematch / Live tabs above the board to switch modes.</p>
               </div>
             </div>
             <div class="advanced-trigger">
@@ -144,6 +154,7 @@
                         <span class="field-label" data-i18n="bookmakers_label">Bookmakers</span>
                         <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected
                           bookmakers.</p>
+                        <p class="helper" id="bookmakers-mode-note" data-i18n="bookmakers_mode_note_prematch">Prematch mode uses your standard bookmaker filters.</p>
                       </div>
                       <div class="panel-actions">
                         <button type="button" class="chip-btn" data-quick-action="select" data-quick-target="bookmakers"
@@ -155,11 +166,20 @@
                     <div class="panel-body">
                       <div id="bookmakers-list" class="bookmakers-grid">
                         {% for book in bookmaker_options %}
-                        <div class="bookmaker-row">
+                        <div class="bookmaker-row" data-bookmaker-key="{{ book.key }}"
+                          data-bookmaker-label="{{ book.label }}"
+                          data-live-availability="{% if book.key in default_live_provider_keys %}default{% elif book.key in live_supported_provider_keys %}optional{% elif book.key in custom_provider_keys %}prematch_only{% else %}api{% endif %}">
                           <label class="checkbox">
                             <input type="checkbox" name="bookmakers" value="{{ book.key }}" {% if book.key in
                               default_bookmaker_keys %}checked{% endif %} />
-                            <span data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
+                            <span class="bookmaker-name" data-bookmaker-key="{{ book.key }}">{{ book.label }}</span>
+                            {% if book.key in default_live_provider_keys %}
+                            <span class="provider-badge provider-badge-default" data-i18n="provider_live_default">Live default</span>
+                            {% elif book.key in live_supported_provider_keys %}
+                            <span class="provider-badge provider-badge-optional" data-i18n="provider_live_optional">Live optional</span>
+                            {% elif book.key in custom_provider_keys %}
+                            <span class="provider-badge provider-badge-prematch" data-i18n="provider_prematch_only">Prematch only</span>
+                            {% endif %}
                           </label>
                           <input type="url" inputmode="url" class="bookmaker-url" data-bookmaker-key="{{ book.key }}"
                             value="{{ bookmaker_links.get(book.key, '') }}" placeholder="https://..." />
@@ -426,7 +446,8 @@
       </aside>
       <section class="content">
         <nav class="tabs">
-          <button type="button" class="tab-btn active" data-tab="arbitrage" data-i18n="tab_arbitrage">Arbitrage</button>
+          <button type="button" class="tab-btn {% if default_scan_mode != 'live' %}active{% endif %}" data-tab="prematch" data-i18n="scan_mode_prematch_short">Prematch</button>
+          <button type="button" class="tab-btn {% if default_scan_mode == 'live' %}active{% endif %}" data-tab="live" data-i18n="scan_mode_live_short">Live</button>
           <button type="button" class="tab-btn" data-tab="middles" data-i18n="tab_middles">Middles</button>
           <button type="button" class="tab-btn" data-tab="plus-ev" data-i18n="tab_plus_ev">+EV</button>
           <button type="button" class="tab-btn" data-tab="providers" data-i18n="tab_providers">Providers</button>
@@ -438,7 +459,7 @@
 
           <section class="stats-row arb-stats-row hidden" id="arb-stats-row">
             <div class="stat-card arb-stat-card arb-stat-card-primary">
-              <span class="stat-label" data-i18n="stat_arb_live_opportunities">Live Opportunities</span>
+              <span class="stat-label" id="arb-stat-count-label" data-i18n="stat_arb_live_opportunities">Live Opportunities</span>
               <span class="stat-value" id="arb-stat-count">0</span>
             </div>
             <div class="stat-card arb-stat-card">
@@ -477,7 +498,7 @@
               <div class="card-head arb-results-head">
                 <div class="arb-results-title">
                   <h3 data-i18n="opportunities_title">Opportunities</h3>
-                  <p class="helper arb-results-subhead" data-i18n="arb_results_subhead">Review live spots, compare
+                  <p class="helper arb-results-subhead" id="arb-results-subhead" data-i18n="arb_results_subhead">Review live spots, compare
                     legs, and send one into the calculator.</p>
                 </div>
                 <div class="table-meta">
@@ -1025,10 +1046,13 @@
     data-default-kelly-fraction="{{ default_kelly_fraction }}" data-default-odds-format="{{ default_odds_format }}"
     data-default-density="{{ default_density }}" data-default-theme="{{ default_theme }}"
     data-default-language="{{ default_language }}"
+    data-default-scan-mode="{{ default_scan_mode }}"
     data-default-all-markets="{{ 'true' if default_all_markets else 'false' }}"
     data-provider-only-mode="{{ 'true' if provider_only_mode else 'false' }}"
     data-kelly-options='{{ kelly_options | tojson }}' data-bookmaker-links='{{ bookmaker_links | tojson }}'
-    data-custom-provider-keys='{{ custom_provider_keys | tojson }}' hidden></div>
+    data-custom-provider-keys='{{ custom_provider_keys | tojson }}'
+    data-default-live-provider-keys='{{ default_live_provider_keys | tojson }}'
+    data-live-supported-provider-keys='{{ live_supported_provider_keys | tojson }}' hidden></div>
 
   <script src="{{ url_for('static', filename='scan_form_helpers.js') }}"></script>
   <script>
@@ -1053,11 +1077,14 @@
         defaultDensity: configEl.dataset.defaultDensity || '',
         defaultTheme: configEl.dataset.defaultTheme || '',
         defaultLanguage: configEl.dataset.defaultLanguage || '',
+        defaultScanMode: configEl.dataset.defaultScanMode || 'prematch',
         defaultAllMarkets: configEl.dataset.defaultAllMarkets === 'true',
         providerOnlyMode: configEl.dataset.providerOnlyMode === 'true',
         kellyOptions: parseConfigJson(configEl.dataset.kellyOptions, []),
         bookmakerLinks: parseConfigJson(configEl.dataset.bookmakerLinks, {}),
         customProviderKeys: parseConfigJson(configEl.dataset.customProviderKeys, []),
+        defaultLiveProviderKeys: parseConfigJson(configEl.dataset.defaultLiveProviderKeys, []),
+        liveSupportedProviderKeys: parseConfigJson(configEl.dataset.liveSupportedProviderKeys, []),
       }
       : {};
     const scanFormHelpers = window.EdgeScannerScanFormHelpers || {};
@@ -1067,6 +1094,8 @@
     const form = document.getElementById('scan-form');
     const apiKeyInput = document.getElementById('api-key');
     const stakeInput = document.getElementById('stake-input');
+    const scanModeSelect = document.getElementById('scan-mode-select');
+    const scanModeHelper = document.getElementById('scan-mode-helper');
     const scanBtn = document.getElementById('scan-btn');
     const statusEl = document.getElementById('status');
     const arbStatsRow = document.getElementById('arb-stats-row');
@@ -1074,6 +1103,7 @@
     const arbSummaryGrid = document.getElementById('arb-summary-grid');
     const arbMinRoiField = document.getElementById('arb-min-roi-field');
     const arbQuickBands = document.getElementById('arb-quick-bands');
+    const arbStatCountLabel = document.getElementById('arb-stat-count-label');
     const arbStatCount = document.getElementById('arb-stat-count');
     const arbStatEvents = document.getElementById('arb-stat-events');
     const arbStatAvgRoi = document.getElementById('arb-stat-avg-roi');
@@ -1081,6 +1111,7 @@
     const arbRoiBars = document.getElementById('arb-roi-bars');
     const arbSportBars = document.getElementById('arb-sport-bars');
     const arbResultsToolbar = document.getElementById('arb-results-toolbar');
+    const arbResultsSubhead = document.getElementById('arb-results-subhead');
     const arbMobileList = document.getElementById('arb-mobile-list');
     const arbDesktopList = document.getElementById('arb-desktop-list');
     const emptyState = document.getElementById('table-empty');
@@ -1208,6 +1239,7 @@
     const allMarketsToggle = document.getElementById('all-markets');
     const allBookmakersToggle = document.getElementById('all-bookmakers');
     const bookmakersList = document.getElementById('bookmakers-list');
+    const bookmakersModeNote = document.getElementById('bookmakers-mode-note');
     const bookmakerLinksList = bookmakersList;
     const saveSettingsBtn = document.getElementById('save-settings');
     const advancedSummary = document.getElementById('advanced-summary');
@@ -1220,6 +1252,7 @@
     const scanOpportunities = document.getElementById('scan-opportunities');
     const themeToggle = document.getElementById('theme-toggle');
     const toggleKeyBtn = document.getElementById('toggle-key');
+    const apiKeyField = document.getElementById('api-key-field');
     let currencyFormatter;
     const partialWarning = document.getElementById('partial-warning');
     const commissionInput = document.getElementById('commission-input');
@@ -1312,7 +1345,15 @@
     const currencyFormatterCache = new Map();
     let lastCommissionRate = defaultCommissionPercent / 100;
     let lastScanData = null;
-    let activeTab = 'arbitrage';
+    const arbitrageDataByMode = {
+      prematch: null,
+      live: null,
+    };
+    const arbSelectionSnapshotByMode = {
+      prematch: null,
+      live: null,
+    };
+    let activeTab = (appConfig.defaultScanMode || 'prematch').toLowerCase() === 'live' ? 'live' : 'prematch';
     let activeArbRoiBand = 'all';
     let oddsFormat = localStorage.getItem('edge-odds-format') || appConfig.defaultOddsFormat || 'decimal';
     let densityMode = localStorage.getItem('edge-density') || appConfig.defaultDensity || 'comfort';
@@ -1370,6 +1411,17 @@
         theme_dark: 'Dark',
         total_stake_label: 'Total Stake ($)',
         stake_helper: 'Used for arbitrage + middles stake splits.',
+        scan_mode_label: 'Scan mode',
+        scan_mode_helper: 'Live mode uses custom providers only and keeps only in-play events.',
+        scan_mode_tab_hint: 'Use the Prematch / Live tabs above the board to switch modes.',
+        scan_mode_helper_prematch: 'Prematch mode can use The Odds API together with your selected bookmaker filters.',
+        scan_mode_helper_live: 'Live mode uses curated custom providers only and keeps only in-play events.',
+        scan_mode_prematch: 'Prematch arbitrage',
+        scan_mode_live: 'Live arbitrage',
+        scan_mode_prematch_short: 'Prematch',
+        scan_mode_live_short: 'Live',
+        scan_mode_prematch_desc: 'Uses The Odds API and prematch books before kickoff.',
+        scan_mode_live_desc: 'Custom providers only. Defaults to SX Bet, BetDEX, and Polymarket.',
         sports_label: 'Sports',
         all_sports_label: 'Scan all active sports (uses more API credits)',
         all_markets_label: 'Scan extended markets (can use more API credits)',
@@ -1378,6 +1430,11 @@
         bookmakers_label: 'Bookmakers',
         all_bookmakers_label: 'Use all available bookmakers',
         bookmakers_helper: 'Optional: limit results to the selected bookmakers.',
+        bookmakers_mode_note_prematch: 'Prematch mode uses your standard bookmaker filters.',
+        bookmakers_mode_note_live: 'Live mode defaults to SX Bet, BetDEX, and Polymarket. bookmaker.xyz stays optional.',
+        provider_live_default: 'Live default',
+        provider_live_optional: 'Live optional',
+        provider_prematch_only: 'Prematch only',
         bookmaker_links_label: 'Bookmaker Links',
         bookmaker_links_helper: 'Customize open URLs. Supports placeholders like {event_id}, {home_team}, {away_team}. Leave blank to skip.',
         auto_scan_label: 'Auto Scan',
@@ -1402,6 +1459,8 @@
         commission_helper: 'Applied to Betfair, Matchbook, Sportsbet Exchange, etc.',
         commission_note: 'Net ROI/EV already reflects this commission.',
         scan_now: 'Scan Now',
+        scan_now_prematch: 'Scan Prematch',
+        scan_now_live: 'Scan Live',
         save_settings: 'Save settings',
         scanning: 'Scanning...',
         scanning_wait: 'Scanning, please wait...',
@@ -1483,6 +1542,8 @@
         arb_band_mid: '1-2%',
         arb_band_high: '2%+',
         arb_results_subhead: 'Review live spots, compare legs, and send one into the calculator.',
+        arb_results_subhead_prematch: 'Review prematch prices, compare legs, and send one into the calculator.',
+        arb_results_subhead_live: 'Review live spots, compare legs, and send one into the calculator.',
         arb_results_selection_label: 'Selection',
         arb_results_showing_label: 'Showing',
         arb_results_filter_all: 'All ROI levels',
@@ -1525,6 +1586,7 @@
         kelly_tenth: 'Tenth Kelly',
         stat_opportunities: 'Opportunities',
         stat_arb_live_opportunities: 'Live Opportunities',
+        stat_arb_prematch_opportunities: 'Prematch Opportunities',
         stat_arb_events: 'Events Covered',
         stat_arb_avg_roi: 'Avg Net ROI',
         stat_arb_total_profit: 'Total Profit',
@@ -1768,6 +1830,13 @@
         theme_dark: '深色',
         total_stake_label: '总下注金额 ($)',
         stake_helper: '用于套利和中间盘的下注拆分计算。',
+        scan_mode_label: '扫描模式',
+        scan_mode_helper: '赛中模式仅使用自定义 Provider，并只保留已开赛事件。',
+        scan_mode_tab_hint: '使用看板上方的“赛前 / 赛中”按钮切换模式。',
+        scan_mode_prematch: '赛前套利',
+        scan_mode_live: '赛中套利',
+        scan_mode_prematch_short: '赛前',
+        scan_mode_live_short: '赛中',
         sports_label: '体育项目',
         all_sports_label: '扫描所有活跃项目（消耗更多 API 额度）',
         all_markets_label: '扫描扩展盘口（可能消耗更多 API 额度）',
@@ -1821,6 +1890,8 @@
         arb_band_mid: '1-2%',
         arb_band_high: '2%+',
         arb_results_subhead: '先看机会，再比对下注腿，最后把目标送进右侧计算器。',
+        arb_results_subhead_prematch: '先看赛前机会，再比对下注腿，最后把目标送进右侧计算器。',
+        arb_results_subhead_live: '先看赛中机会，再比对下注腿，最后把目标送进右侧计算器。',
         arb_results_selection_label: '当前选中',
         arb_results_showing_label: '当前显示',
         arb_results_filter_all: '全部 ROI',
@@ -1863,6 +1934,7 @@
         kelly_tenth: '十分之一凯利',
         stat_opportunities: '机会',
         stat_arb_live_opportunities: '套利机会',
+        stat_arb_prematch_opportunities: '赛前套利机会',
         stat_arb_events: '覆盖赛事',
         stat_arb_avg_roi: '平均净 ROI',
         stat_arb_total_profit: '总利润',
@@ -2086,6 +2158,17 @@
     };
 
     Object.assign(TRANSLATIONS.zh || {}, {
+      scan_mode_helper_prematch: '\u8d5b\u524d\u6a21\u5f0f\u4f1a\u7ed3\u5408 The Odds API \u548c\u4f60\u5f53\u524d\u9009\u62e9\u7684 bookmaker \u7b5b\u9009\u6761\u4ef6\u3002',
+      scan_mode_helper_live: '\u8d5b\u4e2d\u6a21\u5f0f\u53ea\u4f7f\u7528\u7b5b\u8fc7\u7684\u81ea\u5b9a\u4e49 Provider\uff0c\u5e76\u53ea\u4fdd\u7559\u5df2\u5f00\u8d5b\u4e8b\u4ef6\u3002',
+      scan_mode_prematch_desc: '\u4f7f\u7528 The Odds API \u548c\u8d5b\u524d\u76d8\u53e3\uff0c\u5728\u5f00\u8d5b\u524d\u505a\u626b\u63cf\u3002',
+      scan_mode_live_desc: '\u4ec5\u4f7f\u7528\u81ea\u5b9a\u4e49 Provider\uff0c\u9ed8\u8ba4\u4f7f\u7528 SX Bet\u3001BetDEX \u548c Polymarket\u3002',
+      bookmakers_mode_note_prematch: '\u8d5b\u524d\u6a21\u5f0f\u4f7f\u7528\u4f60\u5e73\u65f6\u7684 bookmaker \u7b5b\u9009\u6761\u4ef6\u3002',
+      bookmakers_mode_note_live: '\u8d5b\u4e2d\u6a21\u5f0f\u9ed8\u8ba4\u4f7f\u7528 SX Bet\u3001BetDEX \u548c Polymarket\uff0cbookmaker.xyz \u4fdd\u6301\u53ef\u9009\u3002',
+      provider_live_default: '\u8d5b\u4e2d\u9ed8\u8ba4',
+      provider_live_optional: '\u8d5b\u4e2d\u53ef\u9009',
+      provider_prematch_only: '\u4ec5\u8d5b\u524d',
+      scan_now_prematch: '\u626b\u63cf\u8d5b\u524d\u5957\u5229',
+      scan_now_live: '\u626b\u63cf\u8d5b\u4e2d\u5957\u5229',
       countdown_live: '\u5df2\u5f00\u59cb',
       countdown_minutes: '{count}\u5206\u949f',
       countdown_hours: '{count}\u5c0f\u65f6',
@@ -2378,6 +2461,7 @@
       updateKellyOptions();
       updateThemeToggleText();
       updateToggleKeyLabel();
+      updateScanModeUi();
       updateAdvancedSummary();
       updateScanButtonText();
       updateArbSortLabel();
@@ -2444,7 +2528,11 @@
 
     function updateScanButtonText() {
       if (!scanBtn) return;
-      scanBtn.textContent = isScanning ? t('scanning') : t('scan_now');
+      if (isScanning) {
+        scanBtn.textContent = t('scanning');
+        return;
+      }
+      scanBtn.textContent = isLiveScanMode() ? t('scan_now_live') : t('scan_now_prematch');
     }
 
     function updateThemeToggleText() {
@@ -2476,19 +2564,21 @@
     function updateAdvancedSummary() {
       if (!advancedSummary || !form) return;
       const sportsLabels = collectCheckedLabels('sports');
-      const booksLabels = collectCheckedLabels('bookmakers');
+      const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
+      const booksLabels = effectiveSelectedBookmakerLabels(useAllBookmakers);
       const regionLabels = collectCheckedLabels('regions');
+      const modeLabel = selectedScanMode() === 'live' ? t('scan_mode_live_short') : t('scan_mode_prematch_short');
       const sportsSelected = sportsLabels.length;
       const booksSelected = booksLabels.length;
       const regionsSelected = regionLabels.length;
       const sportsText = allSportsToggle && allSportsToggle.checked ? t('summary_all') : sportsSelected;
-      const booksText = allBookmakersToggle && allBookmakersToggle.checked ? t('summary_all') : booksSelected;
+      const booksText = allBookmakersToggle && allBookmakersToggle.checked && !isLiveScanMode() ? t('summary_all') : booksSelected;
       const regionsText = regionsSelected;
-      advancedSummary.textContent = t('advanced_summary', {
+      advancedSummary.textContent = `${modeLabel} | ${t('advanced_summary', {
         sports: sportsText,
         books: booksText,
         regions: regionsText,
-      });
+      })}`;
       const sportsDetail =
         allSportsToggle && allSportsToggle.checked
           ? t('summary_all')
@@ -2496,13 +2586,13 @@
             ? sportsLabels.join(', ')
             : '0';
       const booksDetail =
-        allBookmakersToggle && allBookmakersToggle.checked
+        allBookmakersToggle && allBookmakersToggle.checked && !isLiveScanMode()
           ? t('summary_all')
           : booksLabels.length
             ? booksLabels.join(', ')
             : '0';
       const regionsDetail = regionLabels.length ? regionLabels.join(', ') : '0';
-      advancedSummary.title = `${t('sports_label')}: ${sportsDetail}\n${t('bookmakers_label')}: ${booksDetail}\n${t('regions_label')}: ${regionsDetail}`;
+      advancedSummary.title = `${t('scan_mode_label')}: ${modeLabel}\n${t('sports_label')}: ${sportsDetail}\n${t('bookmakers_label')}: ${booksDetail}\n${t('regions_label')}: ${regionsDetail}`;
     }
 
     function getOpportunityCount(section) {
@@ -2726,7 +2816,11 @@
       const regions = Array.isArray(payload?.regions) ? payload.regions : [];
       const books = Array.isArray(payload?.bookmakers) ? payload.bookmakers : [];
       const providers = Array.isArray(payload?.includeProviders) ? payload.includeProviders : [];
+      const scanMode = (payload?.scanMode || appConfig.defaultScanMode || 'prematch').toLowerCase() === 'live'
+        ? 'live'
+        : 'prematch';
       return {
+        scanMode,
         sportsCount: sports.length,
         regionsCount: regions.length,
         booksCount: books.length,
@@ -2745,13 +2839,14 @@
 
     function formatScanScope(context) {
       if (!context) return '-';
-      return t('scan_scope_summary', {
+      const modeLabel = context.scanMode === 'live' ? t('scan_mode_live_short') : t('scan_mode_prematch_short');
+      return `${modeLabel} | ${t('scan_scope_summary', {
         sports: scopeCountLabel(context.sportsCount, context.allSports),
         regions: scopeCountLabel(context.regionsCount, false),
         books: scopeCountLabel(context.booksCount, context.allBookmakers),
         providers: scopeCountLabel(context.providersCount, false),
         markets: context.allMarkets ? t('scan_markets_extended') : t('scan_markets_core'),
-      });
+      })}`;
     }
 
     function refreshScanLivePanel() {
@@ -2803,6 +2898,7 @@
           '#all-sports',
           '#all-markets',
           '#all-bookmakers',
+          '#scan-mode-select',
           '#stake-input',
           '#commission-input',
           '#api-key',
@@ -3067,11 +3163,19 @@
       if (!allBookmakersToggle) return;
       const useAll = allBookmakersToggle.checked;
       const boxes = form ? form.querySelectorAll('input[name="bookmakers"]') : [];
+      const liveMode = isLiveScanMode();
+      const liveSupportedSet = new Set(configuredLiveSupportedProviderKeys());
       boxes.forEach((box) => {
-        box.disabled = useAll;
+        const row = box.closest('.bookmaker-row');
+        const liveUnavailable = liveMode && row && !liveSupportedSet.has(box.value);
+        box.disabled = useAll || Boolean(liveUnavailable);
+        if (row) {
+          row.classList.toggle('is-disabled-by-mode', Boolean(liveUnavailable));
+        }
       });
       if (bookmakersList) {
         bookmakersList.classList.toggle('is-disabled', useAll);
+        bookmakersList.classList.toggle('is-live-mode', liveMode);
       }
       updateQuickActionState();
     }
@@ -3185,6 +3289,7 @@
           target.matches('input[name="sports"]') ||
           target.matches('input[name="bookmakers"]') ||
           target.matches('input[name="regions"]') ||
+          target.id === 'scan-mode-select' ||
           target.id === 'all-sports' ||
           target.id === 'all-bookmakers'
         ) {
@@ -3248,6 +3353,113 @@
       return value;
     }
 
+    function configuredLiveSupportedProviderKeys() {
+      const keys = Array.isArray(appConfig.liveSupportedProviderKeys) ? appConfig.liveSupportedProviderKeys : [];
+      return keys.length ? keys : (Array.isArray(appConfig.customProviderKeys) ? appConfig.customProviderKeys : []);
+    }
+
+    function configuredDefaultLiveProviderKeys() {
+      const keys = Array.isArray(appConfig.defaultLiveProviderKeys) ? appConfig.defaultLiveProviderKeys : [];
+      return keys.length ? keys : configuredLiveSupportedProviderKeys();
+    }
+
+    function selectedScanMode() {
+      const value = (scanModeSelect?.value || appConfig.defaultScanMode || 'prematch').toLowerCase();
+      return value === 'live' ? 'live' : 'prematch';
+    }
+
+    function isLiveScanMode() {
+      return selectedScanMode() === 'live';
+    }
+
+    function isArbitrageTab(tab) {
+      return tab === 'prematch' || tab === 'live';
+    }
+
+    function normalizeScanModeValue(mode) {
+      return `${mode || ''}`.trim().toLowerCase() === 'live' ? 'live' : 'prematch';
+    }
+
+    function getArbitrageModeData(mode = selectedScanMode()) {
+      return arbitrageDataByMode[normalizeScanModeValue(mode)] || null;
+    }
+
+    function resolvePayloadScanMode(payload, fallbackMode = selectedScanMode()) {
+      if (payload && typeof payload === 'object') {
+        return normalizeScanModeValue(payload.scan_mode || payload.scanMode || fallbackMode);
+      }
+      return normalizeScanModeValue(fallbackMode);
+    }
+
+    function saveCurrentArbSelectionForMode(mode = selectedScanMode()) {
+      const normalized = normalizeScanModeValue(mode);
+      arbSelectionSnapshotByMode[normalized] = captureArbSelectionSnapshot();
+    }
+
+    function restoreArbSelectionForMode(mode = selectedScanMode()) {
+      const normalized = normalizeScanModeValue(mode);
+      const payload = getArbitrageModeData(normalized);
+      const snapshot = arbSelectionSnapshotByMode[normalized];
+      if (!payload) {
+        clearArbCalculatorSelection();
+        return;
+      }
+      restoreArbCalculatorSelection(payload, snapshot);
+    }
+
+    function setSelectedScanMode(mode, options = {}) {
+      if (!scanModeSelect) return;
+      const previousMode = selectedScanMode();
+      const normalized = normalizeScanModeValue(mode);
+      if (normalized !== previousMode) {
+        saveCurrentArbSelectionForMode(previousMode);
+      }
+      scanModeSelect.value = normalized;
+      if (normalized !== previousMode) {
+        restoreArbSelectionForMode(normalized);
+      }
+      updateScanModeUi();
+      updateBookmakerState();
+      updateAdvancedSummary();
+      updateScanButtonText();
+      renderPartialWarning(getArbitrageModeData(normalized));
+      if (options.persist !== false) {
+        persistSettings();
+      }
+    }
+
+    function updateScanModeUi() {
+      const mode = selectedScanMode();
+      document.body.dataset.scanMode = mode;
+      if (scanModeHelper) {
+        const modeText = mode === 'live'
+          ? t('scan_mode_helper_live')
+          : t('scan_mode_helper_prematch');
+        scanModeHelper.textContent = `${modeText} ${t('scan_mode_tab_hint')}`.trim();
+      }
+      if (bookmakersModeNote) {
+        bookmakersModeNote.textContent = mode === 'live'
+          ? t('bookmakers_mode_note_live')
+          : t('bookmakers_mode_note_prematch');
+      }
+      if (apiKeyInput) {
+        apiKeyInput.required = !hasEnvKey && !providerOnlyMode && mode !== 'live';
+      }
+      if (apiKeyField) {
+        apiKeyField.classList.toggle('is-optional', mode === 'live' || providerOnlyMode);
+      }
+      if (arbStatCountLabel) {
+        arbStatCountLabel.textContent = mode === 'live'
+          ? t('stat_arb_live_opportunities')
+          : t('stat_arb_prematch_opportunities');
+      }
+      if (arbResultsSubhead) {
+        arbResultsSubhead.textContent = mode === 'live'
+          ? t('arb_results_subhead_live')
+          : t('arb_results_subhead_prematch');
+      }
+    }
+
     function selectedRegions() {
       return Array.from(form?.querySelectorAll('input[name="regions"]:checked') || []).map((el) => el.value);
     }
@@ -3260,8 +3472,11 @@
           useAllBookmakers,
           allBookmakers,
           checkedBookmakers,
+          scanMode: selectedScanMode(),
           providerOnlyMode,
           customProviderKeys: appConfig.customProviderKeys || [],
+          defaultLiveProviderKeys: configuredDefaultLiveProviderKeys(),
+          liveSupportedProviderKeys: configuredLiveSupportedProviderKeys(),
         });
       }
       return useAllBookmakers ? allBookmakers : checkedBookmakers;
@@ -3271,12 +3486,30 @@
       if (scanFormHelpers.selectedIncludeProviders) {
         return scanFormHelpers.selectedIncludeProviders({
           useAllBookmakers,
+          scanMode: selectedScanMode(),
           providerOnlyMode,
           bookmakers,
           customProviderKeys: appConfig.customProviderKeys || [],
+          defaultLiveProviderKeys: configuredDefaultLiveProviderKeys(),
+          liveSupportedProviderKeys: configuredLiveSupportedProviderKeys(),
         });
       }
       return [];
+    }
+
+    function effectiveSelectedBookmakerKeys(useAllBookmakers) {
+      const bookmakers = selectedBookmakers(useAllBookmakers);
+      if (bookmakers.length) return bookmakers;
+      return selectedIncludeProviders(useAllBookmakers, bookmakers);
+    }
+
+    function effectiveSelectedBookmakerLabels(useAllBookmakers) {
+      const selectedKeys = effectiveSelectedBookmakerKeys(useAllBookmakers);
+      const rows = Array.from(form?.querySelectorAll('.bookmaker-row[data-bookmaker-key]') || []);
+      const labelByKey = new Map(rows.map((row) => [row.dataset.bookmakerKey, row.dataset.bookmakerLabel || row.dataset.bookmakerKey || '']));
+      return selectedKeys
+        .map((key) => `${labelByKey.get(key) || key}`.trim())
+        .filter(Boolean);
     }
 
     function buildServerAutoScanConfigPayload() {
@@ -3288,6 +3521,7 @@
         : defaultCommissionPercent;
       if (scanFormHelpers.buildServerAutoScanConfigPayload) {
         return scanFormHelpers.buildServerAutoScanConfigPayload({
+          scanMode: selectedScanMode(),
           sports,
           regions,
           useAllBookmakers,
@@ -3295,6 +3529,8 @@
           checkedBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value),
           providerOnlyMode,
           customProviderKeys: appConfig.customProviderKeys || [],
+          defaultLiveProviderKeys: configuredDefaultLiveProviderKeys(),
+          liveSupportedProviderKeys: configuredLiveSupportedProviderKeys(),
           allSports: allSportsToggle ? allSportsToggle.checked : false,
           allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
           stake: parseFloat(stakeInput?.value) || 100,
@@ -3318,6 +3554,7 @@
         enabled: true,
         intervalMinutes: readAutoScanMinutes(),
         payload: {
+          scanMode: selectedScanMode(),
           sports,
           allSports: allSportsToggle ? allSportsToggle.checked : false,
           allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
@@ -3361,7 +3598,7 @@
 
     function triggerAutoScan() {
       if (isScanning) return;
-      if (!providerOnlyMode && !hasEnvKey && !apiKeyInput?.value.trim()) return;
+      if (!isLiveScanMode() && !providerOnlyMode && !hasEnvKey && !apiKeyInput?.value.trim()) return;
       const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
       const useAllSports = allSportsToggle ? allSportsToggle.checked : false;
       if (!useAllSports && !sports.length) return;
@@ -3377,6 +3614,7 @@
         : defaultCommissionPercent;
       const requestPayload = scanFormHelpers.buildRunScanPayload
         ? scanFormHelpers.buildRunScanPayload({
+          scanMode: selectedScanMode(),
           apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
           sports,
           regions,
@@ -3385,6 +3623,8 @@
           checkedBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value),
           providerOnlyMode,
           customProviderKeys: appConfig.customProviderKeys || [],
+          defaultLiveProviderKeys: configuredDefaultLiveProviderKeys(),
+          liveSupportedProviderKeys: configuredLiveSupportedProviderKeys(),
           commission: commissionValue,
           allSports: useAllSports,
           allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
@@ -3404,6 +3644,7 @@
         })
         : {
           apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
+          scanMode: selectedScanMode(),
           sports,
           bookmakers,
           includeProviders,
@@ -3457,6 +3698,7 @@
       const bookmakers = Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
       return {
         stake: stakeInput ? stakeInput.value : '',
+        scanMode: selectedScanMode(),
         commission: commissionInput ? commissionInput.value : '',
         allSports: allSportsToggle ? allSportsToggle.checked : false,
         allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
@@ -3486,6 +3728,7 @@
     function applySettings(settings) {
       if (!settings) return;
       if (stakeInput && settings.stake !== undefined) stakeInput.value = settings.stake;
+      if (scanModeSelect && settings.scanMode) scanModeSelect.value = settings.scanMode;
       if (commissionInput && settings.commission !== undefined) commissionInput.value = settings.commission;
       if (allSportsToggle && settings.allSports !== undefined) allSportsToggle.checked = Boolean(settings.allSports);
       if (allMarketsToggle && settings.allMarkets !== undefined) allMarketsToggle.checked = Boolean(settings.allMarkets);
@@ -3524,10 +3767,14 @@
         syncBookmakerLinksFromInputs();
       }
       configureAutoScan();
+      updateScanModeUi();
       updateBookmakerState();
       updateAdvancedSummary();
       updateQuickActionState();
       reconcileNotificationToggles();
+      if (isArbitrageTab(activeTab)) {
+        setActiveTab(selectedScanMode());
+      }
     }
 
     function loadSettings() {
@@ -3572,7 +3819,7 @@
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      if (!providerOnlyMode && !hasEnvKey && !apiKeyInput?.value.trim()) {
+      if (!isLiveScanMode() && !providerOnlyMode && !hasEnvKey && !apiKeyInput?.value.trim()) {
         showStatusKey('enter_api_key', 'error');
         return;
       }
@@ -3596,6 +3843,7 @@
       await syncServerAutoScanConfig();
       const requestPayload = scanFormHelpers.buildRunScanPayload
         ? scanFormHelpers.buildRunScanPayload({
+          scanMode: selectedScanMode(),
           apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
           sports,
           regions,
@@ -3604,6 +3852,8 @@
           checkedBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value),
           providerOnlyMode,
           customProviderKeys: appConfig.customProviderKeys || [],
+          defaultLiveProviderKeys: configuredDefaultLiveProviderKeys(),
+          liveSupportedProviderKeys: configuredLiveSupportedProviderKeys(),
           commission: commissionValue,
           allSports: allSportsToggle.checked,
           allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
@@ -3623,6 +3873,7 @@
         })
         : {
           apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
+          scanMode: selectedScanMode(),
           sports,
           regions,
           bookmakers,
@@ -3746,6 +3997,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             apiKey: payload.apiKey,
+            scanMode: payload.scanMode,
             sports: payload.sports,
             allSports: payload.allSports,
             allMarkets: payload.allMarkets,
@@ -3782,7 +4034,7 @@
         notifyScanComplete(data);
       } catch (err) {
         showStatus(err.message || t('scan_failed'), 'error');
-        renderScanData(null);
+        renderScanData(null, { mode: payload?.scanMode, clearMode: true });
       } finally {
         setScanning(false);
       }
@@ -3850,16 +4102,26 @@
       showStatus(t(key, params), type, key, params);
     }
 
-    function renderScanData(payload) {
-      const previousSelection = captureArbSelectionSnapshot();
+    function renderScanData(payload, options = {}) {
+      const payloadMode = resolvePayloadScanMode(payload, options.mode);
+      const shouldUpdateModeCache = Boolean(payload) || Boolean(options.clearMode);
+      const previousSelection =
+        payloadMode === selectedScanMode()
+          ? captureArbSelectionSnapshot()
+          : arbSelectionSnapshotByMode[payloadMode];
       lastScanData = payload;
+      if (shouldUpdateModeCache) {
+        arbitrageDataByMode[payloadMode] = payload;
+      }
       if (payload && typeof payload.commission_rate === 'number') {
         lastCommissionRate = payload.commission_rate;
       }
-      if (payload) {
-        restoreArbCalculatorSelection(payload, previousSelection);
-      } else {
-        clearArbCalculatorSelection();
+      if (payloadMode === selectedScanMode()) {
+        if (payload) {
+          restoreArbCalculatorSelection(payload, previousSelection);
+        } else {
+          clearArbCalculatorSelection();
+        }
       }
       renderArbitrage();
       renderMiddles();
@@ -3872,7 +4134,7 @@
         crossProviderReportCache = null;
         renderCrossProviderReport(null);
       }
-      renderPartialWarning(payload);
+      renderPartialWarning(getArbitrageModeData());
       if (payload) {
         applyScanStatus(payload.partial ? 'partial' : 'ready');
       } else {
@@ -4305,7 +4567,8 @@
     }
 
     function renderArbitrage() {
-      const arbData = lastScanData?.arbitrage;
+      const modePayload = getArbitrageModeData();
+      const arbData = modePayload?.arbitrage;
       const opportunities = arbData?.opportunities || [];
       const stakeValue = parseFloat(stakeInput.value) || 0;
       const minRoiValue = minRoiInput ? minRoiInput.value : 0;
@@ -6709,11 +6972,15 @@
     }
 
     function setActiveTab(tab) {
-      const allowedTabs = new Set(['arbitrage', 'middles', 'plus-ev', 'providers', 'history']);
-      const normalizedTab = allowedTabs.has(tab) ? tab : 'arbitrage';
+      const fallbackTab = isLiveScanMode() ? 'live' : 'prematch';
+      const allowedTabs = new Set(['prematch', 'live', 'middles', 'plus-ev', 'providers', 'history']);
+      const normalizedTab = allowedTabs.has(tab) ? tab : fallbackTab;
       activeTab = normalizedTab;
+      if (isArbitrageTab(normalizedTab) && selectedScanMode() !== normalizedTab) {
+        setSelectedScanMode(normalizedTab);
+      }
       tabs.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === normalizedTab));
-      arbitragePanel.classList.toggle('hidden', normalizedTab !== 'arbitrage');
+      arbitragePanel.classList.toggle('hidden', !isArbitrageTab(normalizedTab));
       middlesPanel.classList.toggle('hidden', normalizedTab !== 'middles');
       plusEvPanel.classList.toggle('hidden', normalizedTab !== 'plus-ev');
       if (providersPanel) {
@@ -6723,11 +6990,11 @@
         historyPanel.classList.toggle('hidden', normalizedTab !== 'history');
       }
       if (arbitrageConfig) {
-        arbitrageConfig.classList.toggle('hidden', normalizedTab !== 'arbitrage');
+        arbitrageConfig.classList.toggle('hidden', !isArbitrageTab(normalizedTab));
       }
       middlesConfig.classList.toggle('hidden', normalizedTab !== 'middles');
       plusEvConfig.classList.toggle('hidden', normalizedTab !== 'plus-ev');
-      if (normalizedTab === 'arbitrage') {
+      if (isArbitrageTab(normalizedTab)) {
         renderArbitrage();
       } else if (normalizedTab === 'middles') {
         renderMiddles();

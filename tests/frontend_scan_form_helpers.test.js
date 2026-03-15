@@ -37,6 +37,35 @@ test('selectedIncludeProviders falls back to all providers in provider-only mode
   assert.deepEqual(providers, ['sx_bet', 'betdex', 'polymarket']);
 });
 
+test('selectedIncludeProviders falls back to all providers in live mode when nothing is picked', () => {
+  const providers = helpers.selectedIncludeProviders({
+    useAllBookmakers: false,
+    scanMode: 'live',
+    providerOnlyMode: false,
+    bookmakers: [],
+    customProviderKeys: ['sx_bet', 'betdex', 'polymarket'],
+    defaultLiveProviderKeys: ['sx_bet', 'betdex'],
+    liveSupportedProviderKeys: ['sx_bet', 'betdex', 'polymarket'],
+  });
+
+  assert.deepEqual(providers, ['sx_bet', 'betdex']);
+});
+
+test('selectedBookmakers uses curated live defaults when all bookmakers is enabled', () => {
+  const bookmakers = helpers.selectedBookmakers({
+    useAllBookmakers: true,
+    scanMode: 'live',
+    allBookmakers: ['draftkings', 'sx_bet', 'betdex', 'polymarket', 'bookmaker_xyz'],
+    checkedBookmakers: [],
+    providerOnlyMode: false,
+    customProviderKeys: ['sx_bet', 'betdex', 'polymarket', 'bookmaker_xyz'],
+    defaultLiveProviderKeys: ['sx_bet', 'betdex', 'polymarket'],
+    liveSupportedProviderKeys: ['sx_bet', 'betdex', 'polymarket', 'bookmaker_xyz'],
+  });
+
+  assert.deepEqual(bookmakers, ['sx_bet', 'betdex', 'polymarket']);
+});
+
 test('buildServerAutoScanConfigPayload derives provider-only config from form state', () => {
   const payload = helpers.buildServerAutoScanConfigPayload({
     sports: ['icehockey_nhl'],
@@ -69,6 +98,7 @@ test('buildServerAutoScanConfigPayload derives provider-only config from form st
     enabled: true,
     intervalMinutes: 12,
     payload: {
+      scanMode: 'prematch',
       sports: ['icehockey_nhl'],
       allSports: false,
       allMarkets: true,
@@ -88,6 +118,7 @@ test('buildServerAutoScanConfigPayload derives provider-only config from form st
 test('buildRunScanPayload preserves mixed books outside provider-only mode', () => {
   const payload = helpers.buildRunScanPayload({
     apiKey: 'abc',
+    scanMode: 'live',
     sports: ['basketball_nba'],
     regions: ['us', 'eu'],
     useAllBookmakers: false,
@@ -95,6 +126,8 @@ test('buildRunScanPayload preserves mixed books outside provider-only mode', () 
     allBookmakers: ['draftkings', 'sx_bet', 'betdex'],
     providerOnlyMode: false,
     customProviderKeys: ['sx_bet', 'betdex'],
+    defaultLiveProviderKeys: ['sx_bet', 'betdex'],
+    liveSupportedProviderKeys: ['sx_bet', 'betdex'],
     commission: '2.5',
     allSports: false,
     allMarkets: false,
@@ -115,8 +148,9 @@ test('buildRunScanPayload preserves mixed books outside provider-only mode', () 
 
   assert.deepEqual(payload, {
     apiKey: 'abc',
+    scanMode: 'live',
     sports: ['basketball_nba'],
-    bookmakers: ['draftkings', 'sx_bet'],
+    bookmakers: ['sx_bet'],
     includeProviders: ['sx_bet'],
     regions: ['us', 'eu'],
     commission: 2.5,
@@ -129,4 +163,39 @@ test('buildRunScanPayload preserves mixed books outside provider-only mode', () 
     bankroll: 1000,
     kellyFraction: 0.25,
   });
+});
+
+test('buildRunScanPayload uses curated live defaults when nothing is selected', () => {
+  const payload = helpers.buildRunScanPayload({
+    apiKey: '',
+    scanMode: 'live',
+    sports: ['basketball_nba'],
+    regions: ['us'],
+    useAllBookmakers: false,
+    checkedBookmakers: [],
+    allBookmakers: ['draftkings', 'sx_bet', 'betdex', 'polymarket', 'bookmaker_xyz'],
+    providerOnlyMode: false,
+    customProviderKeys: ['sx_bet', 'betdex', 'polymarket', 'bookmaker_xyz'],
+    defaultLiveProviderKeys: ['sx_bet', 'betdex', 'polymarket'],
+    liveSupportedProviderKeys: ['sx_bet', 'betdex', 'polymarket', 'bookmaker_xyz'],
+    commission: '1',
+    allSports: false,
+    allMarkets: false,
+    stake: '100',
+    sharpBook: 'pinnacle',
+    minEdgePercent: '1',
+    bankroll: '1000',
+    kellyFraction: '0.25',
+    defaults: {
+      allMarkets: false,
+      sharpBook: 'pinnacle',
+      minEdgePercent: 1,
+      bankroll: 1000,
+      kellyFraction: 0.25,
+      commission: 0,
+    },
+  });
+
+  assert.deepEqual(payload.includeProviders, ['sx_bet', 'betdex', 'polymarket']);
+  assert.deepEqual(payload.bookmakers, []);
 });

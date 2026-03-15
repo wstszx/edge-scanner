@@ -44,6 +44,7 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         kwargs = mocked_run_scan.call_args.kwargs
         self.assertEqual(kwargs.get("sharp_book"), app_module.DEFAULT_SHARP_BOOK)
+        self.assertEqual(kwargs.get("scan_mode"), "prematch")
 
     def test_scan_parses_boolean_strings_from_payload(self) -> None:
         app_module.ENV_SAVE_SCAN = True
@@ -77,6 +78,20 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         kwargs = mocked_run_scan.call_args.kwargs
         self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
+
+    def test_scan_accepts_live_mode_without_api_key(self) -> None:
+        with patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan:
+            response = self.client.post(
+                "/scan",
+                json={
+                    "scanMode": "live",
+                    "sports": ["basketball_nba"],
+                    "regions": ["us"],
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        kwargs = mocked_run_scan.call_args.kwargs
+        self.assertEqual(kwargs.get("scan_mode"), "live")
 
     def test_scan_saves_history_from_nested_result_shape(self) -> None:
         result_payload = {
