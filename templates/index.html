@@ -532,113 +532,115 @@
                     <div id="arb-calc-meta" class="arb-calc-meta"></div>
                     <div id="arb-calc-badges" class="arb-calc-badges"></div>
                   </div>
-                  <div class="arb-calc-grid-head">
-                    <span class="arb-calc-grid-head-spacer"></span>
-                    <span class="arb-calc-grid-head-spacer"></span>
-                    <span class="arb-calc-grid-head-spacer"></span>
-                    <span data-i18n="arb_calc_odds">Odds</span>
-                    <span data-i18n="arb_calc_income">Income</span>
-                    <span data-i18n="arb_calc_stake_short">Stake</span>
-                    <span data-i18n="arb_calc_currency">Currency</span>
-                    <span class="arb-calc-grid-head-spacer"></span>
-                  </div>
+                  <div class="arb-calc-board">
+                    <div class="arb-calc-grid-head">
+                      <span class="arb-calc-grid-head-spacer"></span>
+                      <span class="arb-calc-grid-head-spacer"></span>
+                      <span class="arb-calc-grid-head-spacer"></span>
+                      <span data-i18n="arb_calc_odds">Odds</span>
+                      <span data-i18n="arb_calc_income">Income</span>
+                      <span data-i18n="arb_calc_stake_short">Stake</span>
+                      <span data-i18n="arb_calc_currency">Currency</span>
+                      <span class="arb-calc-grid-head-spacer"></span>
+                    </div>
 
-                  <div class="arb-calc-legs">
-                  <section class="arb-calc-leg" id="arb-calc-leg-a">
-                    <div class="arb-calc-leg-side">
-                      <div class="arb-calc-leg-copy">
-                        <span class="arb-calc-leg-kicker" data-i18n="arb_calc_leg_1">Leg 1</span>
-                        <h4 id="arb-calc-leg-a-title"></h4>
-                        <div class="arb-calc-leg-subcopy" id="arb-calc-leg-a-sub"></div>
-                      </div>
-                    </div>
-                    <div class="arb-calc-leg-book" id="arb-calc-leg-a-book"></div>
-                    <button type="button" class="arb-calc-sync-btn" id="arb-calc-base-a"
-                      data-i18n-title="arb_calc_use_this_stake" aria-label="Use This Stake"
-                      title="Use This Stake">&#8635;</button>
-                    <label class="arb-calc-cell arb-calc-input-cell">
-                        <span data-i18n="arb_calc_odds">Odds</span>
-                        <input type="number" id="arb-calc-odds-a" min="1.01" step="0.01" />
-                      </label>
-                    <div class="arb-calc-cell arb-calc-payout-cell">
-                      <span class="arb-calc-cell-label" data-i18n="arb_calc_payout">Payout</span>
-                      <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-a">-</strong>
-                    </div>
-                    <label class="arb-calc-cell arb-calc-input-cell">
-                        <span data-i18n="arb_calc_stake">Stake ($)</span>
-                        <input type="number" id="arb-calc-stake-a" min="0" step="0.01" />
-                      </label>
-                    <div class="arb-calc-cell arb-calc-currency-cell">
-                      <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
-                      <strong>USD</strong>
-                    </div>
-                    <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-a"
-                      data-i18n="arb_calc_bet">BET</button>
-                  </section>
+                    <div class="arb-calc-legs">
+                      <section class="arb-calc-leg" id="arb-calc-leg-a">
+                        <div class="arb-calc-leg-side">
+                          <div class="arb-calc-leg-copy">
+                            <span class="arb-calc-leg-kicker" data-i18n="arb_calc_leg_1">Leg 1</span>
+                            <h4 id="arb-calc-leg-a-title"></h4>
+                            <div class="arb-calc-leg-subcopy" id="arb-calc-leg-a-sub"></div>
+                          </div>
+                        </div>
+                        <div class="arb-calc-leg-book" id="arb-calc-leg-a-book"></div>
+                        <button type="button" class="arb-calc-sync-btn" id="arb-calc-base-a"
+                          data-i18n-title="arb_calc_use_this_stake" aria-label="Use This Stake"
+                          title="Use This Stake">&#8635;</button>
+                        <label class="arb-calc-cell arb-calc-input-cell">
+                            <span data-i18n="arb_calc_odds">Odds</span>
+                            <input type="number" id="arb-calc-odds-a" min="1.01" step="0.01" />
+                          </label>
+                        <div class="arb-calc-cell arb-calc-payout-cell">
+                          <span class="arb-calc-cell-label" data-i18n="arb_calc_payout">Payout</span>
+                          <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-a">-</strong>
+                        </div>
+                        <label class="arb-calc-cell arb-calc-input-cell">
+                            <span data-i18n="arb_calc_stake">Stake ($)</span>
+                            <input type="number" id="arb-calc-stake-a" min="0" step="0.01" />
+                          </label>
+                        <div class="arb-calc-cell arb-calc-currency-cell">
+                          <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
+                          <strong>USD</strong>
+                        </div>
+                        <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-a"
+                          data-i18n="arb_calc_bet">BET</button>
+                      </section>
 
-                  <section class="arb-calc-leg" id="arb-calc-leg-b">
-                    <div class="arb-calc-leg-side">
-                      <div class="arb-calc-leg-copy">
-                        <span class="arb-calc-leg-kicker" data-i18n="arb_calc_leg_2">Leg 2</span>
-                        <h4 id="arb-calc-leg-b-title"></h4>
-                        <div class="arb-calc-leg-subcopy" id="arb-calc-leg-b-sub"></div>
-                      </div>
-                    </div>
-                    <div class="arb-calc-leg-book" id="arb-calc-leg-b-book"></div>
-                    <button type="button" class="arb-calc-sync-btn" id="arb-calc-base-b"
-                      data-i18n-title="arb_calc_use_this_stake" aria-label="Use This Stake"
-                      title="Use This Stake">&#8635;</button>
-                    <label class="arb-calc-cell arb-calc-input-cell">
-                        <span data-i18n="arb_calc_odds">Odds</span>
-                        <input type="number" id="arb-calc-odds-b" min="1.01" step="0.01" />
-                      </label>
-                    <div class="arb-calc-cell arb-calc-payout-cell">
-                      <span class="arb-calc-cell-label" data-i18n="arb_calc_payout">Payout</span>
-                      <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-b">-</strong>
-                    </div>
-                    <label class="arb-calc-cell arb-calc-input-cell">
-                        <span data-i18n="arb_calc_stake">Stake ($)</span>
-                        <input type="number" id="arb-calc-stake-b" min="0" step="0.01" />
-                      </label>
-                    <div class="arb-calc-cell arb-calc-currency-cell">
-                      <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
-                      <strong>USD</strong>
-                    </div>
-                    <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-b"
-                      data-i18n="arb_calc_bet">BET</button>
-                  </section>
+                      <section class="arb-calc-leg" id="arb-calc-leg-b">
+                        <div class="arb-calc-leg-side">
+                          <div class="arb-calc-leg-copy">
+                            <span class="arb-calc-leg-kicker" data-i18n="arb_calc_leg_2">Leg 2</span>
+                            <h4 id="arb-calc-leg-b-title"></h4>
+                            <div class="arb-calc-leg-subcopy" id="arb-calc-leg-b-sub"></div>
+                          </div>
+                        </div>
+                        <div class="arb-calc-leg-book" id="arb-calc-leg-b-book"></div>
+                        <button type="button" class="arb-calc-sync-btn" id="arb-calc-base-b"
+                          data-i18n-title="arb_calc_use_this_stake" aria-label="Use This Stake"
+                          title="Use This Stake">&#8635;</button>
+                        <label class="arb-calc-cell arb-calc-input-cell">
+                            <span data-i18n="arb_calc_odds">Odds</span>
+                            <input type="number" id="arb-calc-odds-b" min="1.01" step="0.01" />
+                          </label>
+                        <div class="arb-calc-cell arb-calc-payout-cell">
+                          <span class="arb-calc-cell-label" data-i18n="arb_calc_payout">Payout</span>
+                          <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-b">-</strong>
+                        </div>
+                        <label class="arb-calc-cell arb-calc-input-cell">
+                            <span data-i18n="arb_calc_stake">Stake ($)</span>
+                            <input type="number" id="arb-calc-stake-b" min="0" step="0.01" />
+                          </label>
+                        <div class="arb-calc-cell arb-calc-currency-cell">
+                          <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
+                          <strong>USD</strong>
+                        </div>
+                        <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-b"
+                          data-i18n="arb_calc_bet">BET</button>
+                      </section>
 
-                  <section class="arb-calc-leg hidden" id="arb-calc-leg-c">
-                    <div class="arb-calc-leg-side">
-                      <div class="arb-calc-leg-copy">
-                        <span class="arb-calc-leg-kicker" data-i18n="arb_calc_leg_3">Leg 3</span>
-                        <h4 id="arb-calc-leg-c-title"></h4>
-                        <div class="arb-calc-leg-subcopy" id="arb-calc-leg-c-sub"></div>
-                      </div>
+                      <section class="arb-calc-leg hidden" id="arb-calc-leg-c">
+                        <div class="arb-calc-leg-side">
+                          <div class="arb-calc-leg-copy">
+                            <span class="arb-calc-leg-kicker" data-i18n="arb_calc_leg_3">Leg 3</span>
+                            <h4 id="arb-calc-leg-c-title"></h4>
+                            <div class="arb-calc-leg-subcopy" id="arb-calc-leg-c-sub"></div>
+                          </div>
+                        </div>
+                        <div class="arb-calc-leg-book" id="arb-calc-leg-c-book"></div>
+                        <button type="button" class="arb-calc-sync-btn" id="arb-calc-base-c"
+                          data-i18n-title="arb_calc_use_this_stake" aria-label="Use This Stake"
+                          title="Use This Stake">&#8635;</button>
+                        <label class="arb-calc-cell arb-calc-input-cell">
+                            <span data-i18n="arb_calc_odds">Odds</span>
+                            <input type="number" id="arb-calc-odds-c" min="1.01" step="0.01" />
+                          </label>
+                        <div class="arb-calc-cell arb-calc-payout-cell">
+                          <span class="arb-calc-cell-label" data-i18n="arb_calc_payout">Payout</span>
+                          <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-c">-</strong>
+                        </div>
+                        <label class="arb-calc-cell arb-calc-input-cell">
+                            <span data-i18n="arb_calc_stake">Stake ($)</span>
+                            <input type="number" id="arb-calc-stake-c" min="0" step="0.01" />
+                          </label>
+                        <div class="arb-calc-cell arb-calc-currency-cell">
+                          <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
+                          <strong>USD</strong>
+                        </div>
+                        <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-c"
+                          data-i18n="arb_calc_bet">BET</button>
+                      </section>
                     </div>
-                    <div class="arb-calc-leg-book" id="arb-calc-leg-c-book"></div>
-                    <button type="button" class="arb-calc-sync-btn" id="arb-calc-base-c"
-                      data-i18n-title="arb_calc_use_this_stake" aria-label="Use This Stake"
-                      title="Use This Stake">&#8635;</button>
-                    <label class="arb-calc-cell arb-calc-input-cell">
-                        <span data-i18n="arb_calc_odds">Odds</span>
-                        <input type="number" id="arb-calc-odds-c" min="1.01" step="0.01" />
-                      </label>
-                    <div class="arb-calc-cell arb-calc-payout-cell">
-                      <span class="arb-calc-cell-label" data-i18n="arb_calc_payout">Payout</span>
-                      <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-c">-</strong>
-                    </div>
-                    <label class="arb-calc-cell arb-calc-input-cell">
-                        <span data-i18n="arb_calc_stake">Stake ($)</span>
-                        <input type="number" id="arb-calc-stake-c" min="0" step="0.01" />
-                      </label>
-                    <div class="arb-calc-cell arb-calc-currency-cell">
-                      <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
-                      <strong>USD</strong>
-                    </div>
-                    <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-c"
-                      data-i18n="arb_calc_bet">BET</button>
-                  </section>
                   </div>
 
                   <div class="arb-calc-footer">
