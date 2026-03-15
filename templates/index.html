@@ -4112,6 +4112,8 @@
           const oppKey = buildArbOpportunityKey(opp);
           const rowBandClass = roiBandClass(netRoi);
           const commence = formatDateTime(opp.commence_time);
+          const kickoffParts = formatCompactDateParts(opp.commence_time);
+          const kickoffLabel = [kickoffParts.date, kickoffParts.time].filter(Boolean).join(' ') || t('tbd');
           const kickoffCountdown = formatKickoffCountdown(opp.commence_time);
           const calcGross = opp.has_exchange ? calculateStakes(opp, stakeValue, false) : null;
           const grossRoi = opp.has_exchange ? calcGross?.roi_percent ?? opp.gross_roi_percent : null;
@@ -4161,6 +4163,7 @@
                 <div class="arb-opportunity-strip-sport">${escapeHtml(sportLabel || t('unknown'))}</div>
                 <div class="arb-opportunity-strip-right">
                   <div class="arb-opportunity-strip-badges">
+                    <span class="arb-opportunity-stat-chip arb-opportunity-kickoff-chip" title="${escapeHtml(commence)}">${escapeHtml(kickoffLabel)}</span>
                     <span class="arb-opportunity-countdown" title="${escapeHtml(commence)}">${arbIcon('clock')}<span>${escapeHtml(kickoffCountdown)}</span></span>
                     ${grossRoi !== null && grossRoi !== undefined ? `<span class="arb-opportunity-stat-chip">${escapeHtml(t('gross'))} ${escapeHtml(formatPercent(grossRoi))}</span>` : ''}
                     <span class="arb-opportunity-stat-chip arb-opportunity-profit-chip ${profitClass}">${escapeHtml(calcNet ? formatProfit(profitValue) : '-')}</span>
@@ -4739,7 +4742,6 @@
       if (arbCalcMeta) {
         const metaHtml = [
           formatArbMetaPill(marketLabel),
-          formatArbMetaPill(startLabel),
         ].filter(Boolean).join('');
         arbCalcMeta.innerHTML = metaHtml;
         arbCalcMeta.classList.toggle('hidden', !metaHtml);
@@ -5349,7 +5351,6 @@
           ? formatCurrency(Number(item.max_stake))
           : '-';
       const available = t('available_label', { amount: availableValue });
-      const when = formatCompactDateParts(opp?.commence_time);
       const targetUrl = opp ? normalizeUrl(resolveArbLegOpenUrl(item, opp)) : '';
       const exchangeBadge = item.is_exchange ? `<span class="exchange-badge">${escapeHtml(t('exchange'))}</span>` : '';
       const effectiveNote =
@@ -5376,10 +5377,6 @@
           <div class="arb-opportunity-leg-book">
             ${bookMarkup}
             ${bookMeta ? `<div class="arb-opportunity-leg-book-meta">${bookMeta}</div>` : ''}
-          </div>
-          <div class="arb-opportunity-leg-when">
-            <span>${escapeHtml(when.date)}</span>
-            ${when.time ? `<span>${escapeHtml(when.time)}</span>` : ''}
           </div>
           <div class="arb-opportunity-leg-event">
             <span class="arb-opportunity-leg-event-mark" aria-hidden="true">${arbIcon('note')}</span>
