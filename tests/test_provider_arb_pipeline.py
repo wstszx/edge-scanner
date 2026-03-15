@@ -445,10 +445,12 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
             return (
                 {
                     "sx-h2h": {
-                        "odds_one": 2.25,
-                        "odds_two": 1.70,
+                        "odds_one": 2.35,
+                        "odds_two": 1.66,
                         "updated_at_one": "2026-03-14T08:00:00Z",
                         "updated_at_two": "2026-03-14T08:00:01Z",
+                        "source_one": "rest_snapshot",
+                        "source_two": "rest_snapshot",
                     }
                 },
                 0,
@@ -478,12 +480,14 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
             )
 
             outcomes = _standardized_outcomes(events, sx_bet.PROVIDER_KEY)
-            self.assertEqual(outcomes[HOME_TEAM]["price"], 2.25)
-            self.assertEqual(outcomes[AWAY_TEAM]["price"], 1.7)
+            self.assertEqual(outcomes[HOME_TEAM]["price"], 2.35)
+            self.assertEqual(outcomes[AWAY_TEAM]["price"], 1.66)
             self.assertEqual(outcomes[HOME_TEAM]["stake"], 150.0)
             self.assertEqual(outcomes[AWAY_TEAM]["stake"], 120.0)
             self.assertEqual(outcomes[HOME_TEAM]["last_updated"], "2026-03-14T08:00:00Z")
             self.assertEqual(outcomes[AWAY_TEAM]["last_updated"], "2026-03-14T08:00:01Z")
+            self.assertEqual(outcomes[HOME_TEAM]["quote_source"], "rest_snapshot")
+            self.assertEqual(outcomes[AWAY_TEAM]["quote_source"], "rest_snapshot")
             direct_stats = dict(sx_bet.fetch_events_async.last_stats)
             self.assertEqual(direct_stats.get("fixture_source_used"), "summary")
             self.assertEqual(direct_stats.get("odds_lookup_requested"), 1)

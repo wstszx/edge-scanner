@@ -3939,6 +3939,7 @@ def _record_line_offers(
                         "quote_updated_at": _epoch_to_iso(
                             _quote_updated_at_seconds(game, book, market, outcome) or 0.0
                         ),
+                        "quote_source": outcome.get("quote_source") or outcome.get("source"),
                         "live_state": book_live_state,
                         "bookmaker": bookmaker,
                         "bookmaker_key": bookmaker_key_normalized or bookmaker_key,
@@ -4099,6 +4100,7 @@ def _collect_market_entries(
                 "book_event_id": o.get("book_event_id"),
                 "book_event_url": o.get("book_event_url"),
                 "quote_updated_at": o.get("quote_updated_at"),
+                "quote_source": o.get("quote_source"),
             }
             for o in outcomes
         ]

@@ -1552,6 +1552,12 @@
         arb_results_selection_value: '{event}',
         arb_results_selection_hidden: 'Current pick is outside this filtered view.',
         arb_results_selection_hint: 'Pick a row to sync the calculator.',
+        quote_source_ws: 'WS',
+        quote_source_snapshot: 'Snapshot',
+        quote_source_summary: 'Summary',
+        quote_source_active: 'Active',
+        quote_source_unknown: 'Quote',
+        quote_updated_label: 'Updated {time}',
         arb_empty_pre_scan_title: 'Run a scan to populate the board.',
         arb_empty_pre_scan_copy: 'The arbitrage workspace will fill in once scan results arrive.',
         arb_empty_scan_title: 'This scan returned no arbitrage.',
@@ -1900,6 +1906,12 @@
         arb_results_selection_value: '{event}',
         arb_results_selection_hidden: '当前已选机会不在这个筛选视图内。',
         arb_results_selection_hint: '点一行结果即可同步到计算器。',
+        quote_source_ws: 'WS',
+        quote_source_snapshot: '快照',
+        quote_source_summary: '摘要',
+        quote_source_active: '动态盘',
+        quote_source_unknown: '报价',
+        quote_updated_label: '更新于 {time}',
         arb_empty_pre_scan_title: '先运行一次扫描来填充套利看板。',
         arb_empty_pre_scan_copy: '扫描结果返回后，这里会自动显示可操作的套利机会。',
         arb_empty_scan_title: '这次扫描没有返回套利机会。',
@@ -2732,6 +2744,52 @@
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return t('tbd');
       return date.toLocaleString(activeLocale);
+    }
+
+    function normalizeQuoteSource(value) {
+      return `${value || ''}`.trim().toLowerCase();
+    }
+
+    function formatQuoteSourceLabel(value) {
+      const normalized = normalizeQuoteSource(value);
+      if (!normalized) return '';
+      if (normalized === 'ws' || normalized.includes('websocket')) {
+        return t('quote_source_ws');
+      }
+      if (
+        normalized === 'rest_snapshot' ||
+        normalized === 'rest_cache' ||
+        normalized === 'rest_best_odds' ||
+        normalized === 'snapshot'
+      ) {
+        return t('quote_source_snapshot');
+      }
+      if (normalized === 'fixture_summary' || normalized === 'summary') {
+        return t('quote_source_summary');
+      }
+      if (normalized === 'fixture_markets_active' || normalized === 'markets_active' || normalized === 'active') {
+        return t('quote_source_active');
+      }
+      return t('quote_source_unknown');
+    }
+
+    function formatQuoteUpdatedLabel(value) {
+      if (!value) return '';
+      const formatted = formatDateTime(value);
+      if (!formatted || formatted === t('tbd')) return '';
+      return t('quote_updated_label', { time: formatted });
+    }
+
+    function buildQuoteMeta(item) {
+      if (!item || typeof item !== 'object') {
+        return { sourceLabel: '', updatedLabel: '' };
+      }
+      return {
+        sourceLabel: formatQuoteSourceLabel(item.quote_source || item.quoteSource),
+        updatedLabel: formatQuoteUpdatedLabel(
+          item.quote_updated_at || item.quoteUpdatedAt || item.last_updated
+        ),
+      };
     }
 
     function formatTime(value) {
@@ -4936,6 +4994,8 @@
           maxStake: leg?.maxStake,
           maxStakeCurrency: normalizeArbCalcCurrency(leg?.maxStakeCurrency),
           is_exchange: Boolean(leg?.is_exchange),
+          quoteSource: `${leg?.quoteSource || ''}`,
+          quoteUpdatedAt: `${leg?.quoteUpdatedAt || ''}`,
         }))
         : [];
       return {
@@ -5252,6 +5312,8 @@
             eventId: `${item?.book_event_id ?? opp?.event_id ?? ''}`,
             eventUrl: `${item?.book_event_url || ''}`,
             is_exchange: Boolean(item?.is_exchange),
+            quoteSource: `${item?.quote_source || ''}`,
+            quoteUpdatedAt: `${item?.quote_updated_at || item?.last_updated || ''}`,
           };
         })
         .filter(Boolean);
@@ -6281,12 +6343,15 @@
         is_exchange: Boolean(leg.is_exchange),
         eventId: `${leg.book_event_id ?? opp?.event_id ?? ''}`,
         eventUrl: `${leg.book_event_url || ''}`,
+        quote_source: `${leg.quote_source || ''}`,
+        quote_updated_at: `${leg.quote_updated_at || leg.last_updated || ''}`,
       }));
     }
 
     function formatArbDesktopLegRow(item, options = {}) {
       if (!item) return '';
       const { legIndex = null, opp = null, sportLabel = '', marketLabel = '' } = options;
+      const quoteMeta = buildQuoteMeta(item);
       const point = item.point !== undefined && item.point !== null ? ` (${formatLine(item.point)})` : '';
       const hasStake = Number.isFinite(Number(item.stake));
       const hasPayout = Number.isFinite(Number(item.payout));
@@ -6310,11 +6375,13 @@
       const bookMeta = [
         legLabel ? `<span>${escapeHtml(legLabel)}</span>` : '',
         exchangeBadge,
+        quoteMeta.sourceLabel ? `<span class="arb-opportunity-leg-badge arb-opportunity-leg-badge-source">${escapeHtml(quoteMeta.sourceLabel)}</span>` : '',
       ].filter(Boolean).join('');
       const priceMeta = [
         hasStake ? `<span class="mono">${escapeHtml(stakeValue)}</span>` : '',
         hasPayout ? `<span>${escapeHtml(t('arb_calc_payout'))}: ${escapeHtml(payoutValue)}</span>` : '',
         `<span>${escapeHtml(available)}</span>`,
+        quoteMeta.updatedLabel ? `<span>${escapeHtml(quoteMeta.updatedLabel)}</span>` : '',
       ].filter(Boolean).join('');
       const pickMeta = [effectiveNote].filter(Boolean).join('');
       const bookMarkup = targetUrl
@@ -6350,6 +6417,7 @@
     function formatOutcome(item, options = {}) {
       if (!item) return '-';
       const { legIndex = null, opp = null } = options;
+      const quoteMeta = buildQuoteMeta(item);
       const point = item.point !== undefined && item.point !== null ? ` (${formatLine(item.point)})` : '';
       const stakeValue = Number.isFinite(Number(item.stake)) ? formatCurrency(Number(item.stake)) : '-';
       const payoutValue = Number.isFinite(Number(item.payout)) ? formatCurrency(Number(item.payout)) : '-';
@@ -6366,16 +6434,22 @@
           : '';
       const exchangeBadge = item.is_exchange ? `<span class="exchange-badge">${t('exchange')}</span>` : '';
       const bookBadge = item.bookmaker ? `<span class="arb-calc-leg-chip">${escapeHtml(item.bookmaker)}</span>` : '';
+      const sourceBadge = quoteMeta.sourceLabel
+        ? `<span class="arb-calc-leg-chip arb-quote-chip">${escapeHtml(quoteMeta.sourceLabel)}</span>`
+        : '';
       const effectiveNote =
         item.is_exchange && item.effective_price && item.effective_price !== item.price
           ? `<span class="mono net-note">${t('net_at', { odds: formatOddsDisplay(item.effective_price) })}</span>`
           : '';
       const availableChip = availableValue !== '-' ? `<span class="arb-calc-leg-chip">${escapeHtml(available)}</span>` : '';
+      const updatedChip = quoteMeta.updatedLabel
+        ? `<span class="arb-calc-leg-chip arb-quote-chip arb-quote-time-chip">${escapeHtml(quoteMeta.updatedLabel)}</span>`
+        : '';
       const targetUrl = opp ? normalizeUrl(resolveArbLegOpenUrl(item, opp)) : '';
       const openLink = targetUrl
         ? `<a class="open-books-btn arb-leg-open-link" href="${escapeHtml(targetUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('table_open'))}</a>`
         : '';
-      const footParts = [availableChip, effectiveNote].filter(Boolean).join('');
+      const footParts = [availableChip, updatedChip, effectiveNote].filter(Boolean).join('');
       return `
         <div class="arb-leg-outcome">
           <div class="arb-leg-head">
@@ -6383,6 +6457,7 @@
               ${legLabel}
               ${exchangeBadge}
               ${bookBadge}
+              ${sourceBadge}
             </div>
             ${openLink}
           </div>
@@ -6454,6 +6529,10 @@
       const noteParts = [];
       const bookmaker = leg.bookmaker || t('unknown');
       const odds = Number.isFinite(Number(leg.odds)) ? formatOddsDisplay(leg.odds) : '-';
+      const quoteMeta = buildQuoteMeta({
+        quote_source: leg.quoteSource,
+        quote_updated_at: leg.quoteUpdatedAt,
+      });
       if (Number.isFinite(maxStake)) {
         noteParts.push(
           t('available_label', {
@@ -6463,6 +6542,12 @@
       }
       if (leg.is_exchange) {
         noteParts.push(t('exchange'));
+      }
+      if (quoteMeta.sourceLabel) {
+        noteParts.push(quoteMeta.sourceLabel);
+      }
+      if (quoteMeta.updatedLabel) {
+        noteParts.push(quoteMeta.updatedLabel);
       }
       return `
         <div class="arb-calc-bookbox ${leg.is_exchange ? 'exchange' : ''}">
@@ -6738,6 +6823,8 @@
           is_exchange: Boolean(o.is_exchange),
           eventId: `${o.book_event_id ?? opp?.event_id ?? ''}`,
           eventUrl: `${o.book_event_url || ''}`,
+          quoteSource: `${o.quote_source || ''}`,
+          quoteUpdatedAt: `${o.quote_updated_at || o.last_updated || ''}`,
         };
       });
       if (breakdown.includes(null)) return null;

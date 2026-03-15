@@ -5,6 +5,7 @@ import datetime as dt
 import json
 import os
 import re
+import threading
 import time
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
@@ -52,6 +53,14 @@ SX_BET_BEARER_TOKEN = os.getenv("SX_BET_BEARER_TOKEN", "").strip()
 SX_BET_API_KEY = os.getenv("SX_BET_API_KEY", "").strip()
 SX_BET_COOKIE = os.getenv("SX_BET_COOKIE", "").strip()
 SX_BET_LEAGUE_MAP_RAW = os.getenv("SX_BET_LEAGUE_MAP", "").strip()
+SX_BET_WS_ENABLED = os.getenv("SX_BET_WS_ENABLED", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+SX_BET_WS_STARTUP_WAIT_SECONDS_RAW = os.getenv("SX_BET_WS_STARTUP_WAIT_SECONDS", "1.5").strip()
+SX_BET_WS_QUOTE_MAX_AGE_SECONDS_RAW = os.getenv("SX_BET_WS_QUOTE_MAX_AGE_SECONDS", "5").strip()
 
 SX_SPORT_ID_MAP: Dict[str, int] = {
     "basketball_nba": 1,
@@ -125,6 +134,8 @@ LEAGUES_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
     "entries": {},
 }
+REALTIME_MANAGER: Optional["SXBetRealtimeManager"] = None
+REALTIME_MANAGER_LOCK = threading.Lock()
 
 
 class ProviderError(Exception):
@@ -147,6 +158,14 @@ def _float_or_default(value: str, default: float, min_value: float = 0.0) -> flo
         return max(min_value, float(value))
     except (TypeError, ValueError):
         return default
+
+
+def _sx_ws_startup_wait_seconds() -> float:
+    return _float_or_default(SX_BET_WS_STARTUP_WAIT_SECONDS_RAW, 1.5, min_value=0.0)
+
+
+def _sx_ws_quote_max_age_seconds() -> float:
+    return _float_or_default(SX_BET_WS_QUOTE_MAX_AGE_SECONDS_RAW, 5.0, min_value=0.0)
 
 
 def _as_int(value: object) -> Optional[int]:
@@ -200,6 +219,14 @@ def _headers() -> Dict[str, str]:
     if SX_BET_COOKIE:
         headers["Cookie"] = SX_BET_COOKIE
     return headers
+
+
+def _sx_best_odds_ws_enabled() -> bool:
+    return bool(SX_BET_WS_ENABLED) and bool(_normalize_text(SX_BET_API_KEY)) and bool(_normalize_text(SX_BET_BASE_TOKEN))
+
+
+def _sx_token_url() -> str:
+    return f"{_api_base()}/user/token"
 
 
 def _request_json(
@@ -712,6 +739,8 @@ def _normalize_fixture_market(
         "market_hash": market_hash,
         "odds_one": odds_one,
         "odds_two": odds_two,
+        "outcome_one_quote_source": None,
+        "outcome_two_quote_source": None,
         "description": description,
         "outcome_one_name": outcome_one_label,
         "outcome_two_name": outcome_two_label,
@@ -928,6 +957,37 @@ def _moneyline_decimal_from_outcome_payload(payload) -> Optional[float]:
     return _moneyline_decimal_from_american(payload.get("americanOdds"))
 
 
+def _probability_from_percentage(value) -> Optional[float]:
+    raw = _safe_float(value)
+    if raw is None or raw <= 0:
+        return None
+    if raw > 10000:
+        probability = raw / 1e20
+    elif raw > 1:
+        if raw <= 100:
+            probability = raw / 100.0
+        elif raw <= 10000:
+            probability = raw / 10000.0
+        else:
+            return None
+    else:
+        probability = raw
+    if probability <= 0 or probability >= 1:
+        return None
+    return probability
+
+
+def _taker_decimal_from_maker_percentage(value) -> Optional[float]:
+    maker_probability = _probability_from_percentage(value)
+    if maker_probability is None:
+        return None
+    taker_probability = 1.0 - maker_probability
+    if taker_probability <= 0 or taker_probability >= 1:
+        return None
+    odds = 1.0 / taker_probability
+    return odds if odds > 1 else None
+
+
 def _slugify_public_segment(value: object) -> str:
     token = _normalize_token(value)
     if not token:
@@ -998,6 +1058,407 @@ def _extract_orders_payload(payload: object) -> List[dict]:
     if isinstance(root_orders, list):
         return [item for item in root_orders if isinstance(item, dict)]
     return []
+
+
+class SXBetRealtimeManager:
+    def __init__(self) -> None:
+        self._thread: Optional[threading.Thread] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._stop_requested = threading.Event()
+        self._ready_event = threading.Event()
+        self._state_lock = threading.RLock()
+        self._best_odds_by_market: Dict[str, dict] = {}
+        self._started = False
+        self._connected = False
+        self._messages_received = 0
+        self._last_message_at = 0.0
+        self._last_error = ""
+        self._last_channel = ""
+
+    def ensure_started(self) -> bool:
+        if not _sx_best_odds_ws_enabled():
+            return False
+        with self._state_lock:
+            if self._started and self._thread and self._thread.is_alive():
+                return True
+            self._stop_requested.clear()
+            self._ready_event.clear()
+            self._thread = threading.Thread(
+                target=self._run_loop_thread,
+                name="sx-bet-ws",
+                daemon=True,
+            )
+            self._thread.start()
+            self._started = True
+        return True
+
+    def wait_until_ready(self, timeout_seconds: float) -> bool:
+        if timeout_seconds <= 0:
+            return False
+        self._ready_event.wait(timeout=max(0.0, float(timeout_seconds)))
+        with self._state_lock:
+            return self._connected
+
+    def stop(self, timeout_seconds: float = 2.0) -> None:
+        with self._state_lock:
+            thread = self._thread
+            loop = self._loop
+        self._stop_requested.set()
+        if loop is not None and loop.is_running():
+            try:
+                loop.call_soon_threadsafe(lambda: None)
+            except RuntimeError:
+                pass
+        if thread and thread.is_alive():
+            thread.join(timeout=max(0.0, float(timeout_seconds)))
+        with self._state_lock:
+            self._thread = None
+            self._loop = None
+            self._started = False
+            self._connected = False
+            self._ready_event.clear()
+
+    def snapshot(self) -> dict:
+        with self._state_lock:
+            age_seconds = None
+            if self._last_message_at > 0:
+                age_seconds = round(max(0.0, time.time() - self._last_message_at), 2)
+            return {
+                "started": self._started,
+                "connected": self._connected,
+                "messages_received": int(self._messages_received or 0),
+                "best_odds_cached": len(self._best_odds_by_market),
+                "last_message_age_seconds": age_seconds,
+                "last_error": _normalize_text(self._last_error),
+                "channel": _normalize_text(self._last_channel),
+            }
+
+    def get_best_odds_map(
+        self,
+        market_hashes: Sequence[str],
+        max_age_seconds: float,
+    ) -> Dict[str, dict]:
+        now = time.time()
+        results: Dict[str, dict] = {}
+        with self._state_lock:
+            for market_hash in (_normalize_text(item) for item in market_hashes or []):
+                if not market_hash:
+                    continue
+                entry = self._best_odds_by_market.get(market_hash)
+                if not isinstance(entry, dict):
+                    continue
+                observed_at = self._updated_at_seconds(
+                    entry.get("observed_at"),
+                    default_seconds=self._updated_at_seconds(entry.get("updated_at"), default_seconds=0.0),
+                )
+                if max_age_seconds > 0 and observed_at > 0 and (now - observed_at) > max_age_seconds:
+                    continue
+                results[market_hash] = dict(entry)
+        return results
+
+    def merge_best_odds_map(self, odds_map: Dict[str, dict], source: str = "snapshot") -> int:
+        merged = 0
+        default_seconds = time.time()
+        with self._state_lock:
+            for market_hash_raw, payload in (odds_map or {}).items():
+                market_hash = _normalize_text(market_hash_raw)
+                if not market_hash or not isinstance(payload, dict):
+                    continue
+                entry = self._best_odds_by_market.setdefault(
+                    market_hash,
+                    {
+                        "odds_one": None,
+                        "odds_two": None,
+                        "updated_at_one": None,
+                        "updated_at_two": None,
+                        "observed_at_one": None,
+                        "observed_at_two": None,
+                        "observed_at": 0.0,
+                        "updated_at": 0.0,
+                    },
+                )
+                changed = False
+                changed |= self._merge_best_odds_side(
+                    entry,
+                    side_key="one",
+                    odds_value=payload.get("odds_one"),
+                    updated_at_raw=payload.get("updated_at_one") or payload.get("updated_at"),
+                    source=source,
+                    default_seconds=default_seconds,
+                )
+                changed |= self._merge_best_odds_side(
+                    entry,
+                    side_key="two",
+                    odds_value=payload.get("odds_two"),
+                    updated_at_raw=payload.get("updated_at_two") or payload.get("updated_at"),
+                    source=source,
+                    default_seconds=default_seconds,
+                )
+                if changed:
+                    merged += 1
+        return merged
+
+    @staticmethod
+    def _updated_at_seconds(value: object, default_seconds: float = 0.0) -> float:
+        seconds = _safe_float(value)
+        if seconds is None:
+            return float(default_seconds)
+        if seconds > 1e12:
+            seconds /= 1000.0
+        return float(seconds)
+
+    def _merge_best_odds_side(
+        self,
+        entry: dict,
+        side_key: str,
+        odds_value: object,
+        updated_at_raw: object,
+        source: str,
+        default_seconds: float,
+    ) -> bool:
+        odds_decimal = _safe_float(odds_value)
+        if odds_decimal is None or odds_decimal <= 1:
+            return False
+        updated_at_seconds = self._updated_at_seconds(updated_at_raw, default_seconds=default_seconds)
+        current_updated_at_raw = entry.get(f"updated_at_{side_key}")
+        current_updated_at_seconds = self._updated_at_seconds(current_updated_at_raw, default_seconds=0.0)
+        has_existing_odds = _safe_float(entry.get(f"odds_{side_key}")) is not None
+        if has_existing_odds:
+            if current_updated_at_seconds > 0 and updated_at_seconds > 0 and updated_at_seconds < current_updated_at_seconds:
+                return False
+            if updated_at_raw in (None, "") and current_updated_at_seconds > 0:
+                return False
+        entry[f"odds_{side_key}"] = round(float(odds_decimal), 6)
+        entry[f"updated_at_{side_key}"] = updated_at_raw if updated_at_raw not in (None, "") else updated_at_seconds
+        entry[f"source_{side_key}"] = _normalize_text(source) or "snapshot"
+        entry[f"observed_at_{side_key}"] = float(default_seconds)
+        entry["updated_at"] = max(
+            self._updated_at_seconds(entry.get("updated_at"), default_seconds=0.0),
+            updated_at_seconds,
+        )
+        entry["observed_at"] = max(
+            self._updated_at_seconds(entry.get("observed_at"), default_seconds=0.0),
+            float(default_seconds),
+        )
+        return True
+
+    def _run_loop_thread(self) -> None:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        with self._state_lock:
+            self._loop = loop
+        try:
+            loop.run_until_complete(self._run_forever_async())
+        finally:
+            pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            loop.close()
+            asyncio.set_event_loop(None)
+            with self._state_lock:
+                self._loop = None
+                self._connected = False
+                self._started = False
+
+    async def _run_forever_async(self) -> None:
+        while not self._stop_requested.is_set():
+            try:
+                await self._run_session_async()
+            except Exception as exc:
+                with self._state_lock:
+                    self._connected = False
+                    self._last_error = str(exc)
+                if self._stop_requested.is_set():
+                    break
+                await asyncio.sleep(1.0)
+
+    async def _run_session_async(self) -> None:
+        client = None
+        channel = None
+        try:
+            client = self._create_ably_client()
+            channel_name = f"best_odds:{_normalize_text(SX_BET_BASE_TOKEN)}"
+            channel = client.channels.get(channel_name)
+            await channel.subscribe(self._handle_best_odds_message)
+            with self._state_lock:
+                self._last_channel = channel_name
+                self._last_error = ""
+            while not self._stop_requested.is_set():
+                state = getattr(client.connection, "state", None)
+                state_token = _normalize_text(getattr(state, "value", state)).lower()
+                error_reason = getattr(client.connection, "error_reason", None)
+                with self._state_lock:
+                    self._connected = state_token == "connected"
+                    if self._connected:
+                        self._last_error = ""
+                    elif error_reason:
+                        self._last_error = str(error_reason)
+                if state_token == "connected":
+                    self._ready_event.set()
+                elif state_token in {"closed", "failed"}:
+                    break
+                await asyncio.sleep(0.25)
+        finally:
+            with self._state_lock:
+                self._connected = False
+            self._ready_event.clear()
+            try:
+                if channel is not None:
+                    channel.unsubscribe()
+            except Exception:
+                pass
+            try:
+                if client is not None:
+                    await client.close()
+            except Exception:
+                pass
+
+    def _create_ably_client(self):
+        try:
+            from ably.realtime.realtime import AblyRealtime
+        except Exception as exc:
+            raise ProviderError(f"SX Bet realtime requires the 'ably' package: {exc}") from exc
+        auth_headers = {"X-Api-Key": SX_BET_API_KEY}
+        if SX_BET_USER_AGENT:
+            auth_headers["User-Agent"] = SX_BET_USER_AGENT
+        return AblyRealtime(
+            loop=asyncio.get_running_loop(),
+            use_token_auth=True,
+            auth_url=_sx_token_url(),
+            auth_headers=auth_headers,
+            auto_connect=True,
+        )
+
+    def _handle_best_odds_message(self, message) -> None:
+        rows = self._decode_realtime_rows(getattr(message, "data", None))
+        if not rows:
+            return
+        now = time.time()
+        with self._state_lock:
+            self._messages_received += len(rows)
+            self._last_message_at = now
+            for row in rows:
+                market_hash = _normalize_text(row.get("marketHash"))
+                if not market_hash:
+                    continue
+                maker_outcome_one = _bool_or_none(row.get("isMakerBettingOutcomeOne"))
+                taker_odds = _taker_decimal_from_maker_percentage(row.get("percentageOdds"))
+                if maker_outcome_one is None or taker_odds is None:
+                    continue
+                entry = self._best_odds_by_market.setdefault(
+                    market_hash,
+                    {
+                        "odds_one": None,
+                        "odds_two": None,
+                        "updated_at_one": None,
+                        "updated_at_two": None,
+                        "observed_at_one": None,
+                        "observed_at_two": None,
+                        "observed_at": 0.0,
+                        "updated_at": 0.0,
+                    },
+                )
+                updated_at_raw = row.get("updatedAt") or row.get("updated_at") or row.get("timestamp") or row.get("ts")
+                if maker_outcome_one:
+                    self._merge_best_odds_side(
+                        entry,
+                        side_key="two",
+                        odds_value=taker_odds,
+                        updated_at_raw=updated_at_raw,
+                        source="ws",
+                        default_seconds=now,
+                    )
+                else:
+                    self._merge_best_odds_side(
+                        entry,
+                        side_key="one",
+                        odds_value=taker_odds,
+                        updated_at_raw=updated_at_raw,
+                        source="ws",
+                        default_seconds=now,
+                    )
+
+    def _decode_realtime_rows(self, payload: object) -> List[dict]:
+        data = payload
+        if isinstance(data, bytes):
+            try:
+                data = data.decode("utf-8")
+            except UnicodeDecodeError:
+                return []
+        if isinstance(data, str):
+            text = data.strip()
+            if not text:
+                return []
+            try:
+                data = json.loads(text)
+            except ValueError:
+                return []
+        if isinstance(data, dict):
+            inner = data.get("data")
+            if isinstance(inner, list):
+                return [item for item in inner if isinstance(item, dict)]
+            return [data]
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        return []
+
+
+def _get_realtime_manager() -> SXBetRealtimeManager:
+    global REALTIME_MANAGER
+    with REALTIME_MANAGER_LOCK:
+        if REALTIME_MANAGER is None:
+            REALTIME_MANAGER = SXBetRealtimeManager()
+        return REALTIME_MANAGER
+
+
+def ensure_realtime_started(wait_timeout: Optional[float] = None) -> dict:
+    if not _sx_best_odds_ws_enabled():
+        return {
+            "enabled": False,
+            "started": False,
+            "ready": False,
+            "status": {},
+        }
+    manager = _get_realtime_manager()
+    started = manager.ensure_started()
+    wait_seconds = _sx_ws_startup_wait_seconds() if wait_timeout is None else max(0.0, float(wait_timeout))
+    ready = manager.wait_until_ready(wait_seconds) if wait_seconds > 0 else False
+    return {
+        "enabled": True,
+        "started": started,
+        "ready": ready,
+        "status": manager.snapshot(),
+    }
+
+
+def stop_realtime(timeout_seconds: float = 2.0) -> None:
+    manager = _get_realtime_manager()
+    manager.stop(timeout_seconds=timeout_seconds)
+
+
+def realtime_status() -> dict:
+    if not _sx_best_odds_ws_enabled():
+        return {
+            "enabled": False,
+            "started": False,
+            "ready": False,
+            "status": {},
+        }
+    manager = _get_realtime_manager()
+    status = manager.snapshot()
+    ready = bool(status.get("connected")) and (
+        status.get("last_message_age_seconds") is None
+        or (float(status.get("last_message_age_seconds") or 0.0) <= max(5.0, _sx_ws_quote_max_age_seconds()))
+    )
+    return {
+        "enabled": True,
+        "started": bool(status.get("started")),
+        "ready": ready,
+        "status": status,
+    }
 
 
 def _extract_markets_active_rows(payload: object) -> Tuple[List[dict], str]:
@@ -1692,8 +2153,13 @@ def _load_best_odds_map(
     base_token: str,
     retries: int,
     backoff_seconds: float,
+    cache_ttl_seconds: Optional[int] = None,
 ) -> Tuple[Dict[str, dict], int, dict]:
-    ttl = _int_or_default(SX_BET_ODDS_CACHE_TTL_RAW, 4, min_value=0)
+    ttl = (
+        max(0, int(cache_ttl_seconds))
+        if cache_ttl_seconds is not None
+        else _int_or_default(SX_BET_ODDS_CACHE_TTL_RAW, 4, min_value=0)
+    )
     now = time.time()
     cache_valid = ttl > 0 and now < float(ODDS_CACHE.get("expires_at", 0.0))
     cache_entries = ODDS_CACHE.get("entries") if isinstance(ODDS_CACHE.get("entries"), dict) else {}
@@ -1711,6 +2177,8 @@ def _load_best_odds_map(
                     "odds_two": _safe_float(cached[1]),
                     "updated_at_one": None,
                     "updated_at_two": None,
+                    "source_one": "rest_cache",
+                    "source_two": "rest_cache",
                 }
         else:
             unresolved.append(market_hash)
@@ -1752,6 +2220,8 @@ def _load_best_odds_map(
                 "odds_two": odds_two,
                 "updated_at_one": out_one.get("updatedAt") or out_one.get("updated_at"),
                 "updated_at_two": out_two.get("updatedAt") or out_two.get("updated_at"),
+                "source_one": "rest_snapshot" if odds_one is not None else None,
+                "source_two": "rest_snapshot" if odds_two is not None else None,
             }
             odds_map[market_hash] = odds_entry
             if odds_one is None and odds_two is None:
@@ -1774,8 +2244,13 @@ async def _load_best_odds_map_async(
     base_token: str,
     retries: int,
     backoff_seconds: float,
+    cache_ttl_seconds: Optional[int] = None,
 ) -> Tuple[Dict[str, dict], int, dict]:
-    ttl = _int_or_default(SX_BET_ODDS_CACHE_TTL_RAW, 4, min_value=0)
+    ttl = (
+        max(0, int(cache_ttl_seconds))
+        if cache_ttl_seconds is not None
+        else _int_or_default(SX_BET_ODDS_CACHE_TTL_RAW, 4, min_value=0)
+    )
     now = time.time()
     cache_valid = ttl > 0 and now < float(ODDS_CACHE.get("expires_at", 0.0))
     cache_entries = ODDS_CACHE.get("entries") if isinstance(ODDS_CACHE.get("entries"), dict) else {}
@@ -1793,6 +2268,8 @@ async def _load_best_odds_map_async(
                     "odds_two": _safe_float(cached[1]),
                     "updated_at_one": None,
                     "updated_at_two": None,
+                    "source_one": "rest_cache",
+                    "source_two": "rest_cache",
                 }
         else:
             unresolved.append(market_hash)
@@ -1835,6 +2312,8 @@ async def _load_best_odds_map_async(
                 "odds_two": odds_two,
                 "updated_at_one": out_one.get("updatedAt") or out_one.get("updated_at"),
                 "updated_at_two": out_two.get("updatedAt") or out_two.get("updated_at"),
+                "source_one": "rest_snapshot" if odds_one is not None else None,
+                "source_two": "rest_snapshot" if odds_two is not None else None,
             }
             odds_map[market_hash] = odds_entry
             if odds_one is None and odds_two is None:
@@ -2054,6 +2533,8 @@ async def fetch_events_async(
     context: Optional[dict] = None,
 ) -> List[dict]:
     _ = regions
+    live_context = isinstance(context, dict) and bool(context.get("live"))
+    realtime_manager = _get_realtime_manager() if _sx_best_odds_ws_enabled() else None
     stats = {
         "provider": PROVIDER_KEY,
         "source": SX_BET_SOURCE or "api",
@@ -2100,6 +2581,16 @@ async def fetch_events_async(
         "markets_rows_main_line_filtered": 0,
         "markets_rows_missing_event": 0,
         "markets_rows_missing_team": 0,
+        "realtime_ws_enabled": _sx_best_odds_ws_enabled(),
+        "realtime_connected": False,
+        "realtime_ready": False,
+        "realtime_best_odds_cached": 0,
+        "realtime_messages_received": 0,
+        "realtime_last_message_age_seconds": None,
+        "realtime_stream_hits": 0,
+        "realtime_snapshot_seeded": 0,
+        "realtime_odds_hits": 0,
+        "realtime_odds_missed": 0,
     }
     _set_last_stats(stats)
 
@@ -2130,6 +2621,17 @@ async def fetch_events_async(
     manual_league_map = _parse_manual_league_map()
     timeout = _int_or_default(SX_BET_TIMEOUT_RAW, 20, min_value=1)
     client = await get_shared_client(PROVIDER_KEY, timeout=float(timeout), follow_redirects=True)
+    realtime_odds_map: Dict[str, dict] = {}
+    if realtime_manager is not None:
+        realtime_manager.ensure_started()
+        wait_seconds = _sx_ws_startup_wait_seconds() if live_context else 0.0
+        ready = realtime_manager.wait_until_ready(wait_seconds) if wait_seconds > 0 else False
+        realtime_snapshot = realtime_manager.snapshot()
+        stats["realtime_connected"] = bool(realtime_snapshot.get("connected"))
+        stats["realtime_ready"] = bool(ready or realtime_snapshot.get("connected"))
+        stats["realtime_best_odds_cached"] = int(realtime_snapshot.get("best_odds_cached", 0) or 0)
+        stats["realtime_messages_received"] = int(realtime_snapshot.get("messages_received", 0) or 0)
+        stats["realtime_last_message_age_seconds"] = realtime_snapshot.get("last_message_age_seconds")
     fixtures, meta = await _load_upcoming_fixtures_async(
         client=client,
         sport_id=sport_id,
@@ -2224,11 +2726,28 @@ async def fetch_events_async(
         stake_map: Dict[str, Tuple[Optional[float], Optional[float]]] = {}
         odds_task = None
         stake_task = None
+        candidate_unique_hashes = list(dict.fromkeys(candidate_hashes))
+        if realtime_manager is not None and candidate_hashes:
+            realtime_odds_map = realtime_manager.get_best_odds_map(
+                candidate_unique_hashes,
+                max_age_seconds=_sx_ws_quote_max_age_seconds(),
+            )
+            stats["realtime_stream_hits"] = len(realtime_odds_map)
+            stats["realtime_odds_hits"] = len(realtime_odds_map)
+            stats["realtime_odds_missed"] = max(0, len(candidate_unique_hashes) - len(realtime_odds_map))
         odds_lookup_hashes: List[str] = []
         if stats.get("fixture_source_used") == "summary" and candidate_hashes:
-            odds_lookup_hashes = list(dict.fromkeys(candidate_hashes))
+            odds_lookup_hashes = [
+                market_hash
+                for market_hash in candidate_unique_hashes
+                if market_hash not in realtime_odds_map
+            ]
         elif unresolved_hashes:
-            odds_lookup_hashes = list(dict.fromkeys(unresolved_hashes))
+            odds_lookup_hashes = [
+                market_hash
+                for market_hash in list(dict.fromkeys(unresolved_hashes))
+                if market_hash not in realtime_odds_map
+            ]
         if odds_lookup_hashes:
             unique_hashes = odds_lookup_hashes
             stats["odds_lookup_requested"] = len(unique_hashes)
@@ -2239,6 +2758,7 @@ async def fetch_events_async(
                     base_token=base_token,
                     retries=retries,
                     backoff_seconds=backoff,
+                    cache_ttl_seconds=0 if live_context else None,
                 )
             )
         if candidate_hashes:
@@ -2286,6 +2806,17 @@ async def fetch_events_async(
             stats["odds_lookup_unresolved_after_lookup"] = len(lookup_unique_hashes) - int(
                 stats.get("odds_lookup_resolved", 0) or 0
             )
+            if realtime_manager is not None and odds_map:
+                stats["realtime_snapshot_seeded"] = realtime_manager.merge_best_odds_map(
+                    odds_map,
+                    source="rest_snapshot",
+                )
+                realtime_odds_map = realtime_manager.get_best_odds_map(
+                    candidate_unique_hashes,
+                    max_age_seconds=_sx_ws_quote_max_age_seconds(),
+                )
+                stats["realtime_odds_hits"] = len(realtime_odds_map)
+                stats["realtime_odds_missed"] = max(0, len(candidate_unique_hashes) - len(realtime_odds_map))
 
         if stake_task is not None:
             stake_map, retries_used, order_meta = await stake_task
@@ -2294,7 +2825,6 @@ async def fetch_events_async(
             stats["orders_lookup_missing_market_hash_rows"] = int(
                 order_meta.get("orders_missing_market_hash", 0) or 0
             )
-            candidate_unique_hashes = list(dict.fromkeys(candidate_hashes))
             missing_hashes = [market_hash for market_hash in candidate_unique_hashes if market_hash not in stake_map]
             stats["orders_lookup_missing_hash_entries"] = len(missing_hashes)
             stats["orders_lookup_sample_missing_hashes"] = missing_hashes[:5]
@@ -2310,22 +2840,59 @@ async def fetch_events_async(
             stats["orders_lookup_with_any_stake"] = with_any_stake
             stats["orders_lookup_without_stake"] = len(candidate_unique_hashes) - with_any_stake
 
+        if realtime_manager is not None:
+            realtime_snapshot = realtime_manager.snapshot()
+            stats["realtime_connected"] = bool(realtime_snapshot.get("connected"))
+            stats["realtime_ready"] = bool(stats.get("realtime_ready")) or bool(realtime_snapshot.get("connected"))
+            stats["realtime_best_odds_cached"] = int(realtime_snapshot.get("best_odds_cached", 0) or 0)
+            stats["realtime_messages_received"] = int(realtime_snapshot.get("messages_received", 0) or 0)
+            stats["realtime_last_message_age_seconds"] = realtime_snapshot.get("last_message_age_seconds")
+
     events_by_id: Dict[str, dict] = {}
     for candidate in candidates:
         odds_one = candidate.get("odds_one")
         odds_two = candidate.get("odds_two")
         outcome_one_last_updated = candidate.get("outcome_one_last_updated")
         outcome_two_last_updated = candidate.get("outcome_two_last_updated")
+        outcome_one_quote_source = candidate.get("outcome_one_quote_source")
+        outcome_two_quote_source = candidate.get("outcome_two_quote_source")
         market_hash = candidate.get("market_hash")
         if market_hash:
             mapped = odds_map.get(market_hash)
             if mapped:
-                if odds_one is None:
-                    odds_one = mapped.get("odds_one")
-                if odds_two is None:
-                    odds_two = mapped.get("odds_two")
+                mapped_odds_one = _safe_float(mapped.get("odds_one"))
+                mapped_odds_two = _safe_float(mapped.get("odds_two"))
+                if mapped_odds_one is not None:
+                    odds_one = mapped_odds_one
+                if mapped_odds_two is not None:
+                    odds_two = mapped_odds_two
                 outcome_one_last_updated = outcome_one_last_updated or mapped.get("updated_at_one")
                 outcome_two_last_updated = outcome_two_last_updated or mapped.get("updated_at_two")
+                if mapped.get("source_one") not in (None, ""):
+                    outcome_one_quote_source = mapped.get("source_one")
+                if mapped.get("source_two") not in (None, ""):
+                    outcome_two_quote_source = mapped.get("source_two")
+            realtime_mapped = realtime_odds_map.get(market_hash)
+            if realtime_mapped:
+                realtime_odds_one = _safe_float(realtime_mapped.get("odds_one"))
+                realtime_odds_two = _safe_float(realtime_mapped.get("odds_two"))
+                if realtime_odds_one is not None:
+                    odds_one = realtime_odds_one
+                if realtime_odds_two is not None:
+                    odds_two = realtime_odds_two
+                if realtime_mapped.get("updated_at_one") not in (None, ""):
+                    outcome_one_last_updated = realtime_mapped.get("updated_at_one")
+                if realtime_mapped.get("updated_at_two") not in (None, ""):
+                    outcome_two_last_updated = realtime_mapped.get("updated_at_two")
+                if realtime_mapped.get("source_one") not in (None, ""):
+                    outcome_one_quote_source = realtime_mapped.get("source_one")
+                if realtime_mapped.get("source_two") not in (None, ""):
+                    outcome_two_quote_source = realtime_mapped.get("source_two")
+        default_fixture_source = f"fixture_{_normalize_text(stats.get('fixture_source_used')) or 'summary'}"
+        if outcome_one_quote_source in (None, ""):
+            outcome_one_quote_source = default_fixture_source
+        if outcome_two_quote_source in (None, ""):
+            outcome_two_quote_source = default_fixture_source
         if odds_one is None or odds_two is None:
             stats["dropped_missing_odds_count"] += 1
             if market_hash and len(stats["sample_dropped_market_hashes"]) < 5:
@@ -2394,6 +2961,10 @@ async def fetch_events_async(
             outcomes[0]["last_updated"] = outcome_one_last_updated
         if outcome_two_last_updated not in (None, ""):
             outcomes[1]["last_updated"] = outcome_two_last_updated
+        if outcome_one_quote_source not in (None, ""):
+            outcomes[0]["quote_source"] = outcome_one_quote_source
+        if outcome_two_quote_source not in (None, ""):
+            outcomes[1]["quote_source"] = outcome_two_quote_source
 
         description = _normalize_text(candidate.get("description"))
         if description and _base_market_key(candidate.get("market_key")) not in {"h2h", "spreads", "totals"}:

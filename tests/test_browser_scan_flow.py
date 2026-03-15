@@ -61,6 +61,8 @@ def _sample_arbitrage_opportunity() -> dict:
                 "max_stake": 50.0,
                 "book_event_id": "sx-evt-1",
                 "book_event_url": "https://sx.bet/markets/evt-1",
+                "quote_source": "ws",
+                "quote_updated_at": "2026-03-15T09:14:58Z",
             },
             {
                 "outcome": "Under",
@@ -73,6 +75,8 @@ def _sample_arbitrage_opportunity() -> dict:
                 "is_exchange": True,
                 "book_event_id": "betdex-evt-1",
                 "book_event_url": "https://betdex.com/markets/evt-1",
+                "quote_source": "rest_snapshot",
+                "quote_updated_at": "2026-03-15T09:14:54Z",
             },
         ],
     }
@@ -205,6 +209,9 @@ class BrowserScanFlowTests(unittest.TestCase):
                     self.assertIn("Seattle Kraken vs Vancouver Canucks", page.locator("#arb-desktop-list").inner_text())
                     self.assertIn("SX Bet", page.locator("#arb-desktop-list").inner_text())
                     self.assertIn("BetDEX", page.locator("#arb-desktop-list").inner_text())
+                    desktop_text = page.locator("#arb-desktop-list").inner_text()
+                    self.assertIn("WS", desktop_text)
+                    self.assertTrue("Snapshot" in desktop_text or "快照" in desktop_text)
                     self.assertIn("1", page.locator("#table-count").inner_text())
                     self.assertEqual(page.locator("#provider-data-list .provider-card").count(), 1)
                     self.assertIn("SX Bet", page.locator("#provider-data-list").inner_text())

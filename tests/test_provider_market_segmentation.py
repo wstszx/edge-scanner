@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import time
 import unittest
 from unittest.mock import patch
 
@@ -109,6 +110,42 @@ class TestSxBetSegmentation(unittest.TestCase):
         self.assertEqual(meta.get("orders_rows"), 3)
         self.assertEqual(stake_map.get("m1"), (2.5, 2.0))
         self.assertEqual(stake_map.get("m2"), (None, None))
+
+    def test_best_odds_loader_can_bypass_cache(self) -> None:
+        sx_bet.ODDS_CACHE["expires_at"] = time.time() + 60.0
+        sx_bet.ODDS_CACHE["entries"] = {
+            "usdc:m1": {
+                "odds_one": 1.9,
+                "odds_two": 1.95,
+                "updated_at_one": "cached-one",
+                "updated_at_two": "cached-two",
+            }
+        }
+        payload = {
+            "status": "success",
+            "data": {
+                "bestOdds": [
+                    {
+                        "marketHash": "m1",
+                        "outcomeOne": {"percentageOdds": "40000000000000000000", "updatedAt": 1773475425731},
+                        "outcomeTwo": {"percentageOdds": "50000000000000000000", "updatedAt": 1773475425732},
+                    }
+                ]
+            },
+        }
+        with patch("providers.sx_bet._request_json", return_value=(payload, 0)) as mocked_request:
+            odds_map, retries_used, meta = sx_bet._load_best_odds_map(
+                market_hashes=["m1"],
+                base_token="usdc",
+                retries=0,
+                backoff_seconds=0.0,
+                cache_ttl_seconds=0,
+            )
+        self.assertEqual(retries_used, 0)
+        self.assertEqual(meta.get("best_odds_items"), 1)
+        self.assertEqual(odds_map["m1"]["odds_one"], 2.5)
+        self.assertEqual(odds_map["m1"]["odds_two"], 2.0)
+        mocked_request.assert_called_once()
 
     def test_numeric_type_h2h_alias_infers_market_key(self) -> None:
         market = {

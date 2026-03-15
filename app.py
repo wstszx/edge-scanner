@@ -316,36 +316,42 @@ def _start_background_provider_services(wait_timeout: Optional[float] = None) ->
     with _BACKGROUND_SERVICES_LOCK:
         if _BACKGROUND_SERVICES_STARTED:
             return
-        try:
-            from providers.polymarket import ensure_realtime_started
-
-            ensure_realtime_started(wait_timeout=wait_timeout)
-        except Exception:
-            logging.warning("Failed to prewarm provider background services", exc_info=True)
-            return
+        for provider_key in ("polymarket", "sx_bet"):
+            try:
+                if provider_key == "polymarket":
+                    from providers.polymarket import ensure_realtime_started
+                else:
+                    from providers.sx_bet import ensure_realtime_started
+                ensure_realtime_started(wait_timeout=wait_timeout)
+            except Exception:
+                logging.warning("Failed to prewarm provider background service: %s", provider_key, exc_info=True)
         _BACKGROUND_SERVICES_STARTED = True
 
 
 def _stop_background_provider_services() -> None:
     global _BACKGROUND_SERVICES_STARTED
     with _BACKGROUND_SERVICES_LOCK:
-        try:
-            from providers.polymarket import stop_realtime
-
-            stop_realtime()
-        except Exception:
-            logging.warning("Failed to stop provider background services", exc_info=True)
-        finally:
-            _BACKGROUND_SERVICES_STARTED = False
+        for provider_key in ("polymarket", "sx_bet"):
+            try:
+                if provider_key == "polymarket":
+                    from providers.polymarket import stop_realtime
+                else:
+                    from providers.sx_bet import stop_realtime
+                stop_realtime()
+            except Exception:
+                logging.warning("Failed to stop provider background service: %s", provider_key, exc_info=True)
+        _BACKGROUND_SERVICES_STARTED = False
 
 
 def _provider_runtime_status(provider_key: str) -> Optional[dict]:
     key = resolve_provider_key(provider_key)
-    if key != "polymarket":
-        return None
-    from providers.polymarket import realtime_status
-
-    return realtime_status()
+    if key == "polymarket":
+        from providers.polymarket import realtime_status
+        return realtime_status()
+    if key == "sx_bet":
+        from providers.sx_bet import realtime_status
+        return realtime_status()
+    return None
 
 
 atexit.register(_stop_background_provider_services)

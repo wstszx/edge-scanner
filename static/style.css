@@ -1725,6 +1725,23 @@ body.modal-open .content {
   flex-wrap: wrap;
 }
 
+.arb-opportunity-leg-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0.08rem 0.42rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  background: color-mix(in srgb, var(--surface) 78%, var(--accent-soft));
+  color: #365774;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.arb-opportunity-leg-badge-source {
+  letter-spacing: 0.03em;
+}
+
 .arb-opportunity-leg-book-meta .exchange-badge {
   padding: 0.14rem 0.42rem;
   font-size: 0.68rem;
@@ -3757,6 +3774,17 @@ body {
   border-color: color-mix(in srgb, var(--warning) 24%, var(--border));
   background: color-mix(in srgb, var(--warning) 10%, transparent);
   color: var(--warning);
+}
+
+.arb-quote-chip {
+  border-color: color-mix(in srgb, var(--accent-2) 20%, var(--border));
+  background: color-mix(in srgb, var(--accent-2) 10%, transparent);
+  color: color-mix(in srgb, var(--accent-2) 72%, var(--text));
+}
+
+.arb-quote-time-chip {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
 }
 
 .arb-calc-leg.is-over-limit {
