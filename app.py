@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
+import requests
 from settings import apply_config_env
 from werkzeug.exceptions import BadRequest
 
@@ -71,6 +72,45 @@ _SERVER_AUTO_SCAN_STOP_EVENT = threading.Event()
 _SCAN_EXECUTION_LOCK = threading.Lock()
 _SERVER_AUTO_SCAN_CONFIG: Optional[dict] = None
 _SERVER_AUTO_SCAN_CONFIG_VERSION = 0
+_FX_RATE_CACHE_LOCK = threading.Lock()
+_FX_RATE_CACHE: Optional[dict] = None
+_FX_RATE_CACHE_EXPIRES_AT = 0.0
+
+ARB_CALC_SUPPORTED_CURRENCIES = (
+    "USD",
+    "EUR",
+    "CNY",
+    "HKD",
+    "GBP",
+    "JPY",
+    "KRW",
+    "SGD",
+    "AUD",
+    "CAD",
+    "CHF",
+    "NZD",
+)
+DEFAULT_ARB_CALC_CURRENCY = "USD"
+FX_RATE_PROVIDER_NAME = "Frankfurter"
+FX_RATE_PROVIDER_URL = os.getenv(
+    "FX_RATE_PROVIDER_URL",
+    "https://api.frankfurter.dev/v1/latest",
+).strip()
+FX_RATE_REFERENCE_CURRENCY = "EUR"
+try:
+    FX_RATE_CACHE_TTL_SECONDS = max(
+        60.0,
+        float(os.getenv("FX_RATE_CACHE_TTL_SECONDS", "1800").strip()),
+    )
+except (TypeError, ValueError):
+    FX_RATE_CACHE_TTL_SECONDS = 1800.0
+try:
+    FX_RATE_TIMEOUT_SECONDS = max(
+        2.0,
+        float(os.getenv("FX_RATE_TIMEOUT_SECONDS", "10").strip()),
+    )
+except (TypeError, ValueError):
+    FX_RATE_TIMEOUT_SECONDS = 10.0
 
 
 @app.route("/favicon.ico")
@@ -839,6 +879,98 @@ def _stop_server_auto_scan() -> None:
 atexit.register(_stop_server_auto_scan)
 
 
+def _fetch_fx_rate_payload(force: bool = False) -> dict:
+    global _FX_RATE_CACHE, _FX_RATE_CACHE_EXPIRES_AT
+    now = time.time()
+    with _FX_RATE_CACHE_LOCK:
+        if (
+            not force
+            and _FX_RATE_CACHE is not None
+            and now < _FX_RATE_CACHE_EXPIRES_AT
+        ):
+            return copy.deepcopy(_FX_RATE_CACHE)
+
+    symbols = ",".join(
+        code
+        for code in ARB_CALC_SUPPORTED_CURRENCIES
+        if code != FX_RATE_REFERENCE_CURRENCY
+    )
+    response = requests.get(
+        FX_RATE_PROVIDER_URL,
+        params={
+            "base": FX_RATE_REFERENCE_CURRENCY,
+            "symbols": symbols,
+        },
+        timeout=FX_RATE_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    rates = {FX_RATE_REFERENCE_CURRENCY: 1.0}
+    raw_rates = payload.get("rates") if isinstance(payload, dict) else {}
+    if not isinstance(raw_rates, dict):
+        raw_rates = {}
+    for code in ARB_CALC_SUPPORTED_CURRENCIES:
+        if code == FX_RATE_REFERENCE_CURRENCY:
+            continue
+        value = raw_rates.get(code)
+        if not isinstance(value, (int, float)) or value <= 0:
+            continue
+        rates[code] = float(value)
+    missing = [
+        code for code in ARB_CALC_SUPPORTED_CURRENCIES if code not in rates
+    ]
+    if missing:
+        raise ValueError(f"missing FX rates for: {', '.join(missing)}")
+
+    cached_payload = {
+        "provider": FX_RATE_PROVIDER_NAME,
+        "reference_currency": FX_RATE_REFERENCE_CURRENCY,
+        "currencies": list(ARB_CALC_SUPPORTED_CURRENCIES),
+        "rates": rates,
+        "source_date": payload.get("date") if isinstance(payload, dict) else None,
+        "fetched_at": datetime.now(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
+        "stale": False,
+    }
+    with _FX_RATE_CACHE_LOCK:
+        _FX_RATE_CACHE = copy.deepcopy(cached_payload)
+        _FX_RATE_CACHE_EXPIRES_AT = now + FX_RATE_CACHE_TTL_SECONDS
+    return cached_payload
+
+
+def _get_fx_rate_payload(force: bool = False) -> dict:
+    try:
+        return _fetch_fx_rate_payload(force=force)
+    except Exception:
+        logging.exception("Failed to refresh FX reference rates")
+        with _FX_RATE_CACHE_LOCK:
+            if _FX_RATE_CACHE is None:
+                raise
+            stale_payload = copy.deepcopy(_FX_RATE_CACHE)
+        stale_payload["stale"] = True
+        return stale_payload
+
+
+@app.route("/fx-rates", methods=["GET"])
+def fx_rates() -> tuple:
+    force_refresh = _coerce_bool(request.args.get("force"), default=False)
+    try:
+        payload = _get_fx_rate_payload(force=force_refresh)
+    except Exception:
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "Failed to load FX rates",
+                    "error_code": 502,
+                }
+            ),
+            502,
+        )
+    return jsonify({"success": True, **payload}), 200
+
+
 @app.route("/")
 def index() -> str:
     _start_background_provider_services(wait_timeout=0.0)
@@ -864,6 +996,8 @@ def index() -> str:
         default_positive_ev_only=SHOW_POSITIVE_EV_ONLY,
         default_middle_sort=DEFAULT_MIDDLE_SORT,
         default_plus_ev_sort=DEFAULT_PLUS_EV_SORT,
+        arb_calc_currencies=ARB_CALC_SUPPORTED_CURRENCIES,
+        default_arb_calc_currency=DEFAULT_ARB_CALC_CURRENCY,
         default_auto_scan_enabled=DEFAULT_AUTO_SCAN_ENABLED,
         default_auto_scan_minutes=DEFAULT_AUTO_SCAN_MINUTES,
         default_notify_sound_enabled=DEFAULT_NOTIFY_SOUND_ENABLED,

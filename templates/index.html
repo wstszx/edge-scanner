@@ -566,12 +566,16 @@
                           <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-a">-</strong>
                         </div>
                         <label class="arb-calc-cell arb-calc-input-cell">
-                            <span data-i18n="arb_calc_stake">Stake ($)</span>
+                            <span data-i18n="arb_calc_stake">Stake</span>
                             <input type="number" id="arb-calc-stake-a" min="0" step="0.01" />
                           </label>
                         <div class="arb-calc-cell arb-calc-currency-cell">
                           <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
-                          <strong>USD</strong>
+                          <select id="arb-calc-currency-a" class="arb-calc-currency-select">
+                            {% for currency in arb_calc_currencies %}
+                            <option value="{{ currency }}" {% if currency == default_arb_calc_currency %}selected{% endif %}>{{ currency }}</option>
+                            {% endfor %}
+                          </select>
                         </div>
                         <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-a"
                           data-i18n="arb_calc_bet">BET</button>
@@ -598,12 +602,16 @@
                           <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-b">-</strong>
                         </div>
                         <label class="arb-calc-cell arb-calc-input-cell">
-                            <span data-i18n="arb_calc_stake">Stake ($)</span>
+                            <span data-i18n="arb_calc_stake">Stake</span>
                             <input type="number" id="arb-calc-stake-b" min="0" step="0.01" />
                           </label>
                         <div class="arb-calc-cell arb-calc-currency-cell">
                           <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
-                          <strong>USD</strong>
+                          <select id="arb-calc-currency-b" class="arb-calc-currency-select">
+                            {% for currency in arb_calc_currencies %}
+                            <option value="{{ currency }}" {% if currency == default_arb_calc_currency %}selected{% endif %}>{{ currency }}</option>
+                            {% endfor %}
+                          </select>
                         </div>
                         <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-b"
                           data-i18n="arb_calc_bet">BET</button>
@@ -630,12 +638,16 @@
                           <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-c">-</strong>
                         </div>
                         <label class="arb-calc-cell arb-calc-input-cell">
-                            <span data-i18n="arb_calc_stake">Stake ($)</span>
+                            <span data-i18n="arb_calc_stake">Stake</span>
                             <input type="number" id="arb-calc-stake-c" min="0" step="0.01" />
                           </label>
                         <div class="arb-calc-cell arb-calc-currency-cell">
                           <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
-                          <strong>USD</strong>
+                          <select id="arb-calc-currency-c" class="arb-calc-currency-select">
+                            {% for currency in arb_calc_currencies %}
+                            <option value="{{ currency }}" {% if currency == default_arb_calc_currency %}selected{% endif %}>{{ currency }}</option>
+                            {% endfor %}
+                          </select>
                         </div>
                         <button type="button" class="arb-calc-bet-btn" id="arb-calc-open-c"
                           data-i18n="arb_calc_bet">BET</button>
@@ -653,7 +665,11 @@
                       <label class="arb-calc-total-field" for="arb-calc-total-input">
                         <span class="arb-calc-total-prefix" data-i18n="arb_calc_total_in">Stake In</span>
                         <input type="number" id="arb-calc-total-input" min="0" step="0.01" />
-                        <span class="arb-calc-total-currency mono">USD</span>
+                        <select id="arb-calc-total-currency" class="arb-calc-total-currency mono">
+                          {% for currency in arb_calc_currencies %}
+                          <option value="{{ currency }}" {% if currency == default_arb_calc_currency %}selected{% endif %}>{{ currency }}</option>
+                          {% endfor %}
+                        </select>
                       </label>
                     </div>
                     <div class="arb-calc-summary">
@@ -1049,12 +1065,14 @@
     const arbCalcOpenBtn = document.getElementById('arb-calc-open-btn');
     const arbCalcTotalInput = document.getElementById('arb-calc-total-input');
     const arbCalcAutoSplitBtn = document.getElementById('arb-calc-auto-split');
+    const arbCalcTotalCurrencySelect = document.getElementById('arb-calc-total-currency');
     const arbCalcLegA = document.getElementById('arb-calc-leg-a');
     const arbCalcLegATitle = document.getElementById('arb-calc-leg-a-title');
     const arbCalcLegASub = document.getElementById('arb-calc-leg-a-sub');
     const arbCalcLegAInfo = document.getElementById('arb-calc-leg-a-book');
     const arbCalcOddsAInput = document.getElementById('arb-calc-odds-a');
     const arbCalcStakeAInput = document.getElementById('arb-calc-stake-a');
+    const arbCalcCurrencyASelect = document.getElementById('arb-calc-currency-a');
     const arbCalcOpenABtn = document.getElementById('arb-calc-open-a');
     const arbCalcBaseABtn = document.getElementById('arb-calc-base-a');
     const arbCalcPayoutA = document.getElementById('arb-calc-payout-a');
@@ -1064,6 +1082,7 @@
     const arbCalcLegBInfo = document.getElementById('arb-calc-leg-b-book');
     const arbCalcOddsBInput = document.getElementById('arb-calc-odds-b');
     const arbCalcStakeBInput = document.getElementById('arb-calc-stake-b');
+    const arbCalcCurrencyBSelect = document.getElementById('arb-calc-currency-b');
     const arbCalcOpenBBtn = document.getElementById('arb-calc-open-b');
     const arbCalcBaseBBtn = document.getElementById('arb-calc-base-b');
     const arbCalcPayoutB = document.getElementById('arb-calc-payout-b');
@@ -1073,6 +1092,7 @@
     const arbCalcLegCInfo = document.getElementById('arb-calc-leg-c-book');
     const arbCalcOddsCInput = document.getElementById('arb-calc-odds-c');
     const arbCalcStakeCInput = document.getElementById('arb-calc-stake-c');
+    const arbCalcCurrencyCSelect = document.getElementById('arb-calc-currency-c');
     const arbCalcOpenCBtn = document.getElementById('arb-calc-open-c');
     const arbCalcBaseCBtn = document.getElementById('arb-calc-base-c');
     const arbCalcPayoutC = document.getElementById('arb-calc-payout-c');
@@ -1089,6 +1109,7 @@
         info: arbCalcLegAInfo,
         oddsInput: arbCalcOddsAInput,
         stakeInput: arbCalcStakeAInput,
+        currencySelect: arbCalcCurrencyASelect,
         openBtn: arbCalcOpenABtn,
         baseBtn: arbCalcBaseABtn,
         payoutEl: arbCalcPayoutA,
@@ -1100,6 +1121,7 @@
         info: arbCalcLegBInfo,
         oddsInput: arbCalcOddsBInput,
         stakeInput: arbCalcStakeBInput,
+        currencySelect: arbCalcCurrencyBSelect,
         openBtn: arbCalcOpenBBtn,
         baseBtn: arbCalcBaseBBtn,
         payoutEl: arbCalcPayoutB,
@@ -1111,11 +1133,15 @@
         info: arbCalcLegCInfo,
         oddsInput: arbCalcOddsCInput,
         stakeInput: arbCalcStakeCInput,
+        currencySelect: arbCalcCurrencyCSelect,
         openBtn: arbCalcOpenCBtn,
         baseBtn: arbCalcBaseCBtn,
         payoutEl: arbCalcPayoutC,
       },
     ];
+    const arbCalcConfiguredCurrencies = Array.from(arbCalcTotalCurrencySelect?.options || [])
+      .map((option) => `${option.value || ''}`.trim().toUpperCase())
+      .filter(Boolean);
     const allSportsToggle = document.getElementById('all-sports');
     const allMarketsToggle = document.getElementById('all-markets');
     const allBookmakersToggle = document.getElementById('all-bookmakers');
@@ -1218,6 +1244,10 @@
     const notifySoundToggle = document.getElementById('notify-sound-toggle');
     const notifyPopupToggle = document.getElementById('notify-popup-toggle');
     const defaultCommissionPercent = commissionInput ? parseFloat(commissionInput.value) || 5 : 5;
+    const arbCalcDefaultCurrency = arbCalcConfiguredCurrencies.includes('USD')
+      ? 'USD'
+      : (arbCalcConfiguredCurrencies[0] || 'USD');
+    const currencyFormatterCache = new Map();
     let lastCommissionRate = defaultCommissionPercent / 100;
     let lastScanData = null;
     let activeTab = 'arbitrage';
@@ -1240,6 +1270,17 @@
     let selectedArbKey = null;
     let selectedArbOpp = null;
     let arbCalculatorState = null;
+    let arbCalcFxPromise = null;
+    let arbCalcFxState = {
+      loading: false,
+      ready: false,
+      stale: false,
+      provider: '',
+      referenceCurrency: 'EUR',
+      sourceDate: '',
+      rates: { [arbCalcDefaultCurrency]: 1 },
+      error: '',
+    };
     const providerSnapshotCache = {};
     const providerSnapshotLoading = new Set();
     const providerJsonChildLimit = 200;
@@ -1501,13 +1542,18 @@
         arb_calc_mode_total: 'AUTO',
         arb_calc_mode_base: 'BASE {index}',
         arb_calc_odds: 'Odds',
-        arb_calc_stake: 'Stake ($)',
+        arb_calc_stake: 'Stake',
         arb_calc_use_this_stake: 'Use This Stake',
         arb_calc_bet: 'BET',
         arb_calc_payout: 'Payout',
         arb_calc_income: 'Income',
         arb_calc_currency: 'Currency',
         arb_calc_stake_short: 'Stake',
+        arb_calc_base_currency_chip: 'Base {currency}',
+        arb_calc_fx_chip: 'FX {date}',
+        arb_calc_fx_chip_stale: 'FX cached {date}',
+        arb_calc_fx_loading: 'Loading FX rates...',
+        arb_calc_fx_unavailable: 'FX rates unavailable. Multi-currency profit is paused.',
         arb_calc_market_time: 'Market: {market} | Start: {time}',
         arb_calc_min_payout: 'Min Payout',
         arb_calc_profit: 'Guaranteed Profit',
@@ -1826,13 +1872,18 @@
         arb_calc_mode_total: '自动',
         arb_calc_mode_base: '基准 {index}',
         arb_calc_odds: '赔率',
-        arb_calc_stake: '下注额 ($)',
+        arb_calc_stake: '下注额',
         arb_calc_use_this_stake: '以此金额为准',
         arb_calc_bet: '下注',
         arb_calc_payout: '返还',
         arb_calc_income: '收入',
         arb_calc_currency: '货币',
         arb_calc_stake_short: '注金',
+        arb_calc_base_currency_chip: '基准 {currency}',
+        arb_calc_fx_chip: '汇率 {date}',
+        arb_calc_fx_chip_stale: '缓存汇率 {date}',
+        arb_calc_fx_loading: '正在加载汇率...',
+        arb_calc_fx_unavailable: '汇率不可用，跨币种利润计算已暂停。',
         arb_calc_market_time: '盘口：{market} | 开赛：{time}',
         arb_calc_min_payout: '最低返还',
         arb_calc_profit: '保底利润',
@@ -2073,8 +2124,99 @@
       return template;
     }
 
-    function createCurrencyFormatter(locale) {
-      return new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' });
+    function createCurrencyFormatter(locale, currency = 'USD') {
+      const normalizedCurrency = `${currency || 'USD'}`.trim().toUpperCase() || 'USD';
+      const cacheKey = `${locale || 'en-US'}::${normalizedCurrency}`;
+      if (currencyFormatterCache.has(cacheKey)) {
+        return currencyFormatterCache.get(cacheKey);
+      }
+      let formatter;
+      try {
+        formatter = new Intl.NumberFormat(locale, { style: 'currency', currency: normalizedCurrency });
+      } catch (error) {
+        formatter = new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' });
+      }
+      currencyFormatterCache.set(cacheKey, formatter);
+      return formatter;
+    }
+
+    function normalizeArbCalcCurrency(value, fallback = arbCalcDefaultCurrency) {
+      const normalized = `${value || ''}`.trim().toUpperCase();
+      if (arbCalcConfiguredCurrencies.includes(normalized)) return normalized;
+      return `${fallback || arbCalcDefaultCurrency}`.trim().toUpperCase() || arbCalcDefaultCurrency;
+    }
+
+    function formatCurrencyForCode(value, currency = arbCalcDefaultCurrency) {
+      const formatter = createCurrencyFormatter(activeLocale, normalizeArbCalcCurrency(currency));
+      return formatter.format(value || 0);
+    }
+
+    function hasArbCalcRate(currency) {
+      const normalized = normalizeArbCalcCurrency(currency);
+      if (normalized === arbCalcFxState.referenceCurrency) return true;
+      const rate = Number(arbCalcFxState?.rates?.[normalized]);
+      return Number.isFinite(rate) && rate > 0;
+    }
+
+    function convertArbCalcCurrencyAmount(amount, fromCurrency, toCurrency) {
+      if (!Number.isFinite(amount)) return NaN;
+      const from = normalizeArbCalcCurrency(fromCurrency);
+      const to = normalizeArbCalcCurrency(toCurrency);
+      if (from === to) return roundMoney(amount);
+      const fromRate = from === arbCalcFxState.referenceCurrency ? 1 : Number(arbCalcFxState?.rates?.[from]);
+      const toRate = to === arbCalcFxState.referenceCurrency ? 1 : Number(arbCalcFxState?.rates?.[to]);
+      if (!Number.isFinite(fromRate) || fromRate <= 0 || !Number.isFinite(toRate) || toRate <= 0) {
+        return NaN;
+      }
+      return roundMoney((amount / fromRate) * toRate);
+    }
+
+    async function ensureArbCalcFxRates(force = false) {
+      if (arbCalcFxPromise && !force) return arbCalcFxPromise;
+      arbCalcFxState = {
+        ...arbCalcFxState,
+        loading: true,
+        error: '',
+      };
+      if (selectedArbOpp || arbCalculatorState) renderArbCalculator();
+      const requestUrl = force ? '/fx-rates?force=1' : '/fx-rates';
+      arbCalcFxPromise = fetch(requestUrl)
+        .then(async (response) => {
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload?.success) {
+            throw new Error(payload?.error || 'Failed to load FX rates');
+          }
+          const nextReference = normalizeArbCalcCurrency(payload.reference_currency || payload.referenceCurrency || 'EUR', 'EUR');
+          const nextRates = {
+            ...(payload.rates && typeof payload.rates === 'object' ? payload.rates : {}),
+            [nextReference]: 1,
+          };
+          arbCalcFxState = {
+            loading: false,
+            ready: true,
+            stale: Boolean(payload.stale),
+            provider: `${payload.provider || ''}`.trim(),
+            referenceCurrency: nextReference,
+            sourceDate: `${payload.source_date || payload.sourceDate || ''}`.trim(),
+            rates: nextRates,
+            error: '',
+          };
+          return arbCalcFxState;
+        })
+        .catch((error) => {
+          arbCalcFxState = {
+            ...arbCalcFxState,
+            loading: false,
+            ready: arbCalcFxState.ready,
+            error: error instanceof Error ? error.message : 'Failed to load FX rates',
+          };
+          throw error;
+        })
+        .finally(() => {
+          arbCalcFxPromise = null;
+          if (selectedArbOpp || arbCalculatorState) renderArbCalculator();
+        });
+      return arbCalcFxPromise;
     }
 
     function applyTranslations() {
@@ -2678,6 +2820,7 @@
       }
       applyTranslations();
       loadSettings();
+      ensureArbCalcFxRates().catch(() => null);
       reconcileNotificationToggles();
       updateBookmakerState();
       syncBookmakerLinksFromInputs();
@@ -3405,6 +3548,9 @@
         if (arbCalculatorState) renderArbCalculator();
       });
     }
+    if (arbCalcTotalCurrencySelect) {
+      arbCalcTotalCurrencySelect.addEventListener('change', () => handleArbCalculatorBaseCurrencyChange());
+    }
     arbCalcLegRefs.forEach((leg, idx) => {
       if (leg.openBtn) {
         leg.openBtn.addEventListener('click', () => {
@@ -3436,6 +3582,9 @@
         leg.stakeInput.addEventListener('blur', () => {
           if (arbCalculatorState) renderArbCalculator();
         });
+      }
+      if (leg.currencySelect) {
+        leg.currencySelect.addEventListener('change', () => handleArbCalculatorLegCurrencyChange(idx));
       }
     });
 
@@ -4389,16 +4538,20 @@
         ? state.legs.map((leg) => ({
           odds: Number(leg?.odds),
           stake: Number(leg?.stake),
+          currency: normalizeArbCalcCurrency(leg?.currency),
           outcome: `${leg?.outcome || ''}`,
           bookmaker: `${leg?.bookmaker || ''}`,
           point: leg?.point,
           maxStake: leg?.maxStake,
+          maxStakeCurrency: normalizeArbCalcCurrency(leg?.maxStakeCurrency),
+          is_exchange: Boolean(leg?.is_exchange),
         }))
         : [];
       return {
         key: `${state.key || ''}`,
         mode: typeof state.mode === 'string' ? state.mode : 'total',
         totalStake: Number(state.totalStake),
+        baseCurrency: normalizeArbCalcCurrency(state.baseCurrency),
         legs: clonedLegs,
       };
     }
@@ -4428,6 +4581,51 @@
       return Number(num);
     }
 
+    function calculateArbCalculatorTotalStake(legs, baseCurrency) {
+      if (!Array.isArray(legs) || !legs.length) return NaN;
+      const normalizedBaseCurrency = normalizeArbCalcCurrency(baseCurrency);
+      let total = 0;
+      for (const leg of legs) {
+        const stake = Number(leg?.stake);
+        if (!Number.isFinite(stake) || stake < 0) return NaN;
+        const convertedStake = convertArbCalcCurrencyAmount(
+          stake,
+          leg?.currency,
+          normalizedBaseCurrency
+        );
+        if (!Number.isFinite(convertedStake)) return NaN;
+        total += convertedStake;
+      }
+      return roundMoney(total);
+    }
+
+    function calculateArbCalculatorPayouts(legs, baseCurrency) {
+      if (!Array.isArray(legs)) return [];
+      const normalizedBaseCurrency = normalizeArbCalcCurrency(baseCurrency);
+      return legs.map((leg) => {
+        const stake = Number(leg?.stake);
+        const odds = Number(leg?.odds);
+        if (!Number.isFinite(stake) || stake < 0 || !Number.isFinite(odds) || odds <= 1) {
+          return { local: NaN, base: NaN };
+        }
+        const localPayout = roundMoney(stake * odds);
+        const basePayout = convertArbCalcCurrencyAmount(localPayout, leg?.currency, normalizedBaseCurrency);
+        return {
+          local: localPayout,
+          base: basePayout,
+        };
+      });
+    }
+
+    function hasArbCalculatorFxCoverage(legs, baseCurrency) {
+      const normalizedBaseCurrency = normalizeArbCalcCurrency(baseCurrency);
+      return (Array.isArray(legs) ? legs : []).every((leg) => {
+        const legCurrency = normalizeArbCalcCurrency(leg?.currency || normalizedBaseCurrency, normalizedBaseCurrency);
+        if (legCurrency === normalizedBaseCurrency) return true;
+        return hasArbCalcRate(normalizedBaseCurrency) && hasArbCalcRate(legCurrency);
+      });
+    }
+
     function getInputStringValue(input) {
       if (!input) return '';
       return `${input.value ?? ''}`.trim();
@@ -4446,11 +4644,10 @@
     function applyArbCalculatorManualInputs() {
       if (!arbCalculatorState) return;
       syncArbCalculatorStateFromInputs();
-      const total = (arbCalculatorState.legs || []).reduce((sum, item) => {
-        const stake = Number(item?.stake);
-        return sum + (Number.isFinite(stake) ? stake : 0);
-      }, 0);
-      arbCalculatorState.totalStake = roundMoney(total);
+      arbCalculatorState.totalStake = calculateArbCalculatorTotalStake(
+        arbCalculatorState.legs || [],
+        arbCalculatorState.baseCurrency
+      );
       renderArbCalculator();
     }
 
@@ -4500,6 +4697,51 @@
       rebalanceArbCalculator(`base_${idx}`);
     }
 
+    function handleArbCalculatorBaseCurrencyChange() {
+      if (!arbCalculatorState || !arbCalcTotalCurrencySelect) return;
+      syncArbCalculatorStateFromInputs({ includeCurrencies: false });
+      arbCalculatorState.baseCurrency = normalizeArbCalcCurrency(arbCalcTotalCurrencySelect.value);
+      arbCalculatorState.totalStake = calculateArbCalculatorTotalStake(
+        arbCalculatorState.legs || [],
+        arbCalculatorState.baseCurrency
+      );
+      if (!hasArbCalculatorFxCoverage(arbCalculatorState.legs || [], arbCalculatorState.baseCurrency)) {
+        ensureArbCalcFxRates().catch(() => null);
+      }
+      renderArbCalculator();
+    }
+
+    function handleArbCalculatorLegCurrencyChange(idx) {
+      if (!arbCalculatorState) return;
+      const refs = arbCalcLegRefs[idx];
+      const leg = arbCalculatorState.legs?.[idx];
+      if (!refs?.currencySelect || !leg) return;
+      syncArbCalculatorStateFromInputs({ includeCurrencies: false });
+      const previousCurrency = normalizeArbCalcCurrency(leg.currency);
+      const nextCurrency = normalizeArbCalcCurrency(refs.currencySelect.value, previousCurrency);
+      if (previousCurrency === nextCurrency) {
+        renderArbCalculator();
+        return;
+      }
+      const baseCurrency = normalizeArbCalcCurrency(arbCalculatorState.baseCurrency);
+      const baseStake = convertArbCalcCurrencyAmount(Number(leg.stake || 0), previousCurrency, baseCurrency);
+      leg.currency = nextCurrency;
+      if (Number.isFinite(baseStake)) {
+        const convertedStake = convertArbCalcCurrencyAmount(baseStake, baseCurrency, nextCurrency);
+        if (Number.isFinite(convertedStake)) {
+          leg.stake = roundMoney(convertedStake);
+        }
+      }
+      arbCalculatorState.totalStake = calculateArbCalculatorTotalStake(
+        arbCalculatorState.legs || [],
+        arbCalculatorState.baseCurrency
+      );
+      if (!hasArbCalculatorFxCoverage(arbCalculatorState.legs || [], arbCalculatorState.baseCurrency)) {
+        ensureArbCalcFxRates().catch(() => null);
+      }
+      renderArbCalculator();
+    }
+
     function splitStakesByTotal(totalStake, oddsList) {
       if (!Number.isFinite(totalStake) || totalStake <= 0) return null;
       if (!Array.isArray(oddsList) || oddsList.length < 2) return null;
@@ -4540,8 +4782,11 @@
             bookmakerKey: `${item?.bookmaker_key || ''}`,
             point: item?.point,
             maxStake: item?.max_stake,
+            maxStakeCurrency: arbCalcDefaultCurrency,
+            currency: arbCalcDefaultCurrency,
             eventId: `${item?.book_event_id ?? opp?.event_id ?? ''}`,
             eventUrl: `${item?.book_event_url || ''}`,
+            is_exchange: Boolean(item?.is_exchange),
           };
         })
         .filter(Boolean);
@@ -4554,15 +4799,28 @@
         : 100;
     }
 
-    function applySplitStakesToLegs(legs, totalStake) {
+    function applySplitStakesToLegs(legs, totalStake, baseCurrency) {
       const split = splitStakesByTotal(totalStake, legs.map((item) => item.odds));
       if (!split || !Array.isArray(split.stakes) || split.stakes.length !== legs.length) {
         return null;
       }
-      return legs.map((item, idx) => ({
-        ...item,
-        stake: split.stakes[idx],
-      }));
+      const normalizedBaseCurrency = normalizeArbCalcCurrency(baseCurrency);
+      const nextLegs = [];
+      for (let idx = 0; idx < legs.length; idx += 1) {
+        const item = legs[idx];
+        const localStake = convertArbCalcCurrencyAmount(
+          split.stakes[idx],
+          normalizedBaseCurrency,
+          item.currency || normalizedBaseCurrency
+        );
+        if (!Number.isFinite(localStake)) return null;
+        nextLegs.push({
+          ...item,
+          currency: normalizeArbCalcCurrency(item.currency || normalizedBaseCurrency),
+          stake: roundMoney(localStake),
+        });
+      }
+      return nextLegs;
     }
 
     function rebuildArbCalculatorState(opp, oppKey, preservedState = null) {
@@ -4570,6 +4828,9 @@
       if (calcLegs.length < 2) return null;
 
       const fallbackTotal = defaultArbTotalStake();
+      const baseCurrency = normalizeArbCalcCurrency(
+        preservedState?.baseCurrency || arbCalcTotalCurrencySelect?.value || arbCalcDefaultCurrency
+      );
       if (preservedState && Array.isArray(preservedState.legs) && preservedState.legs.length) {
         const previousByIdentity = new Map();
         preservedState.legs.forEach((leg) => {
@@ -4585,38 +4846,44 @@
             ...leg,
             odds: odds || leg.odds,
             stake: stake === null ? 0 : stake,
+            currency: normalizeArbCalcCurrency(previousLeg?.currency || leg.currency || baseCurrency),
+            maxStakeCurrency: normalizeArbCalcCurrency(
+              previousLeg?.maxStakeCurrency || leg.maxStakeCurrency || arbCalcDefaultCurrency
+            ),
+            is_exchange: Boolean(previousLeg?.is_exchange ?? leg.is_exchange),
           };
         });
-        const restoredTotal = roundMoney(
-          restoredLegs.reduce((sum, leg) => sum + (Number.isFinite(leg.stake) ? leg.stake : 0), 0)
-        );
-        if (restoredTotal > 0) {
+        const restoredTotal = calculateArbCalculatorTotalStake(restoredLegs, baseCurrency);
+        if (Number.isFinite(restoredTotal) && restoredTotal > 0) {
           return {
             key: oppKey,
             mode: resolveArbCalculatorMode(preservedState.mode, restoredLegs.length),
             totalStake: restoredTotal,
+            baseCurrency,
             legs: restoredLegs,
           };
         }
         const requestedTotal = parseStakeValue(preservedState.totalStake);
         const splitTotal = requestedTotal !== null && requestedTotal > 0 ? requestedTotal : fallbackTotal;
-        const splitLegs = applySplitStakesToLegs(restoredLegs, splitTotal);
+        const splitLegs = applySplitStakesToLegs(restoredLegs, splitTotal, baseCurrency);
         if (splitLegs) {
           return {
             key: oppKey,
             mode: 'total',
-            totalStake: splitTotal,
+            totalStake: calculateArbCalculatorTotalStake(splitLegs, baseCurrency),
+            baseCurrency,
             legs: splitLegs,
           };
         }
       }
 
-      const defaultLegs = applySplitStakesToLegs(calcLegs, fallbackTotal);
+      const defaultLegs = applySplitStakesToLegs(calcLegs, fallbackTotal, baseCurrency);
       if (!defaultLegs) return null;
       return {
         key: oppKey,
         mode: 'total',
-        totalStake: fallbackTotal,
+        totalStake: calculateArbCalculatorTotalStake(defaultLegs, baseCurrency),
+        baseCurrency,
         legs: defaultLegs,
       };
     }
@@ -4665,10 +4932,17 @@
       renderArbCalculator();
     }
 
-    function syncArbCalculatorStateFromInputs() {
+    function syncArbCalculatorStateFromInputs(options = {}) {
       if (!arbCalculatorState) return;
+      const { includeCurrencies = true } = options;
       const nextTotal = parseStakeValue(arbCalcTotalInput?.value);
       if (nextTotal !== null) arbCalculatorState.totalStake = nextTotal;
+      if (includeCurrencies && arbCalcTotalCurrencySelect) {
+        arbCalculatorState.baseCurrency = normalizeArbCalcCurrency(
+          arbCalcTotalCurrencySelect.value,
+          arbCalculatorState.baseCurrency
+        );
+      }
       (arbCalculatorState.legs || []).forEach((leg, idx) => {
         const refs = arbCalcLegRefs[idx];
         if (!refs) return;
@@ -4676,6 +4950,9 @@
         const nextStake = parseStakeValue(refs.stakeInput?.value);
         if (nextOdds !== null) leg.odds = nextOdds;
         if (nextStake !== null) leg.stake = nextStake;
+        if (includeCurrencies && refs.currencySelect) {
+          leg.currency = normalizeArbCalcCurrency(refs.currencySelect.value, leg.currency);
+        }
       });
     }
 
@@ -4686,6 +4963,10 @@
       if (legs.length < 2) {
         renderArbCalculator();
         return;
+      }
+      const baseCurrency = normalizeArbCalcCurrency(arbCalculatorState.baseCurrency);
+      if (!hasArbCalculatorFxCoverage(legs, baseCurrency)) {
+        ensureArbCalcFxRates().catch(() => null);
       }
       const oddsValues = legs.map((item) => item.odds);
       const oddsValid = oddsValues.every((value) => Number.isFinite(value) && value > 1);
@@ -4707,12 +4988,32 @@
           renderArbCalculator();
           return;
         }
-        const payoutTarget = baseStake * baseLeg.odds;
-        legs.forEach((item) => {
-          item.stake = roundMoney(payoutTarget / item.odds);
+        const payoutTarget = convertArbCalcCurrencyAmount(
+          baseStake * baseLeg.odds,
+          baseLeg.currency,
+          baseCurrency
+        );
+        if (!Number.isFinite(payoutTarget)) {
+          renderArbCalculator();
+          return;
+        }
+        const nextStakes = legs.map((item) => {
+          const convertedStake = convertArbCalcCurrencyAmount(
+            payoutTarget / item.odds,
+            baseCurrency,
+            item.currency
+          );
+          return Number.isFinite(convertedStake) ? roundMoney(convertedStake) : NaN;
         });
-        const totalStake = legs.reduce((sum, item) => sum + (item.stake || 0), 0);
-        arbCalculatorState.totalStake = roundMoney(totalStake);
+        if (nextStakes.some((value) => !Number.isFinite(value))) {
+          renderArbCalculator();
+          return;
+        }
+        legs.forEach((item, idx) => {
+          item.stake = nextStakes[idx];
+        });
+        const totalStake = calculateArbCalculatorTotalStake(legs, baseCurrency);
+        arbCalculatorState.totalStake = totalStake;
         arbCalculatorState.mode = `base_${baseIdx}`;
       } else {
         const totalStake = parseStakeValue(arbCalcTotalInput?.value ?? arbCalculatorState.totalStake);
@@ -4720,15 +5021,16 @@
           renderArbCalculator();
           return;
         }
-        const split = splitStakesByTotal(totalStake, oddsValues);
-        if (!split || !Array.isArray(split.stakes) || split.stakes.length !== legs.length) {
+        const splitLegs = applySplitStakesToLegs(legs, totalStake, baseCurrency);
+        if (!splitLegs) {
           renderArbCalculator();
           return;
         }
-        legs.forEach((item, idx) => {
-          item.stake = split.stakes[idx];
+        splitLegs.forEach((item, idx) => {
+          legs[idx].stake = item.stake;
+          legs[idx].currency = item.currency;
         });
-        arbCalculatorState.totalStake = totalStake;
+        arbCalculatorState.totalStake = calculateArbCalculatorTotalStake(legs, baseCurrency);
         arbCalculatorState.mode = 'total';
       }
       renderArbCalculator();
@@ -4782,16 +5084,26 @@
       arbCalcEmpty.classList.add('hidden');
       arbCalcBody.classList.remove('hidden');
 
-      const totalStake = roundMoney(
-        Number.isFinite(arbCalculatorState.totalStake)
-          ? arbCalculatorState.totalStake
-          : legs.reduce((sum, item) => sum + (item?.stake || 0), 0)
+      const baseCurrency = normalizeArbCalcCurrency(
+        arbCalculatorState.baseCurrency || arbCalcTotalCurrencySelect?.value || arbCalcDefaultCurrency
       );
+      const calculatedTotalStake = calculateArbCalculatorTotalStake(legs, baseCurrency);
+      const totalStake = Number.isFinite(calculatedTotalStake)
+        ? calculatedTotalStake
+        : roundMoney(Number(arbCalculatorState.totalStake) || 0);
       const validInputs = legs.every((item) =>
         Number.isFinite(item.odds) &&
         item.odds > 1 &&
         Number.isFinite(item.stake) &&
         item.stake >= 0
+      );
+      const fxCovered = hasArbCalculatorFxCoverage(legs, baseCurrency);
+      if (!fxCovered && !arbCalcFxState.loading) {
+        ensureArbCalcFxRates().catch(() => null);
+      }
+      const payouts = validInputs ? calculateArbCalculatorPayouts(legs, baseCurrency) : [];
+      const payoutsReady = payouts.length === legs.length && payouts.every((item) =>
+        Number.isFinite(item.local) && Number.isFinite(item.base)
       );
 
       const sportLabel = translateSportLabel(selectedArbOpp.sport_display || selectedArbOpp.sport || '');
@@ -4851,14 +5163,24 @@
 
       if (arbCalcBadges) {
         const legChip = legs.length >= 3 ? t('arb_calc_three_way_chip') : t('arb_calc_legs_chip', { count: legs.length });
+        const fxChip = arbCalcFxState.sourceDate
+          ? t(arbCalcFxState.stale ? 'arb_calc_fx_chip_stale' : 'arb_calc_fx_chip', {
+            date: arbCalcFxState.sourceDate,
+          })
+          : '';
         arbCalcBadges.innerHTML = `
           <span class="summary-chip arb-calc-badge">${legChip}</span>
           <span class="summary-chip arb-calc-badge ${hasExchange ? 'exchange' : ''}">${t(hasExchange ? 'arb_calc_exchange_mix' : 'arb_calc_books_only')}</span>
+          <span class="summary-chip arb-calc-badge">${escapeHtml(t('arb_calc_base_currency_chip', { currency: baseCurrency }))}</span>
+          ${fxChip ? `<span class="summary-chip arb-calc-badge">${escapeHtml(fxChip)}</span>` : ''}
         `;
       }
 
       if (arbCalcTotalInput && !isEditingArbCalculatorInput(arbCalcTotalInput)) {
         arbCalcTotalInput.value = totalStake.toFixed(2);
+      }
+      if (arbCalcTotalCurrencySelect) {
+        arbCalcTotalCurrencySelect.value = baseCurrency;
       }
 
       arbCalcLegRefs.forEach((refs, idx) => {
@@ -4881,11 +5203,15 @@
         const isBaseMode = arbCalculatorState?.mode === `base_${idx}`;
         const maxStake = Number(leg.maxStake);
         const currentStake = Number(leg.stake || 0);
-        const legPayout = Number.isFinite(leg.odds) && Number.isFinite(currentStake)
+        const legCurrency = normalizeArbCalcCurrency(leg.currency || baseCurrency, baseCurrency);
+        const legPayoutLocal = Number.isFinite(leg.odds) && Number.isFinite(currentStake)
           ? roundMoney(currentStake * leg.odds)
           : NaN;
-        const legReturnPercent = totalStake > 0 && Number.isFinite(legPayout)
-          ? ((legPayout - totalStake) / totalStake) * 100
+        const legPayoutBase = Number.isFinite(legPayoutLocal)
+          ? convertArbCalcCurrencyAmount(legPayoutLocal, legCurrency, baseCurrency)
+          : NaN;
+        const legReturnPercent = totalStake > 0 && Number.isFinite(legPayoutBase)
+          ? ((legPayoutBase - totalStake) / totalStake) * 100
           : NaN;
         const metaHtml = formatArbCalcLegMeta(leg);
         if (refs.sub) {
@@ -4900,8 +5226,13 @@
               </span>
             `);
           }
-          if (Number.isFinite(legPayout)) {
-            subParts.push(`<span class="arb-calc-leg-detail">${escapeHtml(t('arb_calc_payout'))}: ${escapeHtml(formatCurrency(legPayout))}</span>`);
+          if (Number.isFinite(legPayoutLocal)) {
+            subParts.push(
+              `<span class="arb-calc-leg-detail">${escapeHtml(t('arb_calc_payout'))}: ${escapeHtml(formatCurrencyForCode(legPayoutLocal, legCurrency))}</span>`
+            );
+          }
+          if (legCurrency !== baseCurrency && Number.isFinite(legPayoutBase)) {
+            subParts.push(`<span class="arb-calc-leg-detail">~ ${escapeHtml(formatCurrencyForCode(legPayoutBase, baseCurrency))}</span>`);
           }
           refs.sub.innerHTML = subParts.join('');
         }
@@ -4914,20 +5245,30 @@
           refs.baseBtn.classList.toggle('is-active', isBaseMode);
           refs.baseBtn.setAttribute('aria-pressed', isBaseMode ? 'true' : 'false');
         }
+        const maxStakeCurrency = normalizeArbCalcCurrency(leg.maxStakeCurrency || arbCalcDefaultCurrency);
+        const canCompareMaxStake = legCurrency === maxStakeCurrency;
         refs.section?.classList.toggle('is-base-leg', isBaseMode);
-        refs.section?.classList.toggle('is-over-limit', Number.isFinite(maxStake) && currentStake > maxStake + 1e-9);
+        refs.section?.classList.toggle(
+          'is-over-limit',
+          canCompareMaxStake && Number.isFinite(maxStake) && currentStake > maxStake + 1e-9
+        );
         if (refs.oddsInput && !isEditingArbCalculatorInput(refs.oddsInput)) {
           refs.oddsInput.value = leg.odds ? leg.odds.toFixed(2) : '';
         }
         if (refs.stakeInput && !isEditingArbCalculatorInput(refs.stakeInput)) {
           refs.stakeInput.value = roundMoney(currentStake).toFixed(2);
         }
+        if (refs.currencySelect) {
+          refs.currencySelect.value = legCurrency;
+        }
+        if (refs.payoutEl) {
+          refs.payoutEl.textContent = Number.isFinite(legPayoutLocal)
+            ? formatCurrencyForCode(legPayoutLocal, legCurrency)
+            : '-';
+        }
       });
 
-      if (!validInputs) {
-        arbCalcLegRefs.forEach((refs, idx) => {
-          if (idx < legs.length && refs.payoutEl) refs.payoutEl.textContent = '-';
-        });
+      if (!validInputs || !fxCovered || !payoutsReady || !Number.isFinite(totalStake) || totalStake <= 0) {
         arbCalcMinPayout.textContent = '-';
         arbCalcProfit.textContent = '-';
         arbCalcProfit.classList.remove('gain', 'loss');
@@ -4938,22 +5279,27 @@
           arbCalcStripRoi.parentElement?.classList.toggle('is-gain', baseRoi > 0);
           arbCalcStripRoi.parentElement?.classList.toggle('is-loss', baseRoi < 0);
         }
-        arbCalcWarning.textContent = t('arb_calc_invalid');
-        arbCalcWarning.classList.remove('hidden');
+        const warningMessages = [];
+        if (!validInputs) {
+          warningMessages.push(t('arb_calc_invalid'));
+        }
+        if (validInputs && (!fxCovered || !payoutsReady || !Number.isFinite(totalStake) || totalStake <= 0)) {
+          warningMessages.push(
+            arbCalcFxState.loading ? t('arb_calc_fx_loading') : t('arb_calc_fx_unavailable')
+          );
+        }
+        arbCalcWarning.textContent = warningMessages.join(' ');
+        arbCalcWarning.classList.toggle('hidden', !warningMessages.length);
         return;
       }
 
-      const payouts = legs.map((item) => roundMoney(item.stake * item.odds));
-      const minPayout = Math.min(...payouts);
+      const payoutTotals = payouts.map((item) => item.base);
+      const minPayout = Math.min(...payoutTotals);
       const profit = roundMoney(minPayout - totalStake);
       const roi = totalStake > 0 ? (profit / totalStake) * 100 : 0;
 
-      arbCalcLegRefs.forEach((refs, idx) => {
-        if (idx >= legs.length || !refs.payoutEl) return;
-        refs.payoutEl.textContent = formatCurrency(payouts[idx]);
-      });
-      arbCalcMinPayout.textContent = formatCurrency(minPayout);
-      arbCalcProfit.textContent = formatCurrency(profit);
+      arbCalcMinPayout.textContent = formatCurrencyForCode(minPayout, baseCurrency);
+      arbCalcProfit.textContent = formatCurrencyForCode(profit, baseCurrency);
       arbCalcRoi.textContent = formatPercent(roi);
       arbCalcRoi.classList.toggle('gain', roi > 0);
       arbCalcRoi.classList.toggle('loss', roi < 0);
@@ -4966,11 +5312,18 @@
       arbCalcProfit.classList.toggle('loss', profit < 0);
       if (arbCalcBadges) {
         const legChip = legs.length >= 3 ? t('arb_calc_three_way_chip') : t('arb_calc_legs_chip', { count: legs.length });
+        const fxChip = arbCalcFxState.sourceDate
+          ? t(arbCalcFxState.stale ? 'arb_calc_fx_chip_stale' : 'arb_calc_fx_chip', {
+            date: arbCalcFxState.sourceDate,
+          })
+          : '';
         arbCalcBadges.innerHTML = `
           <span class="summary-chip arb-calc-badge">${legChip}</span>
           <span class="summary-chip arb-calc-badge ${hasExchange ? 'exchange' : ''}">${t(hasExchange ? 'arb_calc_exchange_mix' : 'arb_calc_books_only')}</span>
+          <span class="summary-chip arb-calc-badge">${escapeHtml(t('arb_calc_base_currency_chip', { currency: baseCurrency }))}</span>
+          ${fxChip ? `<span class="summary-chip arb-calc-badge">${escapeHtml(fxChip)}</span>` : ''}
           <span class="summary-chip arb-calc-badge ${roiBandClass(roi)}">${formatPercent(roi)}</span>
-          <span class="summary-chip arb-calc-badge ${profit > 0 ? 'gain' : profit < 0 ? 'loss' : ''}">${t('arb_calc_profit_chip', { profit: formatCurrency(profit) })}</span>
+          <span class="summary-chip arb-calc-badge ${profit > 0 ? 'gain' : profit < 0 ? 'loss' : ''}">${t('arb_calc_profit_chip', { profit: formatCurrencyForCode(profit, baseCurrency) })}</span>
         `;
       }
 
@@ -4979,8 +5332,11 @@
         const maxStake = leg.maxStake === null || leg.maxStake === undefined ? NaN : Number(leg.maxStake);
         const currentStake = Number(leg.stake || 0);
         if (!Number.isFinite(maxStake)) return;
+        const legCurrency = normalizeArbCalcCurrency(leg.currency || baseCurrency, baseCurrency);
+        const maxStakeCurrency = normalizeArbCalcCurrency(leg.maxStakeCurrency || arbCalcDefaultCurrency);
+        if (legCurrency !== maxStakeCurrency) return;
         if (currentStake > maxStake + 1e-9) {
-          exceeded.push(`${leg.outcome} (${formatCurrency(maxStake)})`);
+          exceeded.push(`${leg.outcome} (${formatCurrencyForCode(maxStake, maxStakeCurrency)})`);
         }
       });
       if (exceeded.length) {
@@ -5592,7 +5948,11 @@
       const bookmaker = leg.bookmaker || t('unknown');
       const odds = Number.isFinite(Number(leg.odds)) ? formatOddsDisplay(leg.odds) : '-';
       if (Number.isFinite(maxStake)) {
-        noteParts.push(t('available_label', { amount: formatCurrency(maxStake) }));
+        noteParts.push(
+          t('available_label', {
+            amount: formatCurrencyForCode(maxStake, leg.maxStakeCurrency || arbCalcDefaultCurrency),
+          })
+        );
       }
       if (leg.is_exchange) {
         noteParts.push(t('exchange'));

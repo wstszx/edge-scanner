@@ -4866,20 +4866,42 @@ body {
 }
 
 .arb-calculator-card .arb-calc-currency-cell {
-  display: flex;
+  display: grid;
   align-items: center;
-  justify-content: center;
   min-height: 32px;
-  padding: 0.18rem 0.26rem;
-  border: 1px solid #5b6e84;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.92);
-  color: #52677d;
+  min-width: 0;
 }
 
-.arb-calculator-card .arb-calc-currency-cell strong {
-  font-size: 0.68rem;
-  font-weight: 700;
+.arb-calculator-card .arb-calc-currency-select,
+.arb-calculator-card .arb-calc-total-currency {
+  width: 100%;
+  min-height: 32px;
+  padding: 0.18rem 1.5rem 0.18rem 0.34rem;
+  border: 1px solid #5b6e84;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #52677d;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #5c7187 50%),
+    linear-gradient(135deg, #5c7187 50%, transparent 50%);
+  background-position:
+    calc(100% - 13px) calc(50% - 2px),
+    calc(100% - 8px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.arb-calculator-card .arb-calc-currency-select:focus,
+.arb-calculator-card .arb-calc-total-currency:focus {
+  border-color: #445b73;
+  box-shadow: 0 0 0 3px rgba(117, 166, 209, 0.18);
+  outline: none;
 }
 
 .arb-calculator-card .arb-calc-bet-btn {
@@ -5010,18 +5032,14 @@ body {
 }
 
 .arb-calculator-card .arb-calc-total-currency {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 32px;
-  min-height: 22px;
-  padding: 0.06rem 0.24rem;
+  min-width: 78px;
+  min-height: 28px;
+  padding: 0.14rem 1.4rem 0.14rem 0.42rem;
+  border-color: rgba(91, 110, 132, 0.28);
   border-radius: 999px;
-  background: rgba(84, 101, 119, 0.12);
+  background-color: rgba(255, 255, 255, 0.9);
   color: #5c7187;
-  font-size: 0.56rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
+  font-size: 0.62rem;
 }
 
 .arb-calculator-card .arb-calc-summary {
