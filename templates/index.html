@@ -532,6 +532,17 @@
                     <div id="arb-calc-meta" class="arb-calc-meta"></div>
                     <div id="arb-calc-badges" class="arb-calc-badges"></div>
                   </div>
+                  <div class="arb-calc-fx-bar" id="arb-calc-fx-bar">
+                    <div class="arb-calc-fx-copy">
+                      <span class="arb-calc-fx-kicker" data-i18n="arb_calc_fx_label">FX</span>
+                      <strong class="arb-calc-fx-status" id="arb-calc-fx-status">-</strong>
+                      <span class="arb-calc-fx-meta mono" id="arb-calc-fx-meta">-</span>
+                    </div>
+                    <button type="button" class="arb-calc-fx-refresh" id="arb-calc-fx-refresh-btn"
+                      data-i18n-title="arb_calc_fx_refresh" aria-label="Refresh FX">
+                      <span aria-hidden="true">&#8635;</span>
+                    </button>
+                  </div>
                   <div class="arb-calc-board">
                     <div class="arb-calc-grid-head">
                       <span class="arb-calc-grid-head-spacer"></span>
@@ -564,10 +575,12 @@
                         <div class="arb-calc-cell arb-calc-payout-cell">
                           <span class="arb-calc-cell-label" data-i18n="arb_calc_payout">Payout</span>
                           <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-a">-</strong>
+                          <small class="arb-calc-cell-note hidden" id="arb-calc-payout-base-a"></small>
                         </div>
                         <label class="arb-calc-cell arb-calc-input-cell">
                             <span data-i18n="arb_calc_stake">Stake</span>
                             <input type="number" id="arb-calc-stake-a" min="0" step="0.01" />
+                            <small class="arb-calc-cell-note hidden" id="arb-calc-stake-base-a"></small>
                           </label>
                         <div class="arb-calc-cell arb-calc-currency-cell">
                           <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
@@ -600,10 +613,12 @@
                         <div class="arb-calc-cell arb-calc-payout-cell">
                           <span class="arb-calc-cell-label" data-i18n="arb_calc_payout">Payout</span>
                           <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-b">-</strong>
+                          <small class="arb-calc-cell-note hidden" id="arb-calc-payout-base-b"></small>
                         </div>
                         <label class="arb-calc-cell arb-calc-input-cell">
                             <span data-i18n="arb_calc_stake">Stake</span>
                             <input type="number" id="arb-calc-stake-b" min="0" step="0.01" />
+                            <small class="arb-calc-cell-note hidden" id="arb-calc-stake-base-b"></small>
                           </label>
                         <div class="arb-calc-cell arb-calc-currency-cell">
                           <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
@@ -636,10 +651,12 @@
                         <div class="arb-calc-cell arb-calc-payout-cell">
                           <span class="arb-calc-cell-label" data-i18n="arb_calc_payout">Payout</span>
                           <strong class="mono arb-calc-leg-payout" id="arb-calc-payout-c">-</strong>
+                          <small class="arb-calc-cell-note hidden" id="arb-calc-payout-base-c"></small>
                         </div>
                         <label class="arb-calc-cell arb-calc-input-cell">
                             <span data-i18n="arb_calc_stake">Stake</span>
                             <input type="number" id="arb-calc-stake-c" min="0" step="0.01" />
+                            <small class="arb-calc-cell-note hidden" id="arb-calc-stake-base-c"></small>
                           </label>
                         <div class="arb-calc-cell arb-calc-currency-cell">
                           <span class="arb-calc-cell-label" data-i18n="arb_calc_currency">Currency</span>
@@ -671,14 +688,21 @@
                           {% endfor %}
                         </select>
                       </label>
+                      <div class="arb-calc-total-note mono" id="arb-calc-total-note">-</div>
                     </div>
                     <div class="arb-calc-summary">
                       <div class="arb-calc-metric">
-                        <span class="stat-label" data-i18n="arb_calc_min_payout">Min Payout</span>
+                        <div class="arb-calc-metric-head">
+                          <span class="stat-label" data-i18n="arb_calc_min_payout">Min Payout</span>
+                          <span class="arb-calc-metric-currency mono" id="arb-calc-min-payout-currency">USD</span>
+                        </div>
                         <strong class="mono" id="arb-calc-min-payout">-</strong>
                       </div>
                       <div class="arb-calc-metric">
-                        <span class="stat-label" data-i18n="arb_calc_profit">Guaranteed Profit</span>
+                        <div class="arb-calc-metric-head">
+                          <span class="stat-label" data-i18n="arb_calc_profit">Guaranteed Profit</span>
+                          <span class="arb-calc-metric-currency mono" id="arb-calc-profit-currency">USD</span>
+                        </div>
                         <strong class="mono" id="arb-calc-profit">-</strong>
                       </div>
                       <div class="arb-calc-metric">
@@ -1061,9 +1085,14 @@
     const arbCalcKickoff = document.getElementById('arb-calc-kickoff');
     const arbCalcMeta = document.getElementById('arb-calc-meta');
     const arbCalcBadges = document.getElementById('arb-calc-badges');
+    const arbCalcFxBar = document.getElementById('arb-calc-fx-bar');
+    const arbCalcFxStatus = document.getElementById('arb-calc-fx-status');
+    const arbCalcFxMeta = document.getElementById('arb-calc-fx-meta');
+    const arbCalcFxRefreshBtn = document.getElementById('arb-calc-fx-refresh-btn');
     const arbCalcResetBtn = document.getElementById('arb-calc-reset-btn');
     const arbCalcOpenBtn = document.getElementById('arb-calc-open-btn');
     const arbCalcTotalInput = document.getElementById('arb-calc-total-input');
+    const arbCalcTotalNote = document.getElementById('arb-calc-total-note');
     const arbCalcAutoSplitBtn = document.getElementById('arb-calc-auto-split');
     const arbCalcTotalCurrencySelect = document.getElementById('arb-calc-total-currency');
     const arbCalcLegA = document.getElementById('arb-calc-leg-a');
@@ -1072,32 +1101,40 @@
     const arbCalcLegAInfo = document.getElementById('arb-calc-leg-a-book');
     const arbCalcOddsAInput = document.getElementById('arb-calc-odds-a');
     const arbCalcStakeAInput = document.getElementById('arb-calc-stake-a');
+    const arbCalcStakeABaseNote = document.getElementById('arb-calc-stake-base-a');
     const arbCalcCurrencyASelect = document.getElementById('arb-calc-currency-a');
     const arbCalcOpenABtn = document.getElementById('arb-calc-open-a');
     const arbCalcBaseABtn = document.getElementById('arb-calc-base-a');
     const arbCalcPayoutA = document.getElementById('arb-calc-payout-a');
+    const arbCalcPayoutABaseNote = document.getElementById('arb-calc-payout-base-a');
     const arbCalcLegB = document.getElementById('arb-calc-leg-b');
     const arbCalcLegBTitle = document.getElementById('arb-calc-leg-b-title');
     const arbCalcLegBSub = document.getElementById('arb-calc-leg-b-sub');
     const arbCalcLegBInfo = document.getElementById('arb-calc-leg-b-book');
     const arbCalcOddsBInput = document.getElementById('arb-calc-odds-b');
     const arbCalcStakeBInput = document.getElementById('arb-calc-stake-b');
+    const arbCalcStakeBBaseNote = document.getElementById('arb-calc-stake-base-b');
     const arbCalcCurrencyBSelect = document.getElementById('arb-calc-currency-b');
     const arbCalcOpenBBtn = document.getElementById('arb-calc-open-b');
     const arbCalcBaseBBtn = document.getElementById('arb-calc-base-b');
     const arbCalcPayoutB = document.getElementById('arb-calc-payout-b');
+    const arbCalcPayoutBBaseNote = document.getElementById('arb-calc-payout-base-b');
     const arbCalcLegC = document.getElementById('arb-calc-leg-c');
     const arbCalcLegCTitle = document.getElementById('arb-calc-leg-c-title');
     const arbCalcLegCSub = document.getElementById('arb-calc-leg-c-sub');
     const arbCalcLegCInfo = document.getElementById('arb-calc-leg-c-book');
     const arbCalcOddsCInput = document.getElementById('arb-calc-odds-c');
     const arbCalcStakeCInput = document.getElementById('arb-calc-stake-c');
+    const arbCalcStakeCBaseNote = document.getElementById('arb-calc-stake-base-c');
     const arbCalcCurrencyCSelect = document.getElementById('arb-calc-currency-c');
     const arbCalcOpenCBtn = document.getElementById('arb-calc-open-c');
     const arbCalcBaseCBtn = document.getElementById('arb-calc-base-c');
     const arbCalcPayoutC = document.getElementById('arb-calc-payout-c');
+    const arbCalcPayoutCBaseNote = document.getElementById('arb-calc-payout-base-c');
     const arbCalcMinPayout = document.getElementById('arb-calc-min-payout');
+    const arbCalcMinPayoutCurrency = document.getElementById('arb-calc-min-payout-currency');
     const arbCalcProfit = document.getElementById('arb-calc-profit');
+    const arbCalcProfitCurrency = document.getElementById('arb-calc-profit-currency');
     const arbCalcRoi = document.getElementById('arb-calc-roi');
     const arbCalcWarning = document.getElementById('arb-calc-warning');
     const arbCalcModeChip = document.getElementById('arb-calc-mode-chip');
@@ -1109,10 +1146,12 @@
         info: arbCalcLegAInfo,
         oddsInput: arbCalcOddsAInput,
         stakeInput: arbCalcStakeAInput,
+        stakeNoteEl: arbCalcStakeABaseNote,
         currencySelect: arbCalcCurrencyASelect,
         openBtn: arbCalcOpenABtn,
         baseBtn: arbCalcBaseABtn,
         payoutEl: arbCalcPayoutA,
+        payoutNoteEl: arbCalcPayoutABaseNote,
       },
       {
         section: arbCalcLegB,
@@ -1121,10 +1160,12 @@
         info: arbCalcLegBInfo,
         oddsInput: arbCalcOddsBInput,
         stakeInput: arbCalcStakeBInput,
+        stakeNoteEl: arbCalcStakeBBaseNote,
         currencySelect: arbCalcCurrencyBSelect,
         openBtn: arbCalcOpenBBtn,
         baseBtn: arbCalcBaseBBtn,
         payoutEl: arbCalcPayoutB,
+        payoutNoteEl: arbCalcPayoutBBaseNote,
       },
       {
         section: arbCalcLegC,
@@ -1133,10 +1174,12 @@
         info: arbCalcLegCInfo,
         oddsInput: arbCalcOddsCInput,
         stakeInput: arbCalcStakeCInput,
+        stakeNoteEl: arbCalcStakeCBaseNote,
         currencySelect: arbCalcCurrencyCSelect,
         openBtn: arbCalcOpenCBtn,
         baseBtn: arbCalcBaseCBtn,
         payoutEl: arbCalcPayoutC,
+        payoutNoteEl: arbCalcPayoutCBaseNote,
       },
     ];
     const arbCalcConfiguredCurrencies = Array.from(arbCalcTotalCurrencySelect?.options || [])
@@ -1278,6 +1321,7 @@
       provider: '',
       referenceCurrency: 'EUR',
       sourceDate: '',
+      fetchedAt: '',
       rates: { [arbCalcDefaultCurrency]: 1 },
       error: '',
     };
@@ -1549,11 +1593,18 @@
         arb_calc_income: 'Income',
         arb_calc_currency: 'Currency',
         arb_calc_stake_short: 'Stake',
+        arb_calc_fx_label: 'FX',
+        arb_calc_fx_refresh: 'Refresh FX rates',
         arb_calc_base_currency_chip: 'Base {currency}',
         arb_calc_fx_chip: 'FX {date}',
         arb_calc_fx_chip_stale: 'FX cached {date}',
         arb_calc_fx_loading: 'Loading FX rates...',
         arb_calc_fx_unavailable: 'FX rates unavailable. Multi-currency profit is paused.',
+        arb_calc_fx_live_status: 'Live {provider}',
+        arb_calc_fx_cached_status: 'Cached {provider}',
+        arb_calc_fx_meta: '{source} | Ref {reference} | Synced {fetched}',
+        arb_calc_base_equivalent: 'Base {amount}',
+        arb_calc_summary_currency: 'Summary in {currency}',
         arb_calc_market_time: 'Market: {market} | Start: {time}',
         arb_calc_min_payout: 'Min Payout',
         arb_calc_profit: 'Guaranteed Profit',
@@ -1879,11 +1930,18 @@
         arb_calc_income: '收入',
         arb_calc_currency: '货币',
         arb_calc_stake_short: '注金',
+        arb_calc_fx_label: '汇率',
+        arb_calc_fx_refresh: '刷新汇率',
         arb_calc_base_currency_chip: '基准 {currency}',
         arb_calc_fx_chip: '汇率 {date}',
         arb_calc_fx_chip_stale: '缓存汇率 {date}',
         arb_calc_fx_loading: '正在加载汇率...',
         arb_calc_fx_unavailable: '汇率不可用，跨币种利润计算已暂停。',
+        arb_calc_fx_live_status: '实时 {provider}',
+        arb_calc_fx_cached_status: '缓存 {provider}',
+        arb_calc_fx_meta: '{source} | 基准 {reference} | 同步于 {fetched}',
+        arb_calc_base_equivalent: '折合 {amount}',
+        arb_calc_summary_currency: '汇总按 {currency}',
         arb_calc_market_time: '盘口：{market} | 开赛：{time}',
         arb_calc_min_payout: '最低返还',
         arb_calc_profit: '保底利润',
@@ -2198,6 +2256,7 @@
             provider: `${payload.provider || ''}`.trim(),
             referenceCurrency: nextReference,
             sourceDate: `${payload.source_date || payload.sourceDate || ''}`.trim(),
+            fetchedAt: `${payload.fetched_at || payload.fetchedAt || ''}`.trim(),
             rates: nextRates,
             error: '',
           };
@@ -2217,6 +2276,46 @@
           if (selectedArbOpp || arbCalculatorState) renderArbCalculator();
         });
       return arbCalcFxPromise;
+    }
+
+    function renderArbCalculatorFxBar(baseCurrency = arbCalcDefaultCurrency) {
+      if (!arbCalcFxBar || !arbCalcFxStatus || !arbCalcFxMeta || !arbCalcFxRefreshBtn) return;
+      const normalizedBaseCurrency = normalizeArbCalcCurrency(baseCurrency);
+      arbCalcFxRefreshBtn.disabled = Boolean(arbCalcFxState.loading);
+      arbCalcFxBar.classList.remove('is-loading', 'is-ready', 'is-stale', 'is-error');
+
+      if (!selectedArbOpp && !arbCalculatorState) {
+        arbCalcFxStatus.textContent = '-';
+        arbCalcFxMeta.textContent = '-';
+        return;
+      }
+
+      if (arbCalcFxState.ready) {
+        const provider = arbCalcFxState.provider || 'FX';
+        arbCalcFxStatus.textContent = t(
+          arbCalcFxState.stale ? 'arb_calc_fx_cached_status' : 'arb_calc_fx_live_status',
+          { provider }
+        );
+        arbCalcFxMeta.textContent = t('arb_calc_fx_meta', {
+          source: arbCalcFxState.sourceDate || t('tbd'),
+          reference: `${arbCalcFxState.referenceCurrency || 'EUR'} -> ${normalizedBaseCurrency}`,
+          fetched: arbCalcFxState.fetchedAt ? formatDateTime(arbCalcFxState.fetchedAt) : t('tbd'),
+        });
+        arbCalcFxBar.classList.add('is-ready');
+        if (arbCalcFxState.stale) {
+          arbCalcFxBar.classList.add('is-stale');
+        }
+        if (arbCalcFxState.loading) {
+          arbCalcFxBar.classList.add('is-loading');
+        }
+        return;
+      }
+
+      arbCalcFxStatus.textContent = arbCalcFxState.loading
+        ? t('arb_calc_fx_loading')
+        : t('arb_calc_fx_unavailable');
+      arbCalcFxMeta.textContent = normalizedBaseCurrency;
+      arbCalcFxBar.classList.add(arbCalcFxState.loading ? 'is-loading' : 'is-error');
     }
 
     function applyTranslations() {
@@ -2285,6 +2384,9 @@
       }
       if (arbCalcAutoSplitBtn) {
         arbCalcAutoSplitBtn.innerHTML = `${arbIcon('refresh')}<span>${escapeHtml(t('arb_calc_apply_total'))}</span>`;
+      }
+      if (arbCalcFxRefreshBtn) {
+        arbCalcFxRefreshBtn.innerHTML = arbIcon('refresh');
       }
       arbCalcLegRefs.forEach((refs) => {
         if (refs.baseBtn) {
@@ -3551,6 +3653,11 @@
     if (arbCalcTotalCurrencySelect) {
       arbCalcTotalCurrencySelect.addEventListener('change', () => handleArbCalculatorBaseCurrencyChange());
     }
+    if (arbCalcFxRefreshBtn) {
+      arbCalcFxRefreshBtn.addEventListener('click', () => {
+        ensureArbCalcFxRates(true).catch(() => null);
+      });
+    }
     arbCalcLegRefs.forEach((leg, idx) => {
       if (leg.openBtn) {
         leg.openBtn.addEventListener('click', () => {
@@ -4768,6 +4875,80 @@
       };
     }
 
+    function hasKnownArbOpportunityMaxStake(opp) {
+      const odds = Array.isArray(opp?.best_odds) ? opp.best_odds.slice(0, 3) : [];
+      return odds.some((item) => {
+        const maxStake = Number(item?.max_stake);
+        return Number.isFinite(maxStake) && maxStake >= 0;
+      });
+    }
+
+    function calculateArbOpportunityMaxStakeTotal(opp, useEffectivePrices = true) {
+      const odds = Array.isArray(opp?.best_odds) ? opp.best_odds.slice(0, 3) : [];
+      if (odds.length < 2) return null;
+      const inverses = odds.map((item) => {
+        if (!item) return 0;
+        const price = useEffectivePrices
+          ? Number(item.effective_price ?? item.price)
+          : Number(item.price);
+        return price > 0 ? 1 / price : 0;
+      });
+      const sumInv = inverses.reduce((sum, value) => sum + value, 0);
+      if (sumInv <= 0) return null;
+      const fractions = inverses.map((inv) => inv / sumInv);
+      let capTotal = null;
+      odds.forEach((item, idx) => {
+        if (!item) return;
+        const fraction = fractions[idx];
+        if (!fraction || fraction <= 0) return;
+        const capRaw =
+          item.max_stake !== undefined && item.max_stake !== null
+            ? Number(item.max_stake)
+            : NaN;
+        if (!Number.isFinite(capRaw) || capRaw < 0) return;
+        const limit = capRaw / fraction;
+        capTotal = capTotal === null ? limit : Math.min(capTotal, limit);
+      });
+      if (!Number.isFinite(capTotal) || capTotal <= 0) return null;
+      return Number((Math.floor(capTotal * 100) / 100).toFixed(2));
+    }
+
+    function applyArbOpportunityMaxStakePreset(calcLegs, opp, baseCurrency) {
+      if (!Array.isArray(calcLegs) || calcLegs.length < 2 || !hasKnownArbOpportunityMaxStake(opp)) {
+        return null;
+      }
+      const executableTotal = calculateArbOpportunityMaxStakeTotal(opp, true);
+      if (!Number.isFinite(executableTotal) || executableTotal <= 0) return null;
+      const split = calculateStakes(opp, executableTotal, true);
+      if (!split || !Array.isArray(split.breakdown) || split.breakdown.length < 2 || split.total <= 0) {
+        return null;
+      }
+
+      const breakdownByIdentity = new Map();
+      split.breakdown.forEach((item) => {
+        const key = buildArbLegIdentity(item?.outcome, item?.point);
+        if (!key || breakdownByIdentity.has(key)) return;
+        breakdownByIdentity.set(key, item);
+      });
+
+      const nextLegs = calcLegs.map((leg, idx) => {
+        const key = buildArbLegIdentity(leg?.outcome, leg?.point);
+        const matchedBreakdown = breakdownByIdentity.get(key) || split.breakdown[idx];
+        const stake = parseStakeValue(matchedBreakdown?.stake);
+        return {
+          ...leg,
+          stake: stake === null ? 0 : stake,
+          maxStake: matchedBreakdown?.max_stake ?? leg.maxStake,
+        };
+      });
+      const totalStake = calculateArbCalculatorTotalStake(nextLegs, baseCurrency);
+      if (!Number.isFinite(totalStake) || totalStake <= 0) return null;
+      return {
+        legs: nextLegs,
+        totalStake,
+      };
+    }
+
     function buildArbCalculatorLegsFromOpportunity(opp) {
       const odds = Array.isArray(opp?.best_odds) ? opp.best_odds.slice(0, 3) : [];
       return odds
@@ -4875,6 +5056,17 @@
             legs: splitLegs,
           };
         }
+      }
+
+      const cappedLegs = applyArbOpportunityMaxStakePreset(calcLegs, opp, baseCurrency);
+      if (cappedLegs) {
+        return {
+          key: oppKey,
+          mode: 'total',
+          totalStake: cappedLegs.totalStake,
+          baseCurrency,
+          legs: cappedLegs.legs,
+        };
       }
 
       const defaultLegs = applySplitStakesToLegs(calcLegs, fallbackTotal, baseCurrency);
@@ -5059,8 +5251,12 @@
         if (arbCalcKickoff) arbCalcKickoff.innerHTML = '';
         if (arbCalcProfit) arbCalcProfit.classList.remove('gain', 'loss');
         if (arbCalcRoi) arbCalcRoi.classList.remove('gain', 'loss');
+        if (arbCalcTotalNote) arbCalcTotalNote.textContent = '-';
+        if (arbCalcMinPayoutCurrency) arbCalcMinPayoutCurrency.textContent = arbCalcDefaultCurrency;
+        if (arbCalcProfitCurrency) arbCalcProfitCurrency.textContent = arbCalcDefaultCurrency;
         if (arbCalcMeta) arbCalcMeta.innerHTML = '';
         if (arbCalcBadges) arbCalcBadges.innerHTML = '';
+        renderArbCalculatorFxBar(arbCalcDefaultCurrency);
         if (arbCalcModeChip) {
           arbCalcModeChip.textContent = '-';
           arbCalcModeChip.classList.remove('is-total', 'is-base');
@@ -5087,6 +5283,7 @@
       const baseCurrency = normalizeArbCalcCurrency(
         arbCalculatorState.baseCurrency || arbCalcTotalCurrencySelect?.value || arbCalcDefaultCurrency
       );
+      renderArbCalculatorFxBar(baseCurrency);
       const calculatedTotalStake = calculateArbCalculatorTotalStake(legs, baseCurrency);
       const totalStake = Number.isFinite(calculatedTotalStake)
         ? calculatedTotalStake
@@ -5163,16 +5360,10 @@
 
       if (arbCalcBadges) {
         const legChip = legs.length >= 3 ? t('arb_calc_three_way_chip') : t('arb_calc_legs_chip', { count: legs.length });
-        const fxChip = arbCalcFxState.sourceDate
-          ? t(arbCalcFxState.stale ? 'arb_calc_fx_chip_stale' : 'arb_calc_fx_chip', {
-            date: arbCalcFxState.sourceDate,
-          })
-          : '';
         arbCalcBadges.innerHTML = `
           <span class="summary-chip arb-calc-badge">${legChip}</span>
           <span class="summary-chip arb-calc-badge ${hasExchange ? 'exchange' : ''}">${t(hasExchange ? 'arb_calc_exchange_mix' : 'arb_calc_books_only')}</span>
           <span class="summary-chip arb-calc-badge">${escapeHtml(t('arb_calc_base_currency_chip', { currency: baseCurrency }))}</span>
-          ${fxChip ? `<span class="summary-chip arb-calc-badge">${escapeHtml(fxChip)}</span>` : ''}
         `;
       }
 
@@ -5181,6 +5372,15 @@
       }
       if (arbCalcTotalCurrencySelect) {
         arbCalcTotalCurrencySelect.value = baseCurrency;
+      }
+      if (arbCalcTotalNote) {
+        arbCalcTotalNote.textContent = t('arb_calc_summary_currency', { currency: baseCurrency });
+      }
+      if (arbCalcMinPayoutCurrency) {
+        arbCalcMinPayoutCurrency.textContent = baseCurrency;
+      }
+      if (arbCalcProfitCurrency) {
+        arbCalcProfitCurrency.textContent = baseCurrency;
       }
 
       arbCalcLegRefs.forEach((refs, idx) => {
@@ -5195,6 +5395,14 @@
           }
           if (refs.openBtn) refs.openBtn.disabled = true;
           if (refs.payoutEl) refs.payoutEl.textContent = '-';
+          if (refs.payoutNoteEl) {
+            refs.payoutNoteEl.textContent = '';
+            refs.payoutNoteEl.classList.add('hidden');
+          }
+          if (refs.stakeNoteEl) {
+            refs.stakeNoteEl.textContent = '';
+            refs.stakeNoteEl.classList.add('hidden');
+          }
           return;
         }
         refs.section?.classList.remove('hidden');
@@ -5209,6 +5417,9 @@
           : NaN;
         const legPayoutBase = Number.isFinite(legPayoutLocal)
           ? convertArbCalcCurrencyAmount(legPayoutLocal, legCurrency, baseCurrency)
+          : NaN;
+        const legStakeBase = Number.isFinite(currentStake)
+          ? convertArbCalcCurrencyAmount(currentStake, legCurrency, baseCurrency)
           : NaN;
         const legReturnPercent = totalStake > 0 && Number.isFinite(legPayoutBase)
           ? ((legPayoutBase - totalStake) / totalStake) * 100
@@ -5266,6 +5477,20 @@
             ? formatCurrencyForCode(legPayoutLocal, legCurrency)
             : '-';
         }
+        if (refs.payoutNoteEl) {
+          const payoutNote = legCurrency !== baseCurrency && Number.isFinite(legPayoutBase)
+            ? t('arb_calc_base_equivalent', { amount: formatCurrencyForCode(legPayoutBase, baseCurrency) })
+            : '';
+          refs.payoutNoteEl.textContent = payoutNote;
+          refs.payoutNoteEl.classList.toggle('hidden', !payoutNote);
+        }
+        if (refs.stakeNoteEl) {
+          const stakeNote = legCurrency !== baseCurrency && Number.isFinite(legStakeBase)
+            ? t('arb_calc_base_equivalent', { amount: formatCurrencyForCode(legStakeBase, baseCurrency) })
+            : '';
+          refs.stakeNoteEl.textContent = stakeNote;
+          refs.stakeNoteEl.classList.toggle('hidden', !stakeNote);
+        }
       });
 
       if (!validInputs || !fxCovered || !payoutsReady || !Number.isFinite(totalStake) || totalStake <= 0) {
@@ -5312,16 +5537,10 @@
       arbCalcProfit.classList.toggle('loss', profit < 0);
       if (arbCalcBadges) {
         const legChip = legs.length >= 3 ? t('arb_calc_three_way_chip') : t('arb_calc_legs_chip', { count: legs.length });
-        const fxChip = arbCalcFxState.sourceDate
-          ? t(arbCalcFxState.stale ? 'arb_calc_fx_chip_stale' : 'arb_calc_fx_chip', {
-            date: arbCalcFxState.sourceDate,
-          })
-          : '';
         arbCalcBadges.innerHTML = `
           <span class="summary-chip arb-calc-badge">${legChip}</span>
           <span class="summary-chip arb-calc-badge ${hasExchange ? 'exchange' : ''}">${t(hasExchange ? 'arb_calc_exchange_mix' : 'arb_calc_books_only')}</span>
           <span class="summary-chip arb-calc-badge">${escapeHtml(t('arb_calc_base_currency_chip', { currency: baseCurrency }))}</span>
-          ${fxChip ? `<span class="summary-chip arb-calc-badge">${escapeHtml(fxChip)}</span>` : ''}
           <span class="summary-chip arb-calc-badge ${roiBandClass(roi)}">${formatPercent(roi)}</span>
           <span class="summary-chip arb-calc-badge ${profit > 0 ? 'gain' : profit < 0 ? 'loss' : ''}">${t('arb_calc_profit_chip', { profit: formatCurrencyForCode(profit, baseCurrency) })}</span>
         `;
