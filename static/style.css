@@ -117,9 +117,9 @@ main {
   justify-content: space-between;
   align-items: center;
   gap: 1.5rem;
-  position: sticky;
-  top: 1rem;
-  z-index: 1000;
+  position: static;
+  top: auto;
+  z-index: auto;
   backdrop-filter: blur(12px);
   background: color-mix(in srgb, var(--surface) 85%, transparent);
   transition: var(--transition);
@@ -3275,6 +3275,13 @@ body {
   background:
     linear-gradient(120deg, color-mix(in srgb, var(--accent) 8%, var(--surface)) 0%, var(--surface) 46%, color-mix(in srgb, var(--accent-2) 7%, var(--surface)) 100%);
   border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+}
+
+/* Keep the hero header in normal document flow while scrolling results. */
+.app-header {
+  position: static;
+  top: auto;
+  z-index: auto;
 }
 
 .brand-kicker {
