@@ -3397,7 +3397,11 @@
       arbCalcResetBtn.addEventListener('click', () => clearArbCalculatorSelection());
     }
     if (arbCalcTotalInput) {
-      arbCalcTotalInput.addEventListener('change', () => rebalanceArbCalculator('total'));
+      arbCalcTotalInput.addEventListener('input', () => handleArbCalculatorTotalInput(false));
+      arbCalcTotalInput.addEventListener('change', () => handleArbCalculatorTotalInput(true));
+      arbCalcTotalInput.addEventListener('blur', () => {
+        if (arbCalculatorState) renderArbCalculator();
+      });
     }
     arbCalcLegRefs.forEach((leg, idx) => {
       if (leg.openBtn) {
@@ -3418,18 +3422,17 @@
         leg.baseBtn.addEventListener('click', () => rebalanceArbCalculator(`base_${idx}`));
       }
       if (leg.oddsInput) {
-        leg.oddsInput.addEventListener('change', () => {
-          const mode = arbCalculatorState?.mode || 'total';
-          rebalanceArbCalculator(mode);
+        leg.oddsInput.addEventListener('input', () => handleArbCalculatorOddsInput(idx, false));
+        leg.oddsInput.addEventListener('change', () => handleArbCalculatorOddsInput(idx, true));
+        leg.oddsInput.addEventListener('blur', () => {
+          if (arbCalculatorState) renderArbCalculator();
         });
       }
       if (leg.stakeInput) {
-        leg.stakeInput.addEventListener('change', () => {
-          if (!arbCalculatorState) return;
-          syncArbCalculatorStateFromInputs();
-          const total = (arbCalculatorState.legs || []).reduce((sum, item) => sum + (item?.stake || 0), 0);
-          arbCalculatorState.totalStake = roundMoney(total);
-          renderArbCalculator();
+        leg.stakeInput.addEventListener('input', () => handleArbCalculatorStakeInput(idx, false));
+        leg.stakeInput.addEventListener('change', () => handleArbCalculatorStakeInput(idx, true));
+        leg.stakeInput.addEventListener('blur', () => {
+          if (arbCalculatorState) renderArbCalculator();
         });
       }
     });
@@ -4423,6 +4426,78 @@
       return Number(num);
     }
 
+    function getInputStringValue(input) {
+      if (!input) return '';
+      return `${input.value ?? ''}`.trim();
+    }
+
+    function isEditingArbCalculatorInput(input) {
+      return Boolean(input) && document.activeElement === input;
+    }
+
+    function getArbCalculatorBaseIndex(mode = arbCalculatorState?.mode) {
+      if (typeof mode !== 'string' || !mode.startsWith('base_')) return null;
+      const baseIdx = Number(mode.slice(5));
+      return Number.isInteger(baseIdx) ? baseIdx : null;
+    }
+
+    function applyArbCalculatorManualInputs() {
+      if (!arbCalculatorState) return;
+      syncArbCalculatorStateFromInputs();
+      const total = (arbCalculatorState.legs || []).reduce((sum, item) => {
+        const stake = Number(item?.stake);
+        return sum + (Number.isFinite(stake) ? stake : 0);
+      }, 0);
+      arbCalculatorState.totalStake = roundMoney(total);
+      renderArbCalculator();
+    }
+
+    function handleArbCalculatorTotalInput(commit = false) {
+      if (!arbCalculatorState || !arbCalcTotalInput) return;
+      const rawValue = getInputStringValue(arbCalcTotalInput);
+      const nextTotal = parseStakeValue(rawValue);
+      if (!rawValue || nextTotal === null || nextTotal <= 0) {
+        if (commit) renderArbCalculator();
+        return;
+      }
+      rebalanceArbCalculator('total');
+    }
+
+    function handleArbCalculatorOddsInput(idx, commit = false) {
+      if (!arbCalculatorState) return;
+      const refs = arbCalcLegRefs[idx];
+      const rawValue = getInputStringValue(refs?.oddsInput);
+      const nextOdds = parseOddsValue(rawValue);
+      if (!rawValue || nextOdds === null) {
+        if (commit) renderArbCalculator();
+        return;
+      }
+      const baseIdx = getArbCalculatorBaseIndex();
+      if (baseIdx !== null && baseIdx !== idx) {
+        applyArbCalculatorManualInputs();
+        return;
+      }
+      const mode = arbCalculatorState?.mode || 'total';
+      rebalanceArbCalculator(mode);
+    }
+
+    function handleArbCalculatorStakeInput(idx, commit = false) {
+      if (!arbCalculatorState) return;
+      const refs = arbCalcLegRefs[idx];
+      const rawValue = getInputStringValue(refs?.stakeInput);
+      const nextStake = parseStakeValue(rawValue);
+      if (!rawValue || nextStake === null) {
+        if (commit) renderArbCalculator();
+        return;
+      }
+      const baseIdx = getArbCalculatorBaseIndex();
+      if (baseIdx !== null && baseIdx !== idx) {
+        applyArbCalculatorManualInputs();
+        return;
+      }
+      rebalanceArbCalculator(`base_${idx}`);
+    }
+
     function splitStakesByTotal(totalStake, oddsList) {
       if (!Number.isFinite(totalStake) || totalStake <= 0) return null;
       if (!Array.isArray(oddsList) || oddsList.length < 2) return null;
@@ -4780,7 +4855,9 @@
         `;
       }
 
-      if (arbCalcTotalInput) arbCalcTotalInput.value = totalStake.toFixed(2);
+      if (arbCalcTotalInput && !isEditingArbCalculatorInput(arbCalcTotalInput)) {
+        arbCalcTotalInput.value = totalStake.toFixed(2);
+      }
 
       arbCalcLegRefs.forEach((refs, idx) => {
         const leg = legs[idx];
@@ -4837,8 +4914,12 @@
         }
         refs.section?.classList.toggle('is-base-leg', isBaseMode);
         refs.section?.classList.toggle('is-over-limit', Number.isFinite(maxStake) && currentStake > maxStake + 1e-9);
-        if (refs.oddsInput) refs.oddsInput.value = leg.odds ? leg.odds.toFixed(2) : '';
-        if (refs.stakeInput) refs.stakeInput.value = roundMoney(currentStake).toFixed(2);
+        if (refs.oddsInput && !isEditingArbCalculatorInput(refs.oddsInput)) {
+          refs.oddsInput.value = leg.odds ? leg.odds.toFixed(2) : '';
+        }
+        if (refs.stakeInput && !isEditingArbCalculatorInput(refs.stakeInput)) {
+          refs.stakeInput.value = roundMoney(currentStake).toFixed(2);
+        }
       });
 
       if (!validInputs) {
