@@ -559,10 +559,16 @@
                       <strong class="arb-calc-fx-status" id="arb-calc-fx-status">-</strong>
                       <span class="arb-calc-fx-meta mono" id="arb-calc-fx-meta">-</span>
                     </div>
-                    <button type="button" class="arb-calc-fx-refresh" id="arb-calc-fx-refresh-btn"
-                      data-i18n-title="arb_calc_fx_refresh" aria-label="Refresh FX">
-                      <span aria-hidden="true">&#8635;</span>
-                    </button>
+                    <div class="arb-calc-fx-actions">
+                      <label class="arb-calc-live-sync" for="arb-calc-live-odds-toggle">
+                        <input type="checkbox" id="arb-calc-live-odds-toggle" />
+                        <span data-i18n="arb_calc_live_odds_toggle">Sync latest odds</span>
+                      </label>
+                      <button type="button" class="arb-calc-fx-refresh" id="arb-calc-fx-refresh-btn"
+                        data-i18n-title="arb_calc_fx_refresh" aria-label="Refresh FX">
+                        <span aria-hidden="true">&#8635;</span>
+                      </button>
+                    </div>
                   </div>
                   <div class="arb-calc-board">
                     <div class="arb-calc-grid-head">
@@ -1133,6 +1139,7 @@
     const arbCalcFxStatus = document.getElementById('arb-calc-fx-status');
     const arbCalcFxMeta = document.getElementById('arb-calc-fx-meta');
     const arbCalcFxRefreshBtn = document.getElementById('arb-calc-fx-refresh-btn');
+    const arbCalcLiveOddsToggle = document.getElementById('arb-calc-live-odds-toggle');
     const arbCalcResetBtn = document.getElementById('arb-calc-reset-btn');
     const arbCalcOpenBtn = document.getElementById('arb-calc-open-btn');
     const arbCalcTotalInput = document.getElementById('arb-calc-total-input');
@@ -1373,6 +1380,7 @@
     let selectedArbKey = null;
     let selectedArbOpp = null;
     let arbCalculatorState = null;
+    let arbCalcAutoUpdateOdds = false;
     let arbCalcFxPromise = null;
     let arbCalcFxState = {
       loading: false,
@@ -1684,6 +1692,9 @@
         arb_calc_currency: 'Currency',
         arb_calc_stake_short: 'Stake',
         arb_calc_fx_label: 'FX',
+        arb_calc_live_odds_toggle: 'Sync latest odds',
+        arb_calc_live_odds_on: 'Latest odds sync on',
+        arb_calc_live_odds_off: 'Latest odds sync off',
         arb_calc_fx_refresh: 'Refresh FX rates',
         arb_calc_base_currency_chip: 'Base {currency}',
         arb_calc_fx_chip: 'FX {date}',
@@ -2040,6 +2051,9 @@
         arb_calc_currency: '货币',
         arb_calc_stake_short: '注金',
         arb_calc_fx_label: '汇率',
+        arb_calc_live_odds_toggle: '同步最新赔率',
+        arb_calc_live_odds_on: '已开启最新赔率同步',
+        arb_calc_live_odds_off: '已关闭最新赔率同步',
         arb_calc_fx_refresh: '刷新汇率',
         arb_calc_base_currency_chip: '基准 {currency}',
         arb_calc_fx_chip: '汇率 {date}',
@@ -3826,9 +3840,21 @@
         bookmakerUrls: collectBookmakerLinks(),
         autoScanEnabled: autoScanToggle ? autoScanToggle.checked : false,
         autoScanMinutes: autoScanIntervalInput ? autoScanIntervalInput.value : '',
+        arbCalcAutoUpdateOdds: arbCalcLiveOddsToggle ? arbCalcLiveOddsToggle.checked : false,
         notifySoundEnabled: notifySoundToggle ? notifySoundToggle.checked : false,
         notifyPopupEnabled: notifyPopupToggle ? notifyPopupToggle.checked : false,
       };
+    }
+
+    function arbCalculatorShouldRefreshOdds() {
+      return Boolean(arbCalcAutoUpdateOdds);
+    }
+
+    function applyArbCalcOddsSyncSetting(enabled) {
+      arbCalcAutoUpdateOdds = Boolean(enabled);
+      if (arbCalcLiveOddsToggle) {
+        arbCalcLiveOddsToggle.checked = arbCalcAutoUpdateOdds;
+      }
     }
 
     function applySettings(settings) {
@@ -3860,6 +3886,11 @@
       }
       if (autoScanIntervalInput && settings.autoScanMinutes !== undefined) {
         autoScanIntervalInput.value = settings.autoScanMinutes;
+      }
+      if (settings.arbCalcAutoUpdateOdds !== undefined) {
+        applyArbCalcOddsSyncSetting(settings.arbCalcAutoUpdateOdds);
+      } else {
+        applyArbCalcOddsSyncSetting(false);
       }
       if (notifySoundToggle && settings.notifySoundEnabled !== undefined) {
         notifySoundToggle.checked = Boolean(settings.notifySoundEnabled);
@@ -4034,6 +4065,17 @@
     if (arbCalcFxRefreshBtn) {
       arbCalcFxRefreshBtn.addEventListener('click', () => {
         ensureArbCalcFxRates(true).catch(() => null);
+      });
+    }
+    if (arbCalcLiveOddsToggle) {
+      arbCalcLiveOddsToggle.addEventListener('change', () => {
+        applyArbCalcOddsSyncSetting(arbCalcLiveOddsToggle.checked);
+        persistSettings();
+        if (arbCalculatorShouldRefreshOdds()) {
+          syncArbCalculatorOddsFromCurrentData();
+        } else {
+          renderArbCalculator();
+        }
       });
     }
     arbCalcLegRefs.forEach((leg, idx) => {
@@ -5400,7 +5442,8 @@
       return nextLegs;
     }
 
-    function rebuildArbCalculatorState(opp, oppKey, preservedState = null) {
+    function rebuildArbCalculatorState(opp, oppKey, preservedState = null, options = {}) {
+      const preserveOdds = options.preserveOdds !== undefined ? Boolean(options.preserveOdds) : true;
       const calcLegs = buildArbCalculatorLegsFromOpportunity(opp);
       if (calcLegs.length < 2) return null;
 
@@ -5421,7 +5464,7 @@
           const odds = parseOddsValue(previousLeg?.odds);
           return {
             ...leg,
-            odds: odds || leg.odds,
+            odds: preserveOdds ? (odds || leg.odds) : leg.odds,
             stake: stake === null ? 0 : stake,
             currency: normalizeArbCalcCurrency(previousLeg?.currency || leg.currency || baseCurrency),
             maxStakeCurrency: normalizeArbCalcCurrency(
@@ -5496,7 +5539,12 @@
         return;
       }
       const matchedKey = buildArbOpportunityKey(matchedOpp);
-      const rebuilt = rebuildArbCalculatorState(matchedOpp, matchedKey, snapshot?.state || null);
+      const rebuilt = rebuildArbCalculatorState(
+        matchedOpp,
+        matchedKey,
+        snapshot?.state || null,
+        { preserveOdds: !arbCalculatorShouldRefreshOdds() }
+      );
       if (!rebuilt) {
         clearArbCalculatorSelection();
         return;
@@ -5504,6 +5552,17 @@
       selectedArbKey = matchedKey;
       selectedArbOpp = matchedOpp;
       arbCalculatorState = rebuilt;
+    }
+
+    function syncArbCalculatorOddsFromCurrentData() {
+      const payload = getArbitrageModeData(selectedScanMode());
+      const snapshot = captureArbSelectionSnapshot();
+      if (!payload || !snapshot) {
+        renderArbCalculator();
+        return;
+      }
+      restoreArbCalculatorSelection(payload, snapshot);
+      renderArbCalculator();
     }
 
     function initializeArbCalculatorFromOpportunity(opp, oppKey = null, preservedState = null) {
@@ -5651,6 +5710,7 @@
         if (arbCalcMinPayoutCurrency) arbCalcMinPayoutCurrency.textContent = arbCalcDefaultCurrency;
         if (arbCalcProfitCurrency) arbCalcProfitCurrency.textContent = arbCalcDefaultCurrency;
         if (arbCalcMeta) arbCalcMeta.innerHTML = '';
+        if (arbCalcMeta) arbCalcMeta.classList.add('hidden');
         if (arbCalcBadges) arbCalcBadges.innerHTML = '';
         renderArbCalculatorFxBar(arbCalcDefaultCurrency);
         if (arbCalcModeChip) {
@@ -5724,8 +5784,10 @@
       }
       const hasExchange = Boolean(selectedArbOpp.has_exchange);
       if (arbCalcMeta) {
-        arbCalcMeta.innerHTML = '';
-        arbCalcMeta.classList.add('hidden');
+        arbCalcMeta.innerHTML = formatArbMetaPill(
+          t(arbCalculatorShouldRefreshOdds() ? 'arb_calc_live_odds_on' : 'arb_calc_live_odds_off')
+        );
+        arbCalcMeta.classList.remove('hidden');
       }
 
       if (arbCalcOpenBtn) {

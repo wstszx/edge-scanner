@@ -40,7 +40,7 @@ class _LiveServer:
         self._thread.join(timeout=2.0)
 
 
-def _sample_arbitrage_opportunity() -> dict:
+def _sample_arbitrage_opportunity(over_price: float = 2.37) -> dict:
     return {
         "event": "Seattle Kraken vs Vancouver Canucks",
         "event_id": "evt-1",
@@ -55,8 +55,8 @@ def _sample_arbitrage_opportunity() -> dict:
                 "outcome": "Over",
                 "bookmaker": "SX Bet",
                 "bookmaker_key": "sx_bet",
-                "price": 2.37,
-                "effective_price": 2.37,
+                "price": over_price,
+                "effective_price": over_price,
                 "point": 6.5,
                 "max_stake": 50.0,
                 "book_event_id": "sx-evt-1",
@@ -368,6 +368,74 @@ class BrowserScanFlowTests(unittest.TestCase):
         kwargs = run_scan_calls[0]
         self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])
         self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
+
+    def test_browser_calculator_toggle_controls_latest_odds_sync(self) -> None:
+        run_scan_calls: list[dict] = []
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+        prices = [2.37, 2.51, 2.63]
+
+        def _fake_run_scan(**kwargs):
+            run_scan_calls.append(copy.deepcopy(kwargs))
+            price = prices[min(len(run_scan_calls) - 1, len(prices) - 1)]
+            return _sample_scan_result(
+                opportunities=[_sample_arbitrage_opportunity(over_price=price)]
+            )
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True))
+            stack.enter_context(patch.object(app_module, "_start_background_provider_services"))
+            stack.enter_context(patch.object(app_module, "get_history_manager", return_value=history_manager))
+            stack.enter_context(patch.object(app_module, "get_notifier", return_value=notifier))
+            stack.enter_context(patch.object(app_module, "run_scan", side_effect=_fake_run_scan))
+
+            server = _LiveServer(app_module.app)
+            server.start()
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(headless=True)
+                    context = browser.new_context()
+                    page = context.new_page()
+                    page.route("https://fonts.googleapis.com/*", lambda route: route.abort())
+                    page.route("https://fonts.gstatic.com/*", lambda route: route.abort())
+                    page.goto(server.base_url, wait_until="domcontentloaded")
+
+                    self._configure_selected_provider(page)
+
+                    with page.expect_response(lambda response: response.url.endswith("/scan") and response.request.method == "POST"):
+                        page.evaluate("document.getElementById('scan-form').requestSubmit()")
+
+                    page.wait_for_selector("#arb-desktop-list .arb-opportunity-card")
+                    page.click("#arb-desktop-list .arb-opportunity-card")
+                    page.wait_for_selector("#arb-calc-body:not(.hidden)")
+
+                    initial_odds = float(page.input_value("#arb-calc-odds-a"))
+                    initial_stake = float(page.input_value("#arb-calc-stake-a"))
+                    self.assertAlmostEqual(initial_odds, 2.37, places=2)
+
+                    with page.expect_response(lambda response: response.url.endswith("/scan") and response.request.method == "POST"):
+                        page.evaluate("document.getElementById('scan-form').requestSubmit()")
+
+                    self._wait_for(lambda: len(run_scan_calls) >= 2)
+                    self.assertAlmostEqual(float(page.input_value("#arb-calc-odds-a")), 2.37, places=2)
+                    self.assertAlmostEqual(float(page.input_value("#arb-calc-stake-a")), initial_stake, places=2)
+
+                    page.check("#arb-calc-live-odds-toggle")
+                    self.assertTrue(page.is_checked("#arb-calc-live-odds-toggle"))
+
+                    with page.expect_response(lambda response: response.url.endswith("/scan") and response.request.method == "POST"):
+                        page.evaluate("document.getElementById('scan-form').requestSubmit()")
+
+                    self._wait_for(lambda: len(run_scan_calls) >= 3)
+                    self._wait_for(lambda: abs(float(page.input_value("#arb-calc-odds-a")) - 2.63) < 0.01)
+                    self.assertAlmostEqual(float(page.input_value("#arb-calc-stake-a")), initial_stake, places=2)
+
+                    browser.close()
+            finally:
+                server.stop()
+
+        self.assertEqual(len(run_scan_calls), 3)
 
 
 if __name__ == "__main__":

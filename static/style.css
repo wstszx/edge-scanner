@@ -4741,6 +4741,41 @@ body {
   color: #65798e;
 }
 
+.arb-calculator-card .arb-calc-fx-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.arb-calculator-card .arb-calc-live-sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36rem;
+  min-height: 28px;
+  padding: 0.18rem 0.56rem;
+  border: 1px solid rgba(162, 176, 190, 0.72);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #5a6f84;
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.arb-calculator-card .arb-calc-live-sync input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.arb-calculator-card .arb-calc-live-sync:hover,
+.arb-calculator-card .arb-calc-live-sync:focus-within {
+  border-color: rgba(91, 131, 171, 0.78);
+  color: #335d84;
+}
+
 .arb-calculator-card .arb-calc-fx-kicker {
   display: inline-flex;
   align-items: center;
@@ -5412,6 +5447,10 @@ body {
 
   .arb-calculator-card .arb-calc-fx-copy {
     flex-wrap: wrap;
+  }
+
+  .arb-calculator-card .arb-calc-fx-actions {
+    justify-content: flex-start;
   }
 
   .arb-calculator-card .arb-calc-fx-meta {
