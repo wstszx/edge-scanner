@@ -1557,6 +1557,8 @@
         quote_source_summary: 'Summary',
         quote_source_active: 'Active',
         quote_source_unknown: 'Quote',
+        maker_probability_label: 'Maker {value}',
+        quote_raw_title: 'raw_percentage_odds: {value}',
         quote_updated_label: 'Updated {time}',
         arb_empty_pre_scan_title: 'Run a scan to populate the board.',
         arb_empty_pre_scan_copy: 'The arbitrage workspace will fill in once scan results arrive.',
@@ -1911,6 +1913,8 @@
         quote_source_summary: '摘要',
         quote_source_active: '动态盘',
         quote_source_unknown: '报价',
+        maker_probability_label: '挂单方 {value}',
+        quote_raw_title: '原始 percentageOdds: {value}',
         quote_updated_label: '更新于 {time}',
         arb_empty_pre_scan_title: '先运行一次扫描来填充套利看板。',
         arb_empty_pre_scan_copy: '扫描结果返回后，这里会自动显示可操作的套利机会。',
@@ -2780,15 +2784,59 @@
       return t('quote_updated_label', { time: formatted });
     }
 
+    function normalizeRawPercentageOdds(value) {
+      return `${value ?? ''}`.trim();
+    }
+
+    function parseMakerProbabilityPercent(value) {
+      const rawValue = normalizeRawPercentageOdds(value);
+      if (!rawValue) return null;
+      if (/^\d+$/.test(rawValue) && rawValue.length >= 16) {
+        try {
+          const hundredthsPercent = Number((BigInt(rawValue) + 5000000000000000n) / 10000000000000000n);
+          return hundredthsPercent / 100;
+        } catch (error) {
+          // Fall through to the numeric parser for older or malformed values.
+        }
+      }
+      const numeric = Number(rawValue);
+      if (!Number.isFinite(numeric) || numeric < 0) return null;
+      if (numeric > 1000000) {
+        return (numeric / 1e20) * 100;
+      }
+      if (numeric <= 1) {
+        return numeric * 100;
+      }
+      if (numeric <= 100) {
+        return numeric;
+      }
+      return null;
+    }
+
+    function formatMakerProbabilityLabel(value) {
+      const percent = parseMakerProbabilityPercent(value);
+      if (!Number.isFinite(percent)) return '';
+      return t('maker_probability_label', { value: `${percent.toFixed(2)}%` });
+    }
+
+    function formatRawPercentageOddsTitle(value) {
+      const rawValue = normalizeRawPercentageOdds(value);
+      if (!rawValue) return '';
+      return t('quote_raw_title', { value: rawValue });
+    }
+
     function buildQuoteMeta(item) {
       if (!item || typeof item !== 'object') {
-        return { sourceLabel: '', updatedLabel: '' };
+        return { sourceLabel: '', updatedLabel: '', makerLabel: '', makerTitle: '' };
       }
+      const rawPercentageOdds = item.raw_percentage_odds ?? item.rawPercentageOdds;
       return {
         sourceLabel: formatQuoteSourceLabel(item.quote_source || item.quoteSource),
         updatedLabel: formatQuoteUpdatedLabel(
           item.quote_updated_at || item.quoteUpdatedAt || item.last_updated
         ),
+        makerLabel: formatMakerProbabilityLabel(rawPercentageOdds),
+        makerTitle: formatRawPercentageOddsTitle(rawPercentageOdds),
       };
     }
 
@@ -4996,6 +5044,7 @@
           is_exchange: Boolean(leg?.is_exchange),
           quoteSource: `${leg?.quoteSource || ''}`,
           quoteUpdatedAt: `${leg?.quoteUpdatedAt || ''}`,
+          rawPercentageOdds: `${leg?.rawPercentageOdds ?? ''}`,
         }))
         : [];
       return {
@@ -5314,6 +5363,7 @@
             is_exchange: Boolean(item?.is_exchange),
             quoteSource: `${item?.quote_source || ''}`,
             quoteUpdatedAt: `${item?.quote_updated_at || item?.last_updated || ''}`,
+            rawPercentageOdds: `${item?.raw_percentage_odds ?? ''}`,
           };
         })
         .filter(Boolean);
@@ -6345,6 +6395,7 @@
         eventUrl: `${leg.book_event_url || ''}`,
         quote_source: `${leg.quote_source || ''}`,
         quote_updated_at: `${leg.quote_updated_at || leg.last_updated || ''}`,
+        raw_percentage_odds: `${leg.raw_percentage_odds ?? ''}`,
       }));
     }
 
@@ -6370,12 +6421,16 @@
         item.is_exchange && item.effective_price && item.effective_price !== item.price
           ? `<span class="mono arb-opportunity-leg-note">${escapeHtml(t('net_at', { odds: formatOddsDisplay(item.effective_price) }))}</span>`
           : '';
+      const makerBadge = quoteMeta.makerLabel
+        ? `<span class="arb-opportunity-leg-badge arb-opportunity-leg-badge-source" title="${escapeHtml(quoteMeta.makerTitle || quoteMeta.makerLabel)}">${escapeHtml(quoteMeta.makerLabel)}</span>`
+        : '';
       const legLabel = Number.isInteger(legIndex) ? formatArbLegLabel(legIndex) : '';
       const openLabel = escapeHtml(t('table_open'));
       const bookMeta = [
         legLabel ? `<span>${escapeHtml(legLabel)}</span>` : '',
         exchangeBadge,
         quoteMeta.sourceLabel ? `<span class="arb-opportunity-leg-badge arb-opportunity-leg-badge-source">${escapeHtml(quoteMeta.sourceLabel)}</span>` : '',
+        makerBadge,
       ].filter(Boolean).join('');
       const priceMeta = [
         hasStake ? `<span class="mono">${escapeHtml(stakeValue)}</span>` : '',
@@ -6437,6 +6492,9 @@
       const sourceBadge = quoteMeta.sourceLabel
         ? `<span class="arb-calc-leg-chip arb-quote-chip">${escapeHtml(quoteMeta.sourceLabel)}</span>`
         : '';
+      const makerChip = quoteMeta.makerLabel
+        ? `<span class="arb-calc-leg-chip arb-quote-chip" title="${escapeHtml(quoteMeta.makerTitle || quoteMeta.makerLabel)}">${escapeHtml(quoteMeta.makerLabel)}</span>`
+        : '';
       const effectiveNote =
         item.is_exchange && item.effective_price && item.effective_price !== item.price
           ? `<span class="mono net-note">${t('net_at', { odds: formatOddsDisplay(item.effective_price) })}</span>`
@@ -6458,6 +6516,7 @@
               ${exchangeBadge}
               ${bookBadge}
               ${sourceBadge}
+              ${makerChip}
             </div>
             ${openLink}
           </div>
@@ -6532,6 +6591,7 @@
       const quoteMeta = buildQuoteMeta({
         quote_source: leg.quoteSource,
         quote_updated_at: leg.quoteUpdatedAt,
+        rawPercentageOdds: leg.rawPercentageOdds,
       });
       if (Number.isFinite(maxStake)) {
         noteParts.push(
@@ -6548,6 +6608,9 @@
       }
       if (quoteMeta.updatedLabel) {
         noteParts.push(quoteMeta.updatedLabel);
+      }
+      if (quoteMeta.makerLabel) {
+        noteParts.push(quoteMeta.makerLabel);
       }
       return `
         <div class="arb-calc-bookbox ${leg.is_exchange ? 'exchange' : ''}">
@@ -6825,6 +6888,7 @@
           eventUrl: `${o.book_event_url || ''}`,
           quoteSource: `${o.quote_source || ''}`,
           quoteUpdatedAt: `${o.quote_updated_at || o.last_updated || ''}`,
+          rawPercentageOdds: `${o.raw_percentage_odds ?? ''}`,
         };
       });
       if (breakdown.includes(null)) return null;

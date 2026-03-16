@@ -449,6 +449,8 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
                         "odds_two": 1.66,
                         "updated_at_one": "2026-03-14T08:00:00Z",
                         "updated_at_two": "2026-03-14T08:00:01Z",
+                        "raw_percentage_one": "44000000000000000000",
+                        "raw_percentage_two": "57500000000000000000",
                         "source_one": "rest_snapshot",
                         "source_two": "rest_snapshot",
                     }
@@ -486,6 +488,8 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
             self.assertEqual(outcomes[AWAY_TEAM]["stake"], 120.0)
             self.assertEqual(outcomes[HOME_TEAM]["last_updated"], "2026-03-14T08:00:00Z")
             self.assertEqual(outcomes[AWAY_TEAM]["last_updated"], "2026-03-14T08:00:01Z")
+            self.assertEqual(outcomes[HOME_TEAM]["raw_percentage_odds"], "44000000000000000000")
+            self.assertEqual(outcomes[AWAY_TEAM]["raw_percentage_odds"], "57500000000000000000")
             self.assertEqual(outcomes[HOME_TEAM]["quote_source"], "rest_snapshot")
             self.assertEqual(outcomes[AWAY_TEAM]["quote_source"], "rest_snapshot")
             direct_stats = dict(sx_bet.fetch_events_async.last_stats)
@@ -499,16 +503,19 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
                 counterparty_fetcher=counterparty_fetcher,
             )
 
+        def _assert_sx_bet_stats(stats: dict) -> None:
+            self.assertEqual(stats.get("fixture_source_used"), "summary")
+            self.assertEqual(stats.get("orders_lookup_with_any_stake"), 1)
+            self.assertIn(stats.get("odds_lookup_requested"), {0, 1})
+            if stats.get("odds_lookup_requested") == 0:
+                self.assertEqual(stats.get("realtime_odds_hits"), 1)
+
         self._assert_arbitrage_result(
             result,
             provider_key=sx_bet.PROVIDER_KEY,
             provider_title=sx_bet.PROVIDER_TITLE,
             counterparty_title=betdex.PROVIDER_TITLE,
-            stats_assertion=lambda stats: (
-                self.assertEqual(stats.get("fixture_source_used"), "summary"),
-                self.assertEqual(stats.get("odds_lookup_requested"), 1),
-                self.assertEqual(stats.get("orders_lookup_with_any_stake"), 1),
-            ),
+            stats_assertion=_assert_sx_bet_stats,
         )
 
     def test_bookmaker_xyz_pipeline_produces_standardized_h2h_and_arbitrage(self) -> None:

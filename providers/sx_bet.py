@@ -365,7 +365,7 @@ def _merge_live_state_payload(existing: Optional[dict], incoming: Optional[dict]
         merged["is_live"] = False
     elif not existing_status and incoming_status:
         merged["status"] = incoming_status
-    for key in ("provider_status", "updated_at", "market_status"):
+    for key in ("provider_status", "updated_at", "market_status", "in_play_status", "live_enabled"):
         if not merged.get(key) and incoming.get(key) not in (None, ""):
             merged[key] = incoming.get(key)
     return merged
@@ -373,15 +373,37 @@ def _merge_live_state_payload(existing: Optional[dict], incoming: Optional[dict]
 
 def _sx_live_state_payload(*payloads: object) -> Optional[dict]:
     merged: Optional[dict] = None
+    now_utc = dt.datetime.now(dt.timezone.utc)
     for payload in payloads:
         if not isinstance(payload, dict):
             continue
         current: Dict[str, object] = {}
         live_enabled = payload.get("liveEnabled")
         if live_enabled is not None:
-            is_live = bool(live_enabled)
-            current["is_live"] = is_live
-            current["status"] = "live" if is_live else "scheduled"
+            current["live_enabled"] = bool(live_enabled)
+        in_play_status = _normalize_status_token(
+            payload.get("inPlayStatus")
+            or payload.get("gameState")
+            or payload.get("matchStatus")
+        )
+        if in_play_status:
+            current["in_play_status"] = in_play_status
+            if in_play_status in {"preplay", "prematch", "scheduled", "not_started"}:
+                current["is_live"] = False
+                current["status"] = "scheduled"
+            elif in_play_status in {"inplay", "live", "playing"}:
+                current["is_live"] = True
+                current["status"] = "live"
+        explicit_live = (
+            _bool_or_none(payload.get("isLive"))
+            if payload.get("isLive") is not None
+            else _bool_or_none(payload.get("isInPlay"))
+        )
+        if explicit_live is None and payload.get("live") is not None:
+            explicit_live = _bool_or_none(payload.get("live"))
+        if explicit_live is not None:
+            current["is_live"] = explicit_live
+            current["status"] = "live" if explicit_live else "scheduled"
         status_token = _normalize_status_token(
             payload.get("orderStatus")
             or payload.get("marketStatus")
@@ -392,8 +414,25 @@ def _sx_live_state_payload(*payloads: object) -> Optional[dict]:
             if status_token in {"settled", "closed", "resolved", "cancelled", "canceled", "finished", "final"}:
                 current["status"] = "final"
                 current["is_live"] = False
-            elif status_token in {"active", "open"} and current.get("is_live") is True:
+            elif status_token in {"active", "open"}:
                 current["market_status"] = status_token
+        commence_time = _normalize_commence_time(
+            payload.get("gameTime") or payload.get("startsAt") or payload.get("startTime")
+        )
+        if commence_time and current.get("status") != "final":
+            commence_dt = _normalize_commence_time(commence_time)
+            if commence_dt:
+                try:
+                    parsed_commence = dt.datetime.fromisoformat(str(commence_dt).replace("Z", "+00:00"))
+                except ValueError:
+                    parsed_commence = None
+                if parsed_commence is not None:
+                    if parsed_commence > now_utc:
+                        current["is_live"] = False
+                        current["status"] = "scheduled"
+                    elif current.get("is_live") is None and status_token in {"active", "open"}:
+                        current["is_live"] = True
+                        current["status"] = "live"
         updated_at = payload.get("updatedAt") or payload.get("lastUpdated") or payload.get("modifiedAt")
         if updated_at not in (None, ""):
             current["updated_at"] = updated_at
@@ -720,8 +759,9 @@ def _normalize_fixture_market(
         )
     target_market_base = _base_market_key(target_market_key)
 
-    odds_one = _moneyline_decimal_from_summary(market.get("bestOddsOutcomeOne"))
-    odds_two = _moneyline_decimal_from_summary(market.get("bestOddsOutcomeTwo"))
+    summary_entry = _summary_display_odds_entry(market)
+    odds_one = summary_entry.get("odds_one")
+    odds_two = summary_entry.get("odds_two")
     market_hash = _normalize_text(market.get("marketHash"))
     outcome_one_label = _normalize_text(market.get("outcomeOneName")) or home_team
     outcome_two_label = _normalize_text(market.get("outcomeTwoName")) or away_team
@@ -739,6 +779,8 @@ def _normalize_fixture_market(
         "market_hash": market_hash,
         "odds_one": odds_one,
         "odds_two": odds_two,
+        "outcome_one_raw_percentage_odds": summary_entry.get("raw_percentage_one"),
+        "outcome_two_raw_percentage_odds": summary_entry.get("raw_percentage_two"),
         "outcome_one_quote_source": None,
         "outcome_two_quote_source": None,
         "description": description,
@@ -955,6 +997,87 @@ def _moneyline_decimal_from_outcome_payload(payload) -> Optional[float]:
             return odds
 
     return _moneyline_decimal_from_american(payload.get("americanOdds"))
+
+
+def _taker_decimal_from_maker_payload(payload) -> Optional[float]:
+    if isinstance(payload, dict):
+        for key in ("percentageOdds", "probability", "prob", "impliedProbability"):
+            odds = _taker_decimal_from_maker_percentage(payload.get(key))
+            if odds is not None:
+                return odds
+    return _taker_decimal_from_maker_percentage(payload)
+
+
+def _outcome_updated_at(payload) -> Optional[object]:
+    if not isinstance(payload, dict):
+        return None
+    return payload.get("updatedAt") or payload.get("updated_at")
+
+
+def _outcome_percentage_raw(payload) -> Optional[object]:
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("percentageOdds")
+    return value if value not in (None, "") else None
+
+
+def _summary_best_odds_use_maker_view(value) -> bool:
+    raw = _safe_float(value)
+    if raw is None or raw <= 0:
+        return False
+    return raw < 1 or raw > 100
+
+
+def _summary_display_odds_entry(market: dict) -> dict:
+    raw_one = market.get("bestOddsOutcomeOne")
+    raw_two = market.get("bestOddsOutcomeTwo")
+
+    # SX summary payloads mirror the maker-side raw odds used by the orders APIs.
+    # Platform prices are the taker view, which is the opposite outcome after conversion.
+    if _summary_best_odds_use_maker_view(raw_one) or _summary_best_odds_use_maker_view(raw_two):
+        return {
+            "odds_one": _taker_decimal_from_maker_percentage(raw_two),
+            "odds_two": _taker_decimal_from_maker_percentage(raw_one),
+            "raw_percentage_one": raw_two if raw_two not in (None, "") else None,
+            "raw_percentage_two": raw_one if raw_one not in (None, "") else None,
+        }
+
+    return {
+        "odds_one": _moneyline_decimal_from_summary(raw_one),
+        "odds_two": _moneyline_decimal_from_summary(raw_two),
+        "raw_percentage_one": None,
+        "raw_percentage_two": None,
+    }
+
+
+def _best_odds_entry_from_payloads(outcome_one_payload, outcome_two_payload) -> dict:
+    taker_odds_one = _taker_decimal_from_maker_payload(outcome_two_payload)
+    taker_odds_two = _taker_decimal_from_maker_payload(outcome_one_payload)
+
+    if taker_odds_one is not None or taker_odds_two is not None:
+        return {
+            "odds_one": taker_odds_one,
+            "odds_two": taker_odds_two,
+            "updated_at_one": _outcome_updated_at(outcome_two_payload),
+            "updated_at_two": _outcome_updated_at(outcome_one_payload),
+            "raw_percentage_one": _outcome_percentage_raw(outcome_two_payload),
+            "raw_percentage_two": _outcome_percentage_raw(outcome_one_payload),
+            "source_one": "rest_snapshot" if taker_odds_one is not None else None,
+            "source_two": "rest_snapshot" if taker_odds_two is not None else None,
+        }
+
+    odds_one = _moneyline_decimal_from_outcome_payload(outcome_one_payload)
+    odds_two = _moneyline_decimal_from_outcome_payload(outcome_two_payload)
+    return {
+        "odds_one": odds_one,
+        "odds_two": odds_two,
+        "updated_at_one": _outcome_updated_at(outcome_one_payload),
+        "updated_at_two": _outcome_updated_at(outcome_two_payload),
+        "raw_percentage_one": None,
+        "raw_percentage_two": None,
+        "source_one": "rest_snapshot" if odds_one is not None else None,
+        "source_two": "rest_snapshot" if odds_two is not None else None,
+    }
 
 
 def _probability_from_percentage(value) -> Optional[float]:
@@ -2213,16 +2336,9 @@ def _load_best_odds_map(
                 continue
             out_one = item.get("outcomeOne") if isinstance(item.get("outcomeOne"), dict) else {}
             out_two = item.get("outcomeTwo") if isinstance(item.get("outcomeTwo"), dict) else {}
-            odds_one = _moneyline_decimal_from_outcome_payload(out_one)
-            odds_two = _moneyline_decimal_from_outcome_payload(out_two)
-            odds_entry = {
-                "odds_one": odds_one,
-                "odds_two": odds_two,
-                "updated_at_one": out_one.get("updatedAt") or out_one.get("updated_at"),
-                "updated_at_two": out_two.get("updatedAt") or out_two.get("updated_at"),
-                "source_one": "rest_snapshot" if odds_one is not None else None,
-                "source_two": "rest_snapshot" if odds_two is not None else None,
-            }
+            odds_entry = _best_odds_entry_from_payloads(out_one, out_two)
+            odds_one = odds_entry.get("odds_one")
+            odds_two = odds_entry.get("odds_two")
             odds_map[market_hash] = odds_entry
             if odds_one is None and odds_two is None:
                 lookup_meta["best_odds_null_count"] += 1
@@ -2305,16 +2421,9 @@ async def _load_best_odds_map_async(
                 continue
             out_one = item.get("outcomeOne") if isinstance(item.get("outcomeOne"), dict) else {}
             out_two = item.get("outcomeTwo") if isinstance(item.get("outcomeTwo"), dict) else {}
-            odds_one = _moneyline_decimal_from_outcome_payload(out_one)
-            odds_two = _moneyline_decimal_from_outcome_payload(out_two)
-            odds_entry = {
-                "odds_one": odds_one,
-                "odds_two": odds_two,
-                "updated_at_one": out_one.get("updatedAt") or out_one.get("updated_at"),
-                "updated_at_two": out_two.get("updatedAt") or out_two.get("updated_at"),
-                "source_one": "rest_snapshot" if odds_one is not None else None,
-                "source_two": "rest_snapshot" if odds_two is not None else None,
-            }
+            odds_entry = _best_odds_entry_from_payloads(out_one, out_two)
+            odds_one = odds_entry.get("odds_one")
+            odds_two = odds_entry.get("odds_two")
             odds_map[market_hash] = odds_entry
             if odds_one is None and odds_two is None:
                 lookup_meta["best_odds_null_count"] += 1
@@ -2856,6 +2965,8 @@ async def fetch_events_async(
         outcome_two_last_updated = candidate.get("outcome_two_last_updated")
         outcome_one_quote_source = candidate.get("outcome_one_quote_source")
         outcome_two_quote_source = candidate.get("outcome_two_quote_source")
+        outcome_one_raw_percentage = candidate.get("outcome_one_raw_percentage_odds")
+        outcome_two_raw_percentage = candidate.get("outcome_two_raw_percentage_odds")
         market_hash = candidate.get("market_hash")
         if market_hash:
             mapped = odds_map.get(market_hash)
@@ -2868,6 +2979,10 @@ async def fetch_events_async(
                     odds_two = mapped_odds_two
                 outcome_one_last_updated = outcome_one_last_updated or mapped.get("updated_at_one")
                 outcome_two_last_updated = outcome_two_last_updated or mapped.get("updated_at_two")
+                if mapped.get("raw_percentage_one") not in (None, ""):
+                    outcome_one_raw_percentage = mapped.get("raw_percentage_one")
+                if mapped.get("raw_percentage_two") not in (None, ""):
+                    outcome_two_raw_percentage = mapped.get("raw_percentage_two")
                 if mapped.get("source_one") not in (None, ""):
                     outcome_one_quote_source = mapped.get("source_one")
                 if mapped.get("source_two") not in (None, ""):
@@ -2957,6 +3072,10 @@ async def fetch_events_async(
             outcomes[0]["stake"] = round(float(stake_one), 6)
         if stake_two is not None and stake_two > 0:
             outcomes[1]["stake"] = round(float(stake_two), 6)
+        if outcome_one_raw_percentage not in (None, ""):
+            outcomes[0]["raw_percentage_odds"] = outcome_one_raw_percentage
+        if outcome_two_raw_percentage not in (None, ""):
+            outcomes[1]["raw_percentage_odds"] = outcome_two_raw_percentage
         if outcome_one_last_updated not in (None, ""):
             outcomes[0]["last_updated"] = outcome_one_last_updated
         if outcome_two_last_updated not in (None, ""):

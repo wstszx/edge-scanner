@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import provider_verification as pv
 
@@ -215,6 +216,21 @@ class ProviderVerificationTests(unittest.TestCase):
         }
 
         self.assertFalse(pv.report_has_alerts(report))
+
+    def test_run_live_scan_passes_live_scan_mode(self) -> None:
+        with patch.object(pv, "run_scan", return_value={"success": True}) as mocked_run_scan:
+            result = pv.run_live_scan(
+                sport_key="basketball_nba",
+                provider_keys=["sx_bet", "purebet"],
+                regions=["us"],
+                stake_amount=100.0,
+                all_markets=False,
+            )
+
+        self.assertEqual(result, {"success": True})
+        self.assertEqual(mocked_run_scan.call_args.kwargs.get("scan_mode"), "live")
+        self.assertEqual(mocked_run_scan.call_args.kwargs.get("include_providers"), ["sx_bet"])
+        self.assertTrue(mocked_run_scan.call_args.kwargs.get("include_purebet"))
 
 
 if __name__ == "__main__":

@@ -143,9 +143,36 @@ class TestSxBetSegmentation(unittest.TestCase):
             )
         self.assertEqual(retries_used, 0)
         self.assertEqual(meta.get("best_odds_items"), 1)
-        self.assertEqual(odds_map["m1"]["odds_one"], 2.5)
-        self.assertEqual(odds_map["m1"]["odds_two"], 2.0)
+        self.assertAlmostEqual(odds_map["m1"]["odds_one"], 2.0)
+        self.assertAlmostEqual(odds_map["m1"]["odds_two"], 1.6666666666666667)
+        self.assertEqual(odds_map["m1"]["updated_at_one"], 1773475425732)
+        self.assertEqual(odds_map["m1"]["updated_at_two"], 1773475425731)
+        self.assertEqual(odds_map["m1"]["raw_percentage_one"], "50000000000000000000")
+        self.assertEqual(odds_map["m1"]["raw_percentage_two"], "40000000000000000000")
         mocked_request.assert_called_once()
+
+    def test_summary_best_odds_map_to_taker_view(self) -> None:
+        market = {
+            "type": 226,
+            "teamOneName": "Home Team",
+            "teamTwoName": "Away Team",
+            "outcomeOneName": "Home Team",
+            "outcomeTwoName": "Away Team",
+            "bestOddsOutcomeOne": "52125000000000000000",
+            "bestOddsOutcomeTwo": "46250000000000000000",
+            "marketHash": "mh-raw",
+        }
+        normalized = sx_bet._normalize_fixture_market(
+            market=market,
+            requested_markets={"h2h"},
+            home_team="Home Team",
+            away_team="Away Team",
+        )
+        self.assertIsNotNone(normalized)
+        self.assertAlmostEqual(normalized.get("odds_one"), 1.8604651162790697)
+        self.assertAlmostEqual(normalized.get("odds_two"), 2.0887728459530024)
+        self.assertEqual(normalized.get("outcome_one_raw_percentage_odds"), "46250000000000000000")
+        self.assertEqual(normalized.get("outcome_two_raw_percentage_odds"), "52125000000000000000")
 
     def test_numeric_type_h2h_alias_infers_market_key(self) -> None:
         market = {
@@ -193,14 +220,14 @@ class TestSxBetSegmentation(unittest.TestCase):
         self.assertEqual(len(fixture_markets), 1)
         self.assertEqual(meta.get("markets_rows_main_line_filtered"), 0)
 
-    def test_markets_active_rows_capture_live_state(self) -> None:
+    def test_markets_active_rows_capture_live_state_for_started_event(self) -> None:
         rows = [
             {
                 "sportId": 1,
                 "sportXeventId": "evt-live",
                 "teamOneName": "Home Team",
                 "teamTwoName": "Away Team",
-                "gameTime": 1770000000,
+                "gameTime": "2026-03-16T10:00:00Z",
                 "type": 226,
                 "marketHash": "mh-live",
                 "outcomeOneName": "Home Team",
@@ -218,6 +245,33 @@ class TestSxBetSegmentation(unittest.TestCase):
         live_state = fixtures[0].get("live_state") or {}
         self.assertTrue(live_state.get("is_live"))
         self.assertEqual(live_state.get("status"), "live")
+        self.assertEqual(live_state.get("provider_status"), "active")
+
+    def test_markets_active_future_rows_stay_scheduled_when_live_is_only_enabled(self) -> None:
+        rows = [
+            {
+                "sportId": 1,
+                "sportXeventId": "evt-future",
+                "teamOneName": "Home Team",
+                "teamTwoName": "Away Team",
+                "gameTime": "2026-03-16T23:00:00Z",
+                "type": 226,
+                "marketHash": "mh-future",
+                "outcomeOneName": "Home Team",
+                "outcomeTwoName": "Away Team",
+                "status": "ACTIVE",
+                "liveEnabled": True,
+            }
+        ]
+        fixtures, _ = sx_bet._build_fixtures_from_markets_active(
+            rows=rows,
+            sport_id=1,
+            only_main_line=False,
+        )
+        self.assertEqual(len(fixtures), 1)
+        live_state = fixtures[0].get("live_state") or {}
+        self.assertFalse(live_state.get("is_live"))
+        self.assertEqual(live_state.get("status"), "scheduled")
         self.assertEqual(live_state.get("provider_status"), "active")
 
     def test_auto_fixture_loader_falls_back_to_summary_when_markets_active_fails(self) -> None:

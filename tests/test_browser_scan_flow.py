@@ -63,6 +63,7 @@ def _sample_arbitrage_opportunity() -> dict:
                 "book_event_url": "https://sx.bet/markets/evt-1",
                 "quote_source": "ws",
                 "quote_updated_at": "2026-03-15T09:14:58Z",
+                "raw_percentage_odds": "50875000000000000000",
             },
             {
                 "outcome": "Under",
@@ -212,6 +213,7 @@ class BrowserScanFlowTests(unittest.TestCase):
                     desktop_text = page.locator("#arb-desktop-list").inner_text()
                     self.assertIn("WS", desktop_text)
                     self.assertTrue("Snapshot" in desktop_text or "快照" in desktop_text)
+                    self.assertTrue("Maker 50.88%" in desktop_text or "挂单方 50.88%" in desktop_text)
                     self.assertIn("1", page.locator("#table-count").inner_text())
                     self.assertEqual(page.locator("#provider-data-list .provider-card").count(), 1)
                     self.assertIn("SX Bet", page.locator("#provider-data-list").inner_text())

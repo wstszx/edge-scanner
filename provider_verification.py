@@ -346,6 +346,7 @@ def run_live_scan(
     return run_scan(
         api_key="",
         sports=[sport_key],
+        scan_mode="live",
         all_sports=False,
         all_markets=all_markets,
         stake_amount=stake_amount,
