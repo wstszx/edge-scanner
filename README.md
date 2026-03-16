@@ -194,9 +194,13 @@ SX_BET_LEAGUE_MAP={"basketball_nba":[1],"basketball_ncaab":[2]}
 BetDEX provider settings (API mode):
 ```
 BETDEX_SOURCE=api
-BETDEX_SESSION_URL=https://www.betdex.com/api/session
 BETDEX_MONACO_API_BASE=https://production.api.monacoprotocol.xyz
 BETDEX_PUBLIC_BASE=https://www.betdex.com
+BETDEX_APP_ID=
+BETDEX_API_KEY=
+BETDEX_SESSION_EXPIRY_SKEW_SECONDS=30
+# Legacy public-site fallback only. This endpoint may return 429 from Vercel Security Checkpoint.
+BETDEX_SESSION_URL=https://www.betdex.com/api/session
 BETDEX_TIMEOUT_SECONDS=20
 BETDEX_RETRIES=2
 BETDEX_RETRY_BACKOFF=0.5
@@ -209,6 +213,8 @@ BETDEX_PRICE_BATCH_SIZE=120
 BETDEX_MARKET_STATUSES=Open
 BETDEX_BACK_PRICE_SIDE=against
 ```
+If `BETDEX_APP_ID` and `BETDEX_API_KEY` are set, the provider uses the official Monaco `POST /sessions` flow before calling `/events`, `/markets`, and `/market-prices`. If they are unset, the code falls back to the public BetDEX website session endpoint, which is best-effort and may be blocked by Vercel bot protection.
+
 Optional file fallback for local fixtures:
 ```
 BETDEX_SOURCE=file

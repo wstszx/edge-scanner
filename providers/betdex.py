@@ -23,10 +23,13 @@ BETDEX_SAMPLE_PATH = os.getenv("BETDEX_SAMPLE_PATH", str(Path("data") / "betdex_
 BETDEX_SESSION_URL = os.getenv("BETDEX_SESSION_URL", "https://www.betdex.com/api/session").strip()
 BETDEX_MONACO_API_BASE = os.getenv("BETDEX_MONACO_API_BASE", "https://production.api.monacoprotocol.xyz").strip()
 BETDEX_PUBLIC_BASE = os.getenv("BETDEX_PUBLIC_BASE", "https://www.betdex.com").strip()
+BETDEX_APP_ID = os.getenv("BETDEX_APP_ID", "").strip()
+BETDEX_API_KEY = os.getenv("BETDEX_API_KEY", "").strip()
 BETDEX_TIMEOUT_RAW = os.getenv("BETDEX_TIMEOUT_SECONDS", "20").strip()
 BETDEX_RETRIES_RAW = os.getenv("BETDEX_RETRIES", "2").strip()
 BETDEX_RETRY_BACKOFF_RAW = os.getenv("BETDEX_RETRY_BACKOFF", "0.5").strip()
 BETDEX_SESSION_CACHE_TTL_RAW = os.getenv("BETDEX_SESSION_CACHE_TTL_SECONDS", "900").strip()
+BETDEX_SESSION_EXPIRY_SKEW_RAW = os.getenv("BETDEX_SESSION_EXPIRY_SKEW_SECONDS", "30").strip()
 BETDEX_EVENTS_PAGE_SIZE_RAW = os.getenv("BETDEX_EVENTS_PAGE_SIZE", "250").strip()
 BETDEX_EVENTS_MAX_PAGES_RAW = os.getenv("BETDEX_EVENTS_MAX_PAGES", "8").strip()
 BETDEX_MARKETS_PAGE_SIZE_RAW = os.getenv("BETDEX_MARKETS_PAGE_SIZE", "500").strip()
@@ -113,6 +116,10 @@ def _session_cache_ttl_seconds() -> float:
     return _float_or_default(BETDEX_SESSION_CACHE_TTL_RAW, 900.0, min_value=0.0)
 
 
+def _session_expiry_skew_seconds() -> float:
+    return _float_or_default(BETDEX_SESSION_EXPIRY_SKEW_RAW, 30.0, min_value=0.0)
+
+
 def _safe_float(value) -> Optional[float]:
     try:
         return float(value)
@@ -137,6 +144,27 @@ def _session_url() -> str:
     if not re.match(r"^https?://", value, flags=re.IGNORECASE):
         value = f"https://{value}"
     return value
+
+
+def _official_session_url() -> str:
+    return f"{_api_base()}/sessions"
+
+
+def _configured_session_auth_mode() -> str:
+    has_app_id = bool(_normalize_text(BETDEX_APP_ID))
+    has_api_key = bool(_normalize_text(BETDEX_API_KEY))
+    if has_app_id and has_api_key:
+        return "official"
+    if has_app_id or has_api_key:
+        return "misconfigured"
+    return "public"
+
+
+def _session_auth_mode() -> str:
+    mode = _configured_session_auth_mode()
+    if mode == "misconfigured":
+        raise ProviderError("BetDEX official auth requires both BETDEX_APP_ID and BETDEX_API_KEY")
+    return mode
 
 
 def _api_base() -> str:
@@ -169,16 +197,20 @@ def _request_json(
     retries: int,
     backoff_seconds: float,
     timeout: int,
+    method: str = "GET",
+    json_payload: object = None,
 ) -> Tuple[object, int]:
     retriable = {429, 500, 502, 503, 504}
     attempts = max(0, retries) + 1
     last_error: Optional[ProviderError] = None
     for attempt in range(attempts):
         try:
-            response = requests.get(
+            response = requests.request(
+                method,
                 url,
                 params=params,
                 headers=_headers(access_token),
+                json=json_payload,
                 timeout=timeout,
             )
         except requests.RequestException as exc:
@@ -216,13 +248,16 @@ async def _request_json_async(
     retries: int,
     backoff_seconds: float,
     timeout: int,
+    method: str = "GET",
+    json_payload: object = None,
 ) -> Tuple[object, int]:
     return await request_json(
         client,
-        "GET",
+        method,
         url,
         params=params,
         headers=_headers(access_token),
+        json_payload=json_payload,
         timeout=float(timeout),
         retries=retries,
         backoff_seconds=backoff_seconds,
@@ -406,16 +441,58 @@ def _betdex_live_state_payload(event: object, markets: Optional[Sequence[dict]] 
     return payload or None
 
 
-def _extract_access_token(payload: object) -> str:
+def _session_entry(payload: object) -> dict:
     if not isinstance(payload, dict):
         raise ProviderError("BetDEX session endpoint returned an invalid payload")
     sessions = payload.get("sessions")
     if not isinstance(sessions, list) or not sessions or not isinstance(sessions[0], dict):
         raise ProviderError("BetDEX session endpoint returned no sessions")
-    token = _normalize_text(sessions[0].get("accessToken"))
+    return sessions[0]
+
+
+def _extract_access_token(payload: object) -> str:
+    session = _session_entry(payload)
+    token = _normalize_text(session.get("accessToken"))
     if not token:
         raise ProviderError("BetDEX session endpoint returned an empty access token")
     return token
+
+
+def _parse_iso_datetime(value: object) -> Optional[float]:
+    text = _normalize_text(value)
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.timestamp()
+
+
+def _extract_access_token_expires_at(payload: object) -> Optional[float]:
+    session = _session_entry(payload)
+    expires_at = _parse_iso_datetime(session.get("accessExpiresAt"))
+    if expires_at is None:
+        return None
+    return max(0.0, expires_at - _session_expiry_skew_seconds())
+
+
+def _session_error(exc: ProviderError) -> ProviderError:
+    if _configured_session_auth_mode() != "public":
+        return exc
+    text = _normalize_text(exc).lower()
+    if exc.status_code == 429 or "parse betdex response as json" in text or "invalid payload" in text:
+        return ProviderError(
+            "BetDEX public website session is blocked by Vercel Security Checkpoint. "
+            "Configure BETDEX_APP_ID and BETDEX_API_KEY to use the official Monaco POST /sessions API, "
+            "or disable BetDEX.",
+            status_code=exc.status_code,
+        )
+    return exc
 
 
 def _cached_access_token() -> str:
@@ -427,9 +504,10 @@ def _cached_access_token() -> str:
     return ""
 
 
-def _store_access_token(token: str) -> None:
-    ttl = _session_cache_ttl_seconds()
-    expires_at = time.time() + ttl if ttl > 0 else time.time()
+def _store_access_token(token: str, expires_at: Optional[float] = None) -> None:
+    if expires_at is None:
+        ttl = _session_cache_ttl_seconds()
+        expires_at = time.time() + ttl if ttl > 0 else time.time()
     with ACCESS_TOKEN_CACHE_LOCK:
         ACCESS_TOKEN_CACHE["token"] = token
         ACCESS_TOKEN_CACHE["expires_at"] = expires_at
@@ -444,16 +522,35 @@ def _fetch_access_token(retries: int, backoff_seconds: float, timeout: int) -> T
     cached = _cached_access_token()
     if cached:
         return cached, 0, "hit"
-    payload, retries_used = _request_json(
-        _session_url(),
-        params=None,
-        access_token=None,
-        retries=retries,
-        backoff_seconds=backoff_seconds,
-        timeout=timeout,
-    )
+    mode = _session_auth_mode()
+    try:
+        if mode == "official":
+            payload, retries_used = _request_json(
+                _official_session_url(),
+                params=None,
+                access_token=None,
+                retries=retries,
+                backoff_seconds=backoff_seconds,
+                timeout=timeout,
+                method="POST",
+                json_payload={
+                    "appId": _normalize_text(BETDEX_APP_ID),
+                    "apiKey": _normalize_text(BETDEX_API_KEY),
+                },
+            )
+        else:
+            payload, retries_used = _request_json(
+                _session_url(),
+                params=None,
+                access_token=None,
+                retries=retries,
+                backoff_seconds=backoff_seconds,
+                timeout=timeout,
+            )
+    except ProviderError as exc:
+        raise _session_error(exc) from exc
     token = _extract_access_token(payload)
-    _store_access_token(token)
+    _store_access_token(token, expires_at=_extract_access_token_expires_at(payload))
     return token, retries_used, "miss"
 
 
@@ -470,17 +567,37 @@ async def _fetch_access_token_async(
         cached = _cached_access_token()
         if cached:
             return cached, 0, "hit"
-        payload, retries_used = await _request_json_async(
-            client,
-            _session_url(),
-            params=None,
-            access_token=None,
-            retries=retries,
-            backoff_seconds=backoff_seconds,
-            timeout=timeout,
-        )
+        mode = _session_auth_mode()
+        try:
+            if mode == "official":
+                payload, retries_used = await _request_json_async(
+                    client,
+                    _official_session_url(),
+                    params=None,
+                    access_token=None,
+                    retries=retries,
+                    backoff_seconds=backoff_seconds,
+                    timeout=timeout,
+                    method="POST",
+                    json_payload={
+                        "appId": _normalize_text(BETDEX_APP_ID),
+                        "apiKey": _normalize_text(BETDEX_API_KEY),
+                    },
+                )
+            else:
+                payload, retries_used = await _request_json_async(
+                    client,
+                    _session_url(),
+                    params=None,
+                    access_token=None,
+                    retries=retries,
+                    backoff_seconds=backoff_seconds,
+                    timeout=timeout,
+                )
+        except ProviderError as exc:
+            raise _session_error(exc) from exc
         token = _extract_access_token(payload)
-        _store_access_token(token)
+        _store_access_token(token, expires_at=_extract_access_token_expires_at(payload))
         return token, retries_used, "miss"
 
 
@@ -1201,6 +1318,7 @@ async def fetch_events_async(
         "provider": PROVIDER_KEY,
         "source": BETDEX_SOURCE or "api",
         "back_price_side": _back_price_side(),
+        "session_auth_mode": _configured_session_auth_mode(),
         "session_cache": "miss",
         "skipped_unsupported_sport": False,
         "events_payload_count": 0,
@@ -1683,6 +1801,7 @@ fetch_events.last_stats = {
     "provider": PROVIDER_KEY,
     "source": BETDEX_SOURCE or "api",
     "back_price_side": _back_price_side(),
+    "session_auth_mode": _configured_session_auth_mode(),
     "session_cache": "miss",
     "skipped_unsupported_sport": False,
     "events_payload_count": 0,

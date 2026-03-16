@@ -21,8 +21,10 @@ PUREBET_UA="Mozilla/5.0"
 PUREBET_EVENT_ID="REPLACE_EVENT_ID"
 
 # BetDEX
-BETDEX_SESSION_URL="https://www.betdex.com/api/session"
 BETDEX_API_BASE="https://production.api.monacoprotocol.xyz"
+BETDEX_APP_ID="REPLACE_APP_ID"
+BETDEX_API_KEY="REPLACE_API_KEY"
+BETDEX_SESSION_URL="https://www.betdex.com/api/session"  # legacy website fallback, may be bot-protected
 BETDEX_UA="Mozilla/5.0"
 BETDEX_SUBCATEGORY="FOOTBALL"
 BETDEX_EVENT_ID_1="REPLACE_EVENT_ID_1"
@@ -95,24 +97,39 @@ curl -sS -G "$PUREBET_API_BASE/markets" \
 
 ## 2) BetDEX (`providers/betdex.py`)
 
-### 2.1 Session token `/api/session`
+### 2.1 Official session token `POST /sessions` (recommended)
 
 ```bash
-curl -sS "$BETDEX_SESSION_URL" \
+curl -sS "$BETDEX_API_BASE/sessions" \
   -H "Accept: application/json" \
-  -H "User-Agent: $BETDEX_UA"
+  -H "Content-Type: application/json" \
+  -H "User-Agent: $BETDEX_UA" \
+  --data "{\"appId\":\"$BETDEX_APP_ID\",\"apiKey\":\"$BETDEX_API_KEY\"}"
 ```
 
 Extract bearer token (requires `jq`):
 
 ```bash
-BETDEX_TOKEN="$(curl -sS "$BETDEX_SESSION_URL" \
+BETDEX_TOKEN="$(curl -sS "$BETDEX_API_BASE/sessions" \
   -H "Accept: application/json" \
-  -H "User-Agent: $BETDEX_UA" | jq -r '.sessions[0].accessToken')"
+  -H "Content-Type: application/json" \
+  -H "User-Agent: $BETDEX_UA" \
+  --data "{\"appId\":\"$BETDEX_APP_ID\",\"apiKey\":\"$BETDEX_API_KEY\"}" \
+  | jq -r '.sessions[0].accessToken')"
 echo "$BETDEX_TOKEN"
 ```
 
-### 2.2 Events `/events`
+### 2.2 Legacy public website session `GET /api/session` (best-effort)
+
+```bash
+curl -i -sS "$BETDEX_SESSION_URL" \
+  -H "Accept: application/json" \
+  -H "User-Agent: $BETDEX_UA"
+```
+
+As of `2026-03-16`, this endpoint may return `429 Too Many Requests` with `x-vercel-mitigated: challenge`, which indicates front-end bot protection rather than a documented Monaco API limit.
+
+### 2.3 Events `/events`
 
 ```bash
 curl -sS -G "$BETDEX_API_BASE/events" \
@@ -125,7 +142,7 @@ curl -sS -G "$BETDEX_API_BASE/events" \
   --data-urlencode "subcategoryIds=$BETDEX_SUBCATEGORY"
 ```
 
-### 2.3 Markets `/markets` (repeated `eventIds` and `statuses`)
+### 2.4 Markets `/markets` (repeated `eventIds` and `statuses`)
 
 ```bash
 curl -sS -G "$BETDEX_API_BASE/markets" \
@@ -140,7 +157,7 @@ curl -sS -G "$BETDEX_API_BASE/markets" \
   --data-urlencode "statuses=Open"
 ```
 
-### 2.4 Market prices `/market-prices` (repeated `marketIds`)
+### 2.5 Market prices `/market-prices` (repeated `marketIds`)
 
 ```bash
 curl -sS -G "$BETDEX_API_BASE/market-prices" \
