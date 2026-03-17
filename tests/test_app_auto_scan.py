@@ -115,6 +115,30 @@ class ServerAutoScanAppTests(unittest.TestCase):
         self.assertFalse(body.get("success"))
         self.assertEqual(body.get("error"), "Auto scan config payload must be a JSON object")
 
+    def test_server_auto_scan_config_rejects_unsupported_bookmakers_only(self) -> None:
+        payload = {
+            "enabled": True,
+            "intervalMinutes": 10,
+            "payload": {
+                "scanMode": "prematch",
+                "sports": ["icehockey_nhl"],
+                "bookmakers": ["DraftKings", "FanDuel"],
+                "includeProviders": [],
+            },
+        }
+
+        with patch.object(app_module, "_persist_server_auto_scan_config") as mocked_persist:
+            response = self.client.post("/server-auto-scan-config", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+        body = response.get_json() or {}
+        self.assertFalse(body.get("success"))
+        self.assertEqual(
+            body.get("error"),
+            "No supported arbitrage platforms were selected",
+        )
+        mocked_persist.assert_not_called()
+
     def test_background_server_auto_scan_uses_synced_frontend_platform_selection(self) -> None:
         synced_payload = {
             "enabled": True,

@@ -390,7 +390,7 @@ BOOKMAKER_URLS = {
     "purebet": "https://purebet.io/",
 }
 
-BOOKMAKER_KEYS: list[str] = []
+ALL_BOOKMAKER_KEYS: list[str] = []
 for key in [
     "pinnacle",
     "polymarket",
@@ -399,28 +399,110 @@ for key in [
     "bookmaker_xyz",
     "sx_bet",
 ]:
-    if key not in BOOKMAKER_KEYS:
-        BOOKMAKER_KEYS.append(key)
+    if key not in ALL_BOOKMAKER_KEYS:
+        ALL_BOOKMAKER_KEYS.append(key)
 for key in EXCHANGE_BOOKMAKERS:
-    if key not in BOOKMAKER_KEYS:
-        BOOKMAKER_KEYS.append(key)
+    if key not in ALL_BOOKMAKER_KEYS:
+        ALL_BOOKMAKER_KEYS.append(key)
 for book in SHARP_BOOKS:
     key = book.get("key")
-    if key and key not in BOOKMAKER_KEYS:
-        BOOKMAKER_KEYS.append(key)
+    if key and key not in ALL_BOOKMAKER_KEYS:
+        ALL_BOOKMAKER_KEYS.append(key)
 for key in SOFT_BOOK_KEYS:
-    if key not in BOOKMAKER_KEYS:
-        BOOKMAKER_KEYS.append(key)
+    if key not in ALL_BOOKMAKER_KEYS:
+        ALL_BOOKMAKER_KEYS.append(key)
+
+_DEFAULT_ALLOWED_ARBITRAGE_BOOKMAKER_KEYS = [
+    "pinnacle",
+    "polymarket",
+    "purebet",
+    "betdex",
+    "bookmaker_xyz",
+    "sx_bet",
+    "betfair_ex_eu",
+    "betfair_ex_uk",
+    "betfair_ex_au",
+    "sportsbet_ex",
+    "matchbook",
+]
+
+_ENV_ALLOWED_ARBITRAGE_BOOKMAKERS = (
+    _env_list("ARBITRAGE_ALLOWED_BOOKMAKER_KEYS")
+    or _env_list("SUPPORTED_ARBITRAGE_BOOKMAKER_KEYS")
+)
+
+if _ENV_ALLOWED_ARBITRAGE_BOOKMAKERS:
+    BOOKMAKER_KEYS = [
+        key for key in _ENV_ALLOWED_ARBITRAGE_BOOKMAKERS if key in ALL_BOOKMAKER_KEYS
+    ]
+else:
+    BOOKMAKER_KEYS = [
+        key for key in _DEFAULT_ALLOWED_ARBITRAGE_BOOKMAKER_KEYS
+        if key in ALL_BOOKMAKER_KEYS
+    ]
+
+if not BOOKMAKER_KEYS:
+    BOOKMAKER_KEYS = [
+        key for key in _DEFAULT_ALLOWED_ARBITRAGE_BOOKMAKER_KEYS
+        if key in ALL_BOOKMAKER_KEYS
+    ]
+
+ALLOWED_ARBITRAGE_BOOKMAKER_KEYS = BOOKMAKER_KEYS.copy()
 
 DEFAULT_BOOKMAKER_KEYS: list[str] = []
 _ENV_DEFAULT_BOOKMAKERS = _env_list("DEFAULT_BOOKMAKER_KEYS")
 if _ENV_DEFAULT_BOOKMAKERS:
-    DEFAULT_BOOKMAKER_KEYS = [key for key in _ENV_DEFAULT_BOOKMAKERS if key in BOOKMAKER_KEYS]
+    DEFAULT_BOOKMAKER_KEYS = [
+        key for key in _ENV_DEFAULT_BOOKMAKERS if key in BOOKMAKER_KEYS
+    ] or list(BOOKMAKER_KEYS)
+else:
+    DEFAULT_BOOKMAKER_KEYS = list(BOOKMAKER_KEYS)
 
 BOOKMAKER_OPTIONS = [
     {"key": key, "label": BOOKMAKER_LABELS.get(key, key)}
     for key in BOOKMAKER_KEYS
 ]
+
+_BOOKMAKER_KEY_LOOKUP = {key.lower(): key for key in BOOKMAKER_KEYS}
+_BOOKMAKER_LABEL_LOOKUP_RAW: dict[str, str] = {}
+_BOOKMAKER_LABEL_CONFLICTS: set[str] = set()
+for key in BOOKMAKER_KEYS:
+    label = str(BOOKMAKER_LABELS.get(key, key)).strip().lower()
+    if not label:
+        continue
+    existing = _BOOKMAKER_LABEL_LOOKUP_RAW.get(label)
+    if existing and existing != key:
+        _BOOKMAKER_LABEL_CONFLICTS.add(label)
+        continue
+    _BOOKMAKER_LABEL_LOOKUP_RAW[label] = key
+_BOOKMAKER_LABEL_LOOKUP = {
+    label: key
+    for label, key in _BOOKMAKER_LABEL_LOOKUP_RAW.items()
+    if label not in _BOOKMAKER_LABEL_CONFLICTS
+}
+
+
+def canonical_bookmaker_key(value: object) -> str:
+    if value is None:
+        return ""
+    token = str(value).strip().lower()
+    if not token:
+        return ""
+    return _BOOKMAKER_KEY_LOOKUP.get(token) or _BOOKMAKER_LABEL_LOOKUP.get(token) or ""
+
+
+def normalize_supported_bookmakers(values: object) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    normalized: list[str] = []
+    seen = set()
+    for value in values:
+        key = canonical_bookmaker_key(value)
+        if not key or key in seen:
+            continue
+        normalized.append(key)
+        seen.add(key)
+    return normalized
 
 EDGE_BANDS = [
     (1.0, 3.0, "1-3%"),

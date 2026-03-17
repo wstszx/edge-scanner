@@ -152,8 +152,8 @@
                     <div class="panel-head">
                       <div class="panel-title">
                         <span class="field-label" data-i18n="bookmakers_label">Bookmakers</span>
-                        <p class="helper" data-i18n="bookmakers_helper">Optional: limit results to the selected
-                          bookmakers.</p>
+                        <p class="helper" data-i18n="bookmakers_helper">Only arbitrage-friendly platforms are listed
+                          here. Optionally limit results to a smaller subset.</p>
                         <p class="helper" id="bookmakers-mode-note" data-i18n="bookmakers_mode_note_prematch">Prematch mode uses your standard bookmaker filters.</p>
                       </div>
                       <div class="panel-actions">
@@ -191,9 +191,9 @@
                       <p class="helper" data-i18n="bookmaker_links_helper">Customize base URLs used when opening books.
                       </p>
                       <label class="checkbox all-toggle">
-                        <input type="checkbox" id="all-bookmakers" {% if not default_bookmaker_keys %}checked{% endif
+                        <input type="checkbox" id="all-bookmakers" {% if default_all_bookmakers %}checked{% endif
                           %} />
-                        <span data-i18n="all_bookmakers_label">Use all available bookmakers</span>
+                        <span data-i18n="all_bookmakers_label">Use all supported arbitrage platforms</span>
                       </label>
                     </div>
                   </section>
@@ -1436,8 +1436,8 @@
         all_markets_helper: 'Attempts to include extra market types and player props for arbitrage/+EV.',
         sports_helper: 'Each selected sport consumes one API request.',
         bookmakers_label: 'Bookmakers',
-        all_bookmakers_label: 'Use all available bookmakers',
-        bookmakers_helper: 'Optional: limit results to the selected bookmakers.',
+        all_bookmakers_label: 'Use all supported arbitrage platforms',
+        bookmakers_helper: 'Only arbitrage-friendly platforms are listed here. Optionally limit results to a smaller subset.',
         bookmakers_mode_note_prematch: 'Prematch mode uses your standard bookmaker filters.',
         bookmakers_mode_note_live: 'Live mode defaults to SX Bet, BetDEX, and Polymarket. bookmaker.xyz stays optional.',
         provider_live_default: 'Live default',
@@ -1862,8 +1862,8 @@
         all_markets_helper: '尝试纳入更多盘口类型和球员道具盘用于套利/+EV。',
         sports_helper: '每个已选项目会消耗一次 API 请求。',
         bookmakers_label: '博彩平台',
-        all_bookmakers_label: '使用所有可用平台',
-        bookmakers_helper: '可选：仅扫描选定的平台。',
+        all_bookmakers_label: '使用所有支持套利的平台',
+        bookmakers_helper: '这里只保留支持套利的平台，你也可以进一步缩小扫描范围。',
         bookmaker_links_label: '平台链接',
         bookmaker_links_helper: '自定义自动打开网址。支持 {event_id}、{home_team}、{away_team} 占位符，留空则不打开该平台。',
         auto_scan_label: '自动扫描',

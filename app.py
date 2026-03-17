@@ -57,6 +57,7 @@ from config import (  # noqa: E402
     SHARP_BOOKS,
     SHOW_POSITIVE_EV_ONLY,
     SPORT_OPTIONS,
+    normalize_supported_bookmakers,
 )
 from providers import PROVIDER_FETCHERS, resolve_provider_key  # noqa: E402
 from scanner import (  # noqa: E402
@@ -540,10 +541,9 @@ def _normalize_server_auto_scan_config(raw: object) -> Optional[dict]:
         regions = list(DEFAULT_REGION_KEYS)
 
     bookmakers_raw = scan_payload.get("bookmakers")
-    if isinstance(bookmakers_raw, list):
-        bookmakers = [str(item) for item in bookmakers_raw if isinstance(item, str) and item.strip()]
-    else:
-        bookmakers = []
+    bookmakers = normalize_supported_bookmakers(bookmakers_raw)
+    if bookmakers_raw is None:
+        bookmakers = list(DEFAULT_BOOKMAKER_KEYS)
 
     include_providers_raw = scan_payload.get("includeProviders")
     if isinstance(include_providers_raw, list):
@@ -554,6 +554,18 @@ def _normalize_server_auto_scan_config(raw: object) -> Optional[dict]:
         ]
     else:
         include_providers = []
+    if not include_providers and bookmakers:
+        derived = []
+        seen = set()
+        for book in bookmakers:
+            provider_key = resolve_provider_key(book)
+            if not provider_key or provider_key in seen:
+                continue
+            derived.append(provider_key)
+            seen.add(provider_key)
+        include_providers = derived
+    if not bookmakers and not include_providers:
+        bookmakers = list(DEFAULT_BOOKMAKER_KEYS)
     scan_mode = _normalize_scan_mode(scan_payload.get("scanMode"))
 
     try:
@@ -786,14 +798,18 @@ def _execute_scan_payload(
             regions_value = [str(region) for region in regions if isinstance(region, str)]
         else:
             regions_value = None
+        raw_bookmakers = []
         if isinstance(bookmakers, list):
-            bookmakers_value = [
-                str(book)
+            raw_bookmakers = [
+                str(book).strip()
                 for book in bookmakers
-                if isinstance(book, str) and book.strip()
+                if isinstance(book, str) and str(book).strip()
             ]
+            bookmakers_value = normalize_supported_bookmakers(bookmakers)
+        elif "bookmakers" in payload:
+            bookmakers_value = []
         else:
-            bookmakers_value = None
+            bookmakers_value = list(DEFAULT_BOOKMAKER_KEYS)
         if isinstance(include_providers_raw, list):
             include_providers_value = [
                 str(provider)
@@ -817,6 +833,14 @@ def _execute_scan_payload(
                     derived.append(provider_key)
                     seen.add(provider_key)
             include_providers_value = derived
+        if raw_bookmakers and not bookmakers_value and not include_providers_value:
+            return {
+                "success": False,
+                "error": "No supported arbitrage platforms were selected",
+                "error_code": 400,
+            }
+        if not bookmakers_value and not include_providers_value:
+            bookmakers_value = list(DEFAULT_BOOKMAKER_KEYS)
         if ENV_PROVIDER_ONLY_MODE:
             api_keys = []
             provider_bookmakers = []
@@ -1120,6 +1144,7 @@ def fx_rates() -> tuple:
 @app.route("/")
 def index() -> str:
     _start_background_provider_services(wait_timeout=0.0)
+    bookmaker_option_keys = {book["key"] for book in BOOKMAKER_OPTIONS}
     return render_template(
         "index.html",
         sport_options=SPORT_OPTIONS,
@@ -1127,6 +1152,10 @@ def index() -> str:
         region_options=REGION_OPTIONS,
         bookmaker_options=BOOKMAKER_OPTIONS,
         default_bookmaker_keys=DEFAULT_BOOKMAKER_KEYS,
+        default_all_bookmakers=(
+            bool(bookmaker_option_keys)
+            and set(DEFAULT_BOOKMAKER_KEYS) >= bookmaker_option_keys
+        ),
         default_commission_percent=int(DEFAULT_COMMISSION * 100),
         has_env_key=bool(ENV_API_KEYS),
         sharp_books=SHARP_BOOKS,
@@ -1236,6 +1265,36 @@ def server_auto_scan_config() -> tuple:
             ),
             400,
         )
+    scan_payload = payload.get("payload") if isinstance(payload, dict) and isinstance(payload.get("payload"), dict) else payload
+    raw_bookmakers = scan_payload.get("bookmakers") if isinstance(scan_payload, dict) else None
+    if isinstance(raw_bookmakers, list):
+        requested_bookmakers = [
+            str(book).strip()
+            for book in raw_bookmakers
+            if isinstance(book, str) and str(book).strip()
+        ]
+        raw_include_providers = scan_payload.get("includeProviders") if isinstance(scan_payload, dict) else None
+        normalized_include_providers = []
+        if isinstance(raw_include_providers, list):
+            for provider in raw_include_providers:
+                provider_key = resolve_provider_key(provider)
+                if provider_key and provider_key not in normalized_include_providers:
+                    normalized_include_providers.append(provider_key)
+        if (
+            requested_bookmakers
+            and not normalize_supported_bookmakers(raw_bookmakers)
+            and not normalized_include_providers
+        ):
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "No supported arbitrage platforms were selected",
+                        "error_code": 400,
+                    }
+                ),
+                400,
+            )
     _set_server_auto_scan_config(normalized, persist=True)
     config, _ = _get_server_auto_scan_config()
     return jsonify({"success": True, "config": config}), 200

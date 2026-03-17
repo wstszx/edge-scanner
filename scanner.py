@@ -62,6 +62,7 @@ from config import (
     SOFT_BOOK_KEYS,
     SPORT_DISPLAY_NAMES,
     markets_for_sport,
+    normalize_supported_bookmakers,
 )
 from providers import PROVIDER_FETCHERS, PROVIDER_TITLES, resolve_provider_key
 
@@ -1798,19 +1799,7 @@ def _normalize_regions(regions: Optional[Sequence[str]]) -> List[str]:
 
 
 def _normalize_bookmakers(bookmakers: Optional[Sequence[str]]) -> List[str]:
-    if not bookmakers:
-        return []
-    normalized = []
-    seen = set()
-    for book in bookmakers:
-        if not isinstance(book, str):
-            continue
-        key = book.strip()
-        if not key or key in seen:
-            continue
-        normalized.append(key)
-        seen.add(key)
-    return normalized
+    return normalize_supported_bookmakers(list(bookmakers) if bookmakers else [])
 
 
 def _normalize_api_keys(api_key: Optional[Sequence[str] | str]) -> List[str]:

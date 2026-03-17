@@ -16,6 +16,12 @@ class ScannerRegressionTests(unittest.TestCase):
         with scanner._REQUEST_TRACE_LOCK:
             scanner._REQUEST_TRACE_ACTIVE.clear()
 
+    def test_normalize_bookmakers_filters_non_supported_soft_books(self) -> None:
+        self.assertEqual(
+            scanner._normalize_bookmakers(["DraftKings", "pinnacle", "SX Bet", "betdex"]),
+            ["pinnacle", "sx_bet", "betdex"],
+        )
+
     def test_kelly_stake_guard_paths_return_triplet(self) -> None:
         guard_cases = [
             (0.5, 2.0, 0.0, 0.25),

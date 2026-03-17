@@ -124,6 +124,33 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         mocked_start.assert_called_once_with(wait_timeout=0.0)
 
+    def test_index_hides_soft_bookmakers_from_supported_platforms_list(self) -> None:
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('value="sx_bet"', html)
+        self.assertIn('value="pinnacle"', html)
+        self.assertNotIn('value="draftkings"', html)
+        self.assertNotIn('value="fanduel"', html)
+
+    def test_scan_rejects_unsupported_bookmakers_only(self) -> None:
+        with patch.object(app_module, "run_scan") as mocked_run_scan:
+            response = self.client.post(
+                "/scan",
+                json={
+                    "bookmakers": ["DraftKings", "FanDuel"],
+                    "includeProviders": [],
+                },
+            )
+        self.assertEqual(response.status_code, 400)
+        payload = response.get_json() or {}
+        self.assertFalse(payload.get("success"))
+        self.assertEqual(
+            payload.get("error"),
+            "No supported arbitrage platforms were selected",
+        )
+        mocked_run_scan.assert_not_called()
+
     def test_provider_runtime_returns_status_payload(self) -> None:
         runtime_payload = {
             "enabled": True,
