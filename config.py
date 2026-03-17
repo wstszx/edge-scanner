@@ -295,6 +295,17 @@ SHARP_BOOKS = [
     {"key": "matchbook", "name": "Matchbook", "region": "eu", "type": "exchange"},
 ]
 
+BOOKMAKER_REGION_KEYS = {
+    "betfair_ex_uk": "uk",
+    "betfair_ex_au": "au",
+    "sportsbet_ex": "au",
+}
+for _book in SHARP_BOOKS:
+    _key = _book.get("key")
+    _region = _book.get("region")
+    if _key and _region in REGION_CONFIG and _key not in BOOKMAKER_REGION_KEYS:
+        BOOKMAKER_REGION_KEYS[_key] = _region
+
 DEFAULT_SHARP_BOOK = _env_text("DEFAULT_SHARP_BOOK") or "pinnacle"
 DEFAULT_BANKROLL = _env_float("DEFAULT_BANKROLL", 1000.0)
 MIN_EDGE_PERCENT = _env_float("MIN_EDGE_PERCENT", 1.0)
@@ -503,6 +514,32 @@ def normalize_supported_bookmakers(values: object) -> list[str]:
         normalized.append(key)
         seen.add(key)
     return normalized
+
+
+def derive_required_regions(
+    bookmakers: object,
+    *,
+    sharp_book: object = DEFAULT_SHARP_BOOK,
+) -> list[str]:
+    regions: list[str] = []
+    seen = set()
+    for value in bookmakers if isinstance(bookmakers, list) else []:
+        key = canonical_bookmaker_key(value)
+        region = BOOKMAKER_REGION_KEYS.get(key)
+        if not region or region in seen or region not in REGION_CONFIG:
+            continue
+        regions.append(region)
+        seen.add(region)
+
+    sharp_key = canonical_bookmaker_key(sharp_book)
+    if not sharp_key and isinstance(sharp_book, str):
+        sharp_key = sharp_book.strip().lower()
+    sharp_region = BOOKMAKER_REGION_KEYS.get(sharp_key)
+    if sharp_region and sharp_region in REGION_CONFIG and sharp_region not in seen:
+        regions.append(sharp_region)
+        seen.add(sharp_region)
+
+    return regions or list(DEFAULT_REGION_KEYS)
 
 EDGE_BANDS = [
     (1.0, 3.0, "1-3%"),

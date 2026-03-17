@@ -22,6 +22,76 @@ class ScannerRegressionTests(unittest.TestCase):
             ["pinnacle", "sx_bet", "betdex"],
         )
 
+    def test_run_scan_derives_regions_from_selected_bookmakers_when_missing(self) -> None:
+        captured_regions = []
+        sports_payload = [
+            {
+                "key": "americanfootball_nfl",
+                "title": "NFL",
+                "active": True,
+                "has_outrights": False,
+            }
+        ]
+
+        def _fake_scan_single_sport(**kwargs):
+            captured_regions.append(list(kwargs.get("normalized_regions") or []))
+            sport = kwargs.get("sport") or {}
+            sport_key = sport.get("key") or ""
+            sport_title = sport.get("title") or sport_key
+            return {
+                "skipped": False,
+                "sport_key": sport_key,
+                "sport_timing": {
+                    "sport_key": sport_key,
+                    "sport": sport_title,
+                    "api_fetch_ms": 0.0,
+                    "provider_fetch_ms": 0.0,
+                    "analysis_ms": 0.0,
+                    "events_scanned": 0,
+                    "providers": [],
+                    "total_ms": 0.0,
+                },
+                "timing_steps": [],
+                "api_market_skips": [],
+                "sport_errors": [],
+                "provider_updates": {},
+                "provider_snapshot_updates": {},
+                "purebet_update": {
+                    "events_merged": 0,
+                    "sports": [],
+                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
+                    "league_sync": {
+                        "live_updates": 0,
+                        "cache_hits": 0,
+                        "stale_cache_uses": 0,
+                        "dynamic_added": 0,
+                        "unresolved": 0,
+                    },
+                },
+                "events_scanned": 0,
+                "total_profit": 0.0,
+                "arb_opportunities": [],
+                "middle_opportunities": [],
+                "plus_ev_opportunities": [],
+                "stale_event_filters": [],
+                "successful": 1,
+            }
+
+        with (
+            patch.object(scanner, "fetch_sports", return_value=sports_payload),
+            patch.object(scanner, "_scan_single_sport", side_effect=_fake_scan_single_sport),
+            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
+        ):
+            result = scanner.run_scan(
+                api_key="dummy",
+                sports=["americanfootball_nfl"],
+                bookmakers=["betfair_ex_uk", "sx_bet"],
+                sharp_book="pinnacle",
+            )
+
+        self.assertTrue(result.get("success"))
+        self.assertEqual(captured_regions, [["uk", "eu"]])
+
     def test_kelly_stake_guard_paths_return_triplet(self) -> None:
         guard_cases = [
             (0.5, 2.0, 0.0, 0.25),

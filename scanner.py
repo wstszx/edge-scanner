@@ -61,6 +61,7 @@ from config import (
     SHOW_POSITIVE_EV_ONLY,
     SOFT_BOOK_KEYS,
     SPORT_DISPLAY_NAMES,
+    derive_required_regions,
     markets_for_sport,
     normalize_supported_bookmakers,
 )
@@ -1794,7 +1795,13 @@ def _purebet_get_json(
 def _normalize_regions(regions: Optional[Sequence[str]]) -> List[str]:
     if not regions:
         return list(DEFAULT_REGION_KEYS)
-    valid = [region for region in regions if region in REGION_CONFIG]
+    valid = []
+    seen = set()
+    for region in regions:
+        if region not in REGION_CONFIG or region in seen:
+            continue
+        valid.append(region)
+        seen.add(region)
     return valid or list(DEFAULT_REGION_KEYS)
 
 
@@ -5474,9 +5481,18 @@ async def run_scan_async(
     requested_sport_keys = _normalize_requested_sport_keys(sports)
     requested_provider_keys = _normalize_provider_keys(include_providers) or []
     enabled_provider_keys = _resolve_enabled_provider_keys(include_purebet, include_providers)
-    normalized_regions = _normalize_regions(regions)
-    normalized_regions = _ensure_sharp_region(normalized_regions, sharp_book or DEFAULT_SHARP_BOOK)
     normalized_bookmakers = _normalize_bookmakers(bookmakers)
+    if regions is None:
+        normalized_regions = derive_required_regions(
+            normalized_bookmakers,
+            sharp_book=sharp_book or DEFAULT_SHARP_BOOK,
+        )
+    else:
+        normalized_regions = _normalize_regions(regions)
+        normalized_regions = _ensure_sharp_region(
+            normalized_regions,
+            sharp_book or DEFAULT_SHARP_BOOK,
+        )
     provider_bookmaker_keys = _normalize_provider_keys(normalized_bookmakers) or []
     api_bookmakers = [
         book for book in normalized_bookmakers if resolve_provider_key(book) is None

@@ -149,7 +149,6 @@ class ServerAutoScanAppTests(unittest.TestCase):
                 "allSports": False,
                 "allMarkets": False,
                 "stake": 100,
-                "regions": ["us"],
                 "bookmakers": ["SX Bet"],
                 "includeProviders": [],
                 "commission": 0,
@@ -193,7 +192,7 @@ class ServerAutoScanAppTests(unittest.TestCase):
         self.assertEqual(kwargs.get("api_key"), [])
         self.assertEqual(kwargs.get("scan_mode"), "prematch")
         self.assertEqual(kwargs.get("sports"), ["icehockey_nhl"])
-        self.assertEqual(kwargs.get("regions"), ["us"])
+        self.assertEqual(kwargs.get("regions"), ["eu"])
         self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])
         self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
         self.assertEqual(kwargs.get("sharp_book"), "pinnacle")

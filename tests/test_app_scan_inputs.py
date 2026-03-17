@@ -86,12 +86,27 @@ class ScanInputValidationTests(unittest.TestCase):
                 json={
                     "scanMode": "live",
                     "sports": ["basketball_nba"],
-                    "regions": ["us"],
                 },
             )
         self.assertEqual(response.status_code, 200)
         kwargs = mocked_run_scan.call_args.kwargs
         self.assertEqual(kwargs.get("scan_mode"), "live")
+
+    def test_scan_derives_regions_from_selected_platforms_when_omitted(self) -> None:
+        with (
+            patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", False),
+            patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan,
+        ):
+            response = self.client.post(
+                "/scan",
+                json={
+                    "bookmakers": ["betfair_ex_uk", "SX Bet"],
+                    "sharpBook": "pinnacle",
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        kwargs = mocked_run_scan.call_args.kwargs
+        self.assertEqual(kwargs.get("regions"), ["uk", "eu"])
 
     def test_scan_saves_history_from_nested_result_shape(self) -> None:
         result_payload = {
@@ -130,6 +145,7 @@ class ScanInputValidationTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertIn('value="sx_bet"', html)
         self.assertIn('value="pinnacle"', html)
+        self.assertNotIn('name="regions"', html)
         self.assertNotIn('value="draftkings"', html)
         self.assertNotIn('value="fanduel"', html)
 

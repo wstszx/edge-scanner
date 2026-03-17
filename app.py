@@ -43,7 +43,6 @@ from config import (  # noqa: E402
     DEFAULT_NOTIFY_SOUND_ENABLED,
     DEFAULT_ODDS_FORMAT,
     DEFAULT_PLUS_EV_SORT,
-    DEFAULT_REGION_KEYS,
     DEFAULT_SHARP_BOOK,
     DEFAULT_SPORT_KEYS,
     DEFAULT_STAKE_AMOUNT,
@@ -53,10 +52,11 @@ from config import (  # noqa: E402
     KELLY_OPTIONS,
     MIN_MIDDLE_GAP,
     MIN_EDGE_PERCENT,
-    REGION_OPTIONS,
+    REGION_CONFIG,
     SHARP_BOOKS,
     SHOW_POSITIVE_EV_ONLY,
     SPORT_OPTIONS,
+    derive_required_regions,
     normalize_supported_bookmakers,
 )
 from providers import PROVIDER_FETCHERS, resolve_provider_key  # noqa: E402
@@ -395,7 +395,6 @@ def _server_auto_scan_payload() -> dict:
         "allSports": DEFAULT_ALL_SPORTS,
         "allMarkets": ENV_ALL_MARKETS,
         "stake": DEFAULT_STAKE_AMOUNT,
-        "regions": list(DEFAULT_REGION_KEYS),
         "bookmakers": provider_keys if ENV_PROVIDER_ONLY_MODE else list(DEFAULT_BOOKMAKER_KEYS),
         "commission": float(DEFAULT_COMMISSION * 100.0),
         "sharpBook": DEFAULT_SHARP_BOOK,
@@ -414,6 +413,22 @@ def _default_server_auto_scan_config() -> dict:
         "interval_minutes": int(ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES),
         "payload": _server_auto_scan_payload(),
     }
+
+
+def _normalize_payload_regions(value: object) -> Optional[list[str]]:
+    if not isinstance(value, list):
+        return None
+    normalized: list[str] = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        token = item.strip().lower()
+        if not token or token not in REGION_CONFIG or token in seen:
+            continue
+        normalized.append(token)
+        seen.add(token)
+    return normalized or None
 
 
 def _server_auto_scan_config_summary(config: Optional[dict]) -> str:
@@ -534,11 +549,7 @@ def _normalize_server_auto_scan_config(raw: object) -> Optional[dict]:
     else:
         sports = list(DEFAULT_SPORT_KEYS)
 
-    regions_raw = scan_payload.get("regions")
-    if isinstance(regions_raw, list):
-        regions = [str(item) for item in regions_raw if isinstance(item, str) and item.strip()]
-    else:
-        regions = list(DEFAULT_REGION_KEYS)
+    regions = _normalize_payload_regions(scan_payload.get("regions"))
 
     bookmakers_raw = scan_payload.get("bookmakers")
     bookmakers = normalize_supported_bookmakers(bookmakers_raw)
@@ -631,24 +642,27 @@ def _normalize_server_auto_scan_config(raw: object) -> Optional[dict]:
     else:
         sharp_book = DEFAULT_SHARP_BOOK
 
+    payload = {
+        "scanMode": scan_mode,
+        "sports": sports,
+        "allSports": _coerce_bool(scan_payload.get("allSports"), default=DEFAULT_ALL_SPORTS),
+        "allMarkets": _coerce_bool(scan_payload.get("allMarkets"), default=ENV_ALL_MARKETS),
+        "stake": stake_value,
+        "bookmakers": bookmakers,
+        "includeProviders": include_providers,
+        "commission": commission_value,
+        "sharpBook": sharp_book,
+        "minEdgePercent": max(0.0, min_edge_percent),
+        "bankroll": max(0.0, bankroll_value),
+        "kellyFraction": max(0.0, min(kelly_fraction, 1.0)),
+    }
+    if regions:
+        payload["regions"] = regions
+
     return {
         "enabled": _coerce_bool(raw.get("enabled"), default=ENV_SERVER_AUTO_SCAN_ENABLED),
         "interval_minutes": interval_minutes,
-        "payload": {
-            "scanMode": scan_mode,
-            "sports": sports,
-            "allSports": _coerce_bool(scan_payload.get("allSports"), default=DEFAULT_ALL_SPORTS),
-            "allMarkets": _coerce_bool(scan_payload.get("allMarkets"), default=ENV_ALL_MARKETS),
-            "stake": stake_value,
-            "regions": regions,
-            "bookmakers": bookmakers,
-            "includeProviders": include_providers,
-            "commission": commission_value,
-            "sharpBook": sharp_book,
-            "minEdgePercent": max(0.0, min_edge_percent),
-            "bankroll": max(0.0, bankroll_value),
-            "kellyFraction": max(0.0, min(kelly_fraction, 1.0)),
-        },
+        "payload": payload,
     }
 
 
@@ -749,7 +763,6 @@ def _execute_scan_payload(
         all_sports = _coerce_bool(payload.get("allSports"), default=DEFAULT_ALL_SPORTS)
         all_markets = _coerce_bool(payload.get("allMarkets"), default=ENV_ALL_MARKETS)
         stake = payload.get("stake")
-        regions = payload.get("regions")
         bookmakers = payload.get("bookmakers")
         commission = payload.get("commission")
         include_purebet = (
@@ -794,10 +807,7 @@ def _execute_scan_payload(
             stake_value = float(stake) if stake is not None else DEFAULT_STAKE_AMOUNT
         except (TypeError, ValueError):
             stake_value = DEFAULT_STAKE_AMOUNT
-        if isinstance(regions, list):
-            regions_value = [str(region) for region in regions if isinstance(region, str)]
-        else:
-            regions_value = None
+        regions_value = _normalize_payload_regions(payload.get("regions"))
         raw_bookmakers = []
         if isinstance(bookmakers, list):
             raw_bookmakers = [
@@ -866,6 +876,10 @@ def _execute_scan_payload(
                 or provider_bookmakers
                 or list(PROVIDER_FETCHERS.keys())
             )
+        effective_regions = regions_value or derive_required_regions(
+            list(bookmakers_value or []),
+            sharp_book=sharp_book,
+        )
         try:
             commission_percent = float(commission) if commission is not None else None
         except (TypeError, ValueError):
@@ -882,7 +896,7 @@ def _execute_scan_payload(
             all_sports=all_sports,
             all_markets=all_markets,
             stake_amount=stake_value,
-            regions=regions_value or DEFAULT_REGION_KEYS,
+            regions=effective_regions,
             bookmakers=bookmakers_value,
             commission_rate=commission_rate,
             sharp_book=sharp_book,
@@ -1149,7 +1163,6 @@ def index() -> str:
         "index.html",
         sport_options=SPORT_OPTIONS,
         default_sport_keys=DEFAULT_SPORT_KEYS,
-        region_options=REGION_OPTIONS,
         bookmaker_options=BOOKMAKER_OPTIONS,
         default_bookmaker_keys=DEFAULT_BOOKMAKER_KEYS,
         default_all_bookmakers=(

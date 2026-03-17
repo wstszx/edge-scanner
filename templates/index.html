@@ -89,32 +89,6 @@
                   <section class="advanced-panel">
                     <div class="panel-head">
                       <div class="panel-title">
-                        <span class="field-label" data-i18n="regions_label">Regions</span>
-                        <p class="helper" data-i18n="regions_helper">Select at least one region. EU is always included
-                          for sharp reference.</p>
-                      </div>
-                      <div class="panel-actions">
-                        <button type="button" class="chip-btn" data-quick-action="select" data-quick-target="regions"
-                          data-i18n="select_all">Select all</button>
-                        <button type="button" class="chip-btn" data-quick-action="clear" data-quick-target="regions"
-                          data-i18n="clear_all">Clear</button>
-                      </div>
-                    </div>
-                    <div class="panel-body">
-                      <div class="regions-grid">
-                        {% for region in region_options %}
-                        <label class="checkbox">
-                          <input type="checkbox" name="regions" value="{{ region.key }}" {% if region.default
-                            %}checked{% endif %} />
-                          <span data-region-key="{{ region.key }}">{{ region.label }}</span>
-                        </label>
-                        {% endfor %}
-                      </div>
-                    </div>
-                  </section>
-                  <section class="advanced-panel">
-                    <div class="panel-head">
-                      <div class="panel-title">
                         <span class="field-label" data-i18n="sports_label">Sports</span>
                         <p class="helper" data-i18n="sports_helper">Each selected sport consumes one API request.</p>
                       </div>
@@ -1451,7 +1425,7 @@
         auto_scan_helper: 'Runs a scan on a timer using your current filters.',
         advanced_settings: 'Advanced settings',
         advanced_hint: 'Less frequently adjusted options live here.',
-        advanced_summary: 'Sports {sports} | Books {books} | Regions {regions}',
+        advanced_summary: 'Sports {sports} | Books {books}',
         summary_all: 'All',
         notify_label: 'Notifications',
         notify_sound: 'Sound alert',
@@ -1571,7 +1545,7 @@
         arb_empty_pre_scan_title: 'Run a scan to populate the board.',
         arb_empty_pre_scan_copy: 'The arbitrage workspace will fill in once scan results arrive.',
         arb_empty_scan_title: 'This scan returned no arbitrage.',
-        arb_empty_scan_copy: 'Try more bookmakers, regions, or markets, then scan again.',
+        arb_empty_scan_copy: 'Try more bookmakers or markets, then scan again.',
         arb_empty_filtered_title: 'Filters hid the current opportunities.',
         arb_empty_filtered_band: 'The active {band} band is hiding the board. Clear it or widen your thresholds.',
         arb_empty_filtered_min: 'Lower the minimum ROI below {value} or reset filters to widen the board.',
@@ -1627,7 +1601,7 @@
         scan_sports: 'Sports',
         scan_live_elapsed: 'Elapsed: {elapsed}',
         scan_live_scope: 'Scope: {details}',
-        scan_scope_summary: 'Sports {sports} | Regions {regions} | Books {books} | Providers {providers} | Markets {markets}',
+        scan_scope_summary: 'Sports {sports} | Books {books} | Providers {providers} | Markets {markets}',
         scan_scope_all: 'All',
         scan_scope_none: 'None',
         scan_markets_core: 'Core',
@@ -1872,7 +1846,7 @@
         auto_scan_helper: '按当前筛选条件定时自动扫描。',
         advanced_settings: '高级设置',
         advanced_hint: '不常调整的选项放在这里。',
-        advanced_summary: '项目 {sports} | 平台 {books} | 地区 {regions}',
+        advanced_summary: '项目 {sports} | 平台 {books}',
         summary_all: '全部',
         notify_label: '通知',
         notify_sound: '铃声提示',
@@ -1930,7 +1904,7 @@
         arb_empty_pre_scan_title: '先运行一次扫描来填充套利看板。',
         arb_empty_pre_scan_copy: '扫描结果返回后，这里会自动显示可操作的套利机会。',
         arb_empty_scan_title: '这次扫描没有返回套利机会。',
-        arb_empty_scan_copy: '可以尝试增加书商、区域或盘口后再扫描一次。',
+        arb_empty_scan_copy: '可以尝试增加平台或盘口后再扫描一次。',
         arb_empty_filtered_title: '当前筛选把机会都隐藏了。',
         arb_empty_filtered_band: '已启用的 {band} 分段挡住了当前结果，清除它或放宽阈值后再看。',
         arb_empty_filtered_min: '把最小 ROI 降到 {value} 以下，或直接重置筛选来放宽视图。',
@@ -1986,7 +1960,7 @@
         scan_sports: '项目数',
         scan_live_elapsed: '已耗时：{elapsed}',
         scan_live_scope: '本次范围：{details}',
-        scan_scope_summary: '项目 {sports} | 地区 {regions} | 平台 {books} | Provider {providers} | 盘口 {markets}',
+        scan_scope_summary: '项目 {sports} | 平台 {books} | Provider {providers} | 盘口 {markets}',
         scan_scope_all: '全部',
         scan_scope_none: '无',
         scan_markets_core: '基础',
@@ -2596,18 +2570,14 @@
       const sportsLabels = collectCheckedLabels('sports');
       const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
       const booksLabels = effectiveSelectedBookmakerLabels(useAllBookmakers);
-      const regionLabels = collectCheckedLabels('regions');
       const modeLabel = selectedScanMode() === 'live' ? t('scan_mode_live_short') : t('scan_mode_prematch_short');
       const sportsSelected = sportsLabels.length;
       const booksSelected = booksLabels.length;
-      const regionsSelected = regionLabels.length;
       const sportsText = allSportsToggle && allSportsToggle.checked ? t('summary_all') : sportsSelected;
       const booksText = allBookmakersToggle && allBookmakersToggle.checked && !isLiveScanMode() ? t('summary_all') : booksSelected;
-      const regionsText = regionsSelected;
       advancedSummary.textContent = `${modeLabel} | ${t('advanced_summary', {
         sports: sportsText,
         books: booksText,
-        regions: regionsText,
       })}`;
       const sportsDetail =
         allSportsToggle && allSportsToggle.checked
@@ -2621,8 +2591,7 @@
           : booksLabels.length
             ? booksLabels.join(', ')
             : '0';
-      const regionsDetail = regionLabels.length ? regionLabels.join(', ') : '0';
-      advancedSummary.title = `${t('scan_mode_label')}: ${modeLabel}\n${t('sports_label')}: ${sportsDetail}\n${t('bookmakers_label')}: ${booksDetail}\n${t('regions_label')}: ${regionsDetail}`;
+      advancedSummary.title = `${t('scan_mode_label')}: ${modeLabel}\n${t('sports_label')}: ${sportsDetail}\n${t('bookmakers_label')}: ${booksDetail}`;
     }
 
     function getOpportunityCount(section) {
@@ -2933,7 +2902,6 @@
 
     function buildScanContext(payload) {
       const sports = Array.isArray(payload?.sports) ? payload.sports : [];
-      const regions = Array.isArray(payload?.regions) ? payload.regions : [];
       const books = Array.isArray(payload?.bookmakers) ? payload.bookmakers : [];
       const providers = Array.isArray(payload?.includeProviders) ? payload.includeProviders : [];
       const scanMode = (payload?.scanMode || appConfig.defaultScanMode || 'prematch').toLowerCase() === 'live'
@@ -2942,7 +2910,6 @@
       return {
         scanMode,
         sportsCount: sports.length,
-        regionsCount: regions.length,
         booksCount: books.length,
         providersCount: providers.length,
         allSports: Boolean(payload?.allSports),
@@ -2962,7 +2929,6 @@
       const modeLabel = context.scanMode === 'live' ? t('scan_mode_live_short') : t('scan_mode_prematch_short');
       return `${modeLabel} | ${t('scan_scope_summary', {
         sports: scopeCountLabel(context.sportsCount, context.allSports),
-        regions: scopeCountLabel(context.regionsCount, false),
         books: scopeCountLabel(context.booksCount, context.allBookmakers),
         providers: scopeCountLabel(context.providersCount, false),
         markets: context.allMarkets ? t('scan_markets_extended') : t('scan_markets_core'),
@@ -3010,9 +2976,7 @@
       if (!scanLockedControls.length) {
         const selectors = [
           'input[name="sports"]',
-          'input[name="regions"]',
           'input[name="bookmakers"]',
-          '[data-quick-action][data-quick-target="regions"]',
           '[data-quick-action][data-quick-target="sports"]',
           '[data-quick-action][data-quick-target="bookmakers"]',
           '#all-sports',
@@ -3408,7 +3372,6 @@
         if (
           target.matches('input[name="sports"]') ||
           target.matches('input[name="bookmakers"]') ||
-          target.matches('input[name="regions"]') ||
           target.id === 'scan-mode-select' ||
           target.id === 'all-sports' ||
           target.id === 'all-bookmakers'
@@ -3580,10 +3543,6 @@
       }
     }
 
-    function selectedRegions() {
-      return Array.from(form?.querySelectorAll('input[name="regions"]:checked') || []).map((el) => el.value);
-    }
-
     function selectedBookmakers(useAllBookmakers) {
       const allBookmakers = Array.from(form?.querySelectorAll('input[name="bookmakers"]') || []).map((el) => el.value);
       const checkedBookmakers = Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
@@ -3634,7 +3593,6 @@
 
     function buildServerAutoScanConfigPayload() {
       const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
-      const regions = selectedRegions();
       const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
       const commissionValue = commissionInput && Number.isFinite(parseFloat(commissionInput.value))
         ? parseFloat(commissionInput.value)
@@ -3643,7 +3601,6 @@
         return scanFormHelpers.buildServerAutoScanConfigPayload({
           scanMode: selectedScanMode(),
           sports,
-          regions,
           useAllBookmakers,
           allBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]') || []).map((el) => el.value),
           checkedBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value),
@@ -3679,7 +3636,6 @@
           allSports: allSportsToggle ? allSportsToggle.checked : false,
           allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
           stake: parseFloat(stakeInput?.value) || 100,
-          regions,
           bookmakers: selectedBookmakers(useAllBookmakers),
           includeProviders: selectedIncludeProviders(useAllBookmakers, selectedBookmakers(useAllBookmakers)),
           commission: commissionValue,
@@ -3722,8 +3678,6 @@
       const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
       const useAllSports = allSportsToggle ? allSportsToggle.checked : false;
       if (!useAllSports && !sports.length) return;
-      const regions = selectedRegions();
-      if (!regions.length) return;
       const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
       const bookmakers = selectedBookmakers(useAllBookmakers);
       const includeProviders = selectedIncludeProviders(useAllBookmakers, bookmakers);
@@ -3737,7 +3691,6 @@
           scanMode: selectedScanMode(),
           apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
           sports,
-          regions,
           useAllBookmakers,
           allBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]') || []).map((el) => el.value),
           checkedBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value),
@@ -3768,7 +3721,6 @@
           sports,
           bookmakers,
           includeProviders,
-          regions,
           commission: commissionValue,
           allSports: useAllSports,
           allBookmakers: useAllBookmakers,
@@ -3814,7 +3766,6 @@
 
     function collectSettings() {
       const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
-      const regions = selectedRegions();
       const bookmakers = Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value);
       return {
         stake: stakeInput ? stakeInput.value : '',
@@ -3823,7 +3774,6 @@
         allSports: allSportsToggle ? allSportsToggle.checked : false,
         allMarkets: allMarketsToggle ? allMarketsToggle.checked : Boolean(appConfig.defaultAllMarkets),
         sports,
-        regions,
         allBookmakers: allBookmakersToggle ? allBookmakersToggle.checked : true,
         bookmakers,
         minRoi: minRoiInput ? minRoiInput.value : '',
@@ -3865,7 +3815,6 @@
       if (allSportsToggle && settings.allSports !== undefined) allSportsToggle.checked = Boolean(settings.allSports);
       if (allMarketsToggle && settings.allMarkets !== undefined) allMarketsToggle.checked = Boolean(settings.allMarkets);
       setCheckboxGroup('sports', settings.sports);
-      setCheckboxGroup('regions', settings.regions);
       if (allBookmakersToggle && settings.allBookmakers !== undefined) {
         allBookmakersToggle.checked = Boolean(settings.allBookmakers);
       }
@@ -3961,11 +3910,6 @@
         return;
       }
       const sports = Array.from(form.querySelectorAll('input[name="sports"]:checked')).map((el) => el.value);
-      const regions = selectedRegions();
-      if (!regions.length) {
-        showStatusKey('select_region', 'error');
-        return;
-      }
       const useAllBookmakers = allBookmakersToggle ? allBookmakersToggle.checked : true;
       const bookmakers = selectedBookmakers(useAllBookmakers);
       const includeProviders = selectedIncludeProviders(useAllBookmakers, bookmakers);
@@ -3983,7 +3927,6 @@
           scanMode: selectedScanMode(),
           apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
           sports,
-          regions,
           useAllBookmakers,
           allBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]') || []).map((el) => el.value),
           checkedBookmakers: Array.from(form?.querySelectorAll('input[name="bookmakers"]:checked') || []).map((el) => el.value),
@@ -4012,7 +3955,6 @@
           apiKey: apiKeyInput ? apiKeyInput.value.trim() : '',
           scanMode: selectedScanMode(),
           sports,
-          regions,
           bookmakers,
           includeProviders,
           commission: commissionValue,
@@ -4150,7 +4092,6 @@
             allSports: payload.allSports,
             allMarkets: payload.allMarkets,
             stake: payload.stake,
-            regions: payload.regions,
             bookmakers: payload.bookmakers,
             includeProviders: payload.includeProviders,
             commission: payload.commission,

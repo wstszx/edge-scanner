@@ -110,7 +110,6 @@ class FrontendScanFormHelperTests(unittest.TestCase):
             "buildServerAutoScanConfigPayload",
             {
                 "sports": ["icehockey_nhl"],
-                "regions": ["us"],
                 "useAllBookmakers": False,
                 "allBookmakers": ["draftkings", "sx_bet", "betdex"],
                 "checkedBookmakers": ["draftkings", "sx_bet"],
@@ -172,7 +171,7 @@ class FrontendScanFormHelperTests(unittest.TestCase):
         self.assertEqual(kwargs.get("api_key"), [])
         self.assertEqual(kwargs.get("scan_mode"), "prematch")
         self.assertEqual(kwargs.get("sports"), ["icehockey_nhl"])
-        self.assertEqual(kwargs.get("regions"), ["us"])
+        self.assertEqual(kwargs.get("regions"), ["eu"])
         self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])
         self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
         self.assertEqual(kwargs.get("stake_amount"), 125.0)
@@ -188,7 +187,6 @@ class FrontendScanFormHelperTests(unittest.TestCase):
             {
                 "apiKey": "should-be-cleared",
                 "sports": ["icehockey_nhl"],
-                "regions": ["us"],
                 "useAllBookmakers": False,
                 "allBookmakers": ["draftkings", "sx_bet", "betdex"],
                 "checkedBookmakers": ["draftkings", "sx_bet"],
@@ -231,7 +229,7 @@ class FrontendScanFormHelperTests(unittest.TestCase):
         self.assertEqual(kwargs.get("api_key"), [])
         self.assertEqual(kwargs.get("scan_mode"), "prematch")
         self.assertEqual(kwargs.get("sports"), ["icehockey_nhl"])
-        self.assertEqual(kwargs.get("regions"), ["us"])
+        self.assertEqual(kwargs.get("regions"), ["eu"])
         self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])
         self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
         self.assertEqual(kwargs.get("commission_rate"), 0.035)

@@ -147,7 +147,6 @@ class BrowserScanFlowTests(unittest.TestCase):
               allBookmakers.checked = false;
               dispatchChange(allBookmakers);
               selectSingle('input[name="sports"]', 'icehockey_nhl');
-              selectSingle('input[name="regions"]', 'us');
               selectSingle('input[name="bookmakers"]', 'sx_bet');
             }"""
         )
@@ -226,7 +225,7 @@ class BrowserScanFlowTests(unittest.TestCase):
         kwargs = run_scan_calls[0]
         self.assertEqual(kwargs.get("api_key"), [])
         self.assertEqual(kwargs.get("sports"), ["icehockey_nhl"])
-        self.assertEqual(kwargs.get("regions"), ["us"])
+        self.assertEqual(kwargs.get("regions"), ["eu"])
         self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])
         self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
 

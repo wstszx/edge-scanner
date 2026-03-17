@@ -124,7 +124,6 @@
           ? options.allMarkets === true
           : Boolean(defaults.allMarkets),
         stake: positiveNumber(options && options.stake, 100),
-        regions: uniqueStrings(options && options.regions),
         bookmakers,
         includeProviders,
         commission: finiteNumber(options && options.commission, defaults.commission || 0),
@@ -158,7 +157,6 @@
       sports: uniqueStrings(options && options.sports),
       bookmakers,
       includeProviders,
-      regions: uniqueStrings(options && options.regions),
       commission: finiteNumber(options && options.commission, defaults.commission || 0),
       allSports: options && options.allSports === true,
       allBookmakers: options && options.useAllBookmakers === true,
