@@ -49,6 +49,7 @@ Notes:
 - if public `443` is already used by x-ui/xray or another TLS service, use the shared-443 stream templates instead of forcing a second TLS listener onto the same socket
 
 More detail: `docs/production_deployment.md`
+Current root/VPS runbook: `docs/current_vps_deployment_zh.md`
 Template files: `deploy/systemd/`, `deploy/nginx/`, `deploy/sudoers/`
 Root layout templates: `deploy/systemd/root/`
 Shared-443 Nginx templates: `deploy/nginx/edge-scanner-shared-443-site.conf`, `deploy/nginx/edge-scanner-shared-443-stream.conf`
