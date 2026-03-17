@@ -1,5 +1,6 @@
 # Core dependencies (pinned for reproducibility)
 flask==3.1.1
+gunicorn==25.1.0
 requests==2.32.3
 httpx==0.28.1
 python-dotenv==1.1.1

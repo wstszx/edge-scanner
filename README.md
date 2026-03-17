@@ -48,6 +48,8 @@ Notes:
 - rotate system logs with `logrotate` or your process manager
 
 More detail: `docs/production_deployment.md`
+Template files: `deploy/systemd/`, `deploy/nginx/`, `deploy/sudoers/`
+Root layout templates: `deploy/systemd/root/`
 
 ## Project Docs
 

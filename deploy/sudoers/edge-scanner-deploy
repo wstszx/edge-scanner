@@ -1,0 +1,9 @@
+# /etc/sudoers.d/edge-scanner-deploy
+# Adjust the username and service names before installing.
+
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl daemon-reload
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart edge-scanner
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet edge-scanner
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart edge-scanner-worker
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet edge-scanner-worker
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl list-unit-files --type=service --no-legend

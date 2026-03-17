@@ -1,0 +1,19 @@
+[Unit]
+Description=Edge Scanner web service
+After=network.target
+
+[Service]
+Type=simple
+User=edge-scanner
+Group=edge-scanner
+WorkingDirectory=/srv/edge-scanner/app
+EnvironmentFile=/etc/edge-scanner/edge-scanner.env
+Environment=SERVER_AUTO_SCAN_ENABLED=0
+ExecStart=/srv/edge-scanner/app/venv/bin/gunicorn -w 2 --threads 8 -b 127.0.0.1:5000 wsgi:app
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

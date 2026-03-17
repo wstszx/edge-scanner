@@ -1,0 +1,20 @@
+[Unit]
+Description=Edge Scanner auto-scan worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=edge-scanner
+Group=edge-scanner
+WorkingDirectory=/srv/edge-scanner/app
+EnvironmentFile=/etc/edge-scanner/edge-scanner.env
+Environment=SERVER_AUTO_SCAN_ENABLED=1
+ExecStart=/srv/edge-scanner/app/venv/bin/python auto_scan_worker.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
