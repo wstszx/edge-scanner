@@ -46,10 +46,12 @@ Notes:
 - `auto_scan_worker.py` is single-process by design; if you accidentally start multiple copies, only one instance will acquire the auto-scan lease
 - keep the Flask/Gunicorn port private and expose only Nginx on `80/443`
 - rotate system logs with `logrotate` or your process manager
+- if public `443` is already used by x-ui/xray or another TLS service, use the shared-443 stream templates instead of forcing a second TLS listener onto the same socket
 
 More detail: `docs/production_deployment.md`
 Template files: `deploy/systemd/`, `deploy/nginx/`, `deploy/sudoers/`
 Root layout templates: `deploy/systemd/root/`
+Shared-443 Nginx templates: `deploy/nginx/edge-scanner-shared-443-site.conf`, `deploy/nginx/edge-scanner-shared-443-stream.conf`
 
 ## Project Docs
 

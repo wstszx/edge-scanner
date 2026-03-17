@@ -17,6 +17,8 @@ Repo templates included in this directory tree:
 - `deploy/systemd/root/edge-scanner-worker.service`
 - `deploy/systemd/edge-scanner.env.example`
 - `deploy/nginx/edge-scanner.conf`
+- `deploy/nginx/edge-scanner-shared-443-site.conf`
+- `deploy/nginx/edge-scanner-shared-443-stream.conf`
 - `deploy/sudoers/edge-scanner-deploy`
 
 ## Recommended Paths
@@ -145,6 +147,69 @@ Replace these placeholders first:
 - `example.com`
 - no certificate paths are required in the bootstrap config; `certbot --nginx` will add them
 
+### Sharing `443` With x-ui/xray Or Another TLS Service
+
+If something else already owns public `443`, do not fight it with a second
+HTTPS server block on the same socket.
+
+Use Nginx stream-layer SNI routing instead:
+
+1. Keep Nginx on public `80`
+2. Move the existing TLS service from public `443` to a local-only port such as `127.0.0.1:1443`
+3. Run Edge Scanner's TLS site on a local-only port such as `127.0.0.1:8443`
+4. Let Nginx accept public `443` and forward TLS by SNI:
+   - `edge.example.com` -> `127.0.0.1:8443`
+   - everything else / no SNI -> `127.0.0.1:1443`
+
+Templates:
+
+- HTTP + local TLS backend: `deploy/nginx/edge-scanner-shared-443-site.conf`
+- stream SNI router: `deploy/nginx/edge-scanner-shared-443-stream.conf`
+
+Top-level Nginx requirement in `/etc/nginx/nginx.conf`:
+
+```nginx
+stream {
+    include /etc/nginx/stream-conf.d/*.conf;
+}
+```
+
+Suggested first-time flow:
+
+```bash
+sudo mkdir -p /var/www/certbot /etc/nginx/stream-conf.d
+sudo cp deploy/nginx/edge-scanner-shared-443-site.conf /etc/nginx/sites-available/edge-scanner.conf
+sudo cp deploy/nginx/edge-scanner-shared-443-stream.conf /etc/nginx/stream-conf.d/edge-scanner.conf
+```
+
+Then:
+
+- replace `edge.example.com`
+- replace the local ports if you do not use `8443` and `1443`
+- update your existing x-ui/xray inbound to the local-only port before reloading Nginx on public `443`
+- keep the stream `default` backend pointing at the pre-existing TLS service so non-Edge-Scanner SNI keeps working
+
+Certificate issuance in this shared-443 layout is simpler with webroot than with
+`certbot --nginx`:
+
+```bash
+sudo certbot certonly --webroot -w /var/www/certbot -d edge.example.com
+```
+
+Add a renewal hook so Nginx picks up renewed certificates:
+
+```bash
+sudo mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+printf '%s\n' '#!/bin/sh' 'systemctl reload nginx' | sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh >/dev/null
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+```
+
+Important:
+
+- once you move x-ui/xray behind Nginx, do not change that inbound back to public `443`
+- if you later edit x-ui in its panel, keep the inbound bound to `127.0.0.1:<local-port>`
+- test the stream config on a staging port first if you want a safer cutover
+
 ## GitHub Actions Deployment
 
 The repository workflow `.github/workflows/deploy.yml` can deploy over SSH.
@@ -209,6 +274,9 @@ sudo certbot --nginx -d example.com
 
 For first-time setup, keep Nginx on plain HTTP first, verify the reverse proxy works, and only then run `certbot --nginx`.
 
+If Cloudflare sits in front of your DNS and you enable the orange-cloud proxy
+after origin HTTPS is working, use `Full (strict)` rather than `Flexible`.
+
 ## Important Differences From Legacy Flask-Only Setup
 
 Do not use these older production shortcuts anymore:
@@ -247,4 +315,12 @@ sudo systemctl status edge-scanner --no-pager
 sudo systemctl status edge-scanner-worker --no-pager
 curl -I http://127.0.0.1:5000/
 sudo nginx -t
+```
+
+Useful checks for the shared-443 layout:
+
+```bash
+echo | openssl s_client -servername edge.example.com -connect 127.0.0.1:443 2>/dev/null | openssl x509 -noout -subject -issuer -dates
+echo | openssl s_client -servername your-existing-tls-domain.example -connect 127.0.0.1:443 2>/dev/null | openssl x509 -noout -subject -issuer -dates
+ss -ltnp | egrep ':(80|443|8443|1443) '
 ```
