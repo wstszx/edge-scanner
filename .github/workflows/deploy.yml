@@ -1,0 +1,21 @@
+name: Auto Deploy to VPS
+
+# 触发条件：当有代码推送到 main 分支时触发
+on:
+  push:
+    branches:
+      - main  # 如果你的默认分支叫 master，请改成 master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🚀 连接 VPS 并执行更新脚本
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: root
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            /root/update.sh

@@ -13,7 +13,7 @@ import time
 import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import BinaryIO, Optional
 
 from dotenv import load_dotenv
 import requests
@@ -78,6 +78,8 @@ _SERVER_AUTO_SCAN_STOP_EVENT = threading.Event()
 _SCAN_EXECUTION_LOCK = threading.Lock()
 _SERVER_AUTO_SCAN_CONFIG: Optional[dict] = None
 _SERVER_AUTO_SCAN_CONFIG_VERSION = 0
+_SERVER_AUTO_SCAN_LEASE_LOCK = threading.Lock()
+_SERVER_AUTO_SCAN_LEASE_HANDLE: Optional[BinaryIO] = None
 _FX_RATE_CACHE_LOCK = threading.Lock()
 _FX_RATE_CACHE: Optional[dict] = None
 _FX_RATE_CACHE_EXPIRES_AT = 0.0
@@ -204,7 +206,7 @@ ENV_PROVIDER_ONLY_MODE = _coerce_bool(
 )
 ENV_SERVER_AUTO_SCAN_ENABLED = _coerce_bool(
     os.getenv("SERVER_AUTO_SCAN_ENABLED"),
-    default=True,
+    default=False,
 )
 ENV_SERVER_AUTO_SCAN_RUN_ON_START = _coerce_bool(
     os.getenv("SERVER_AUTO_SCAN_RUN_ON_START"),
@@ -221,6 +223,10 @@ ENV_SERVER_AUTO_SCAN_CONFIG_PATH = os.getenv(
     "SERVER_AUTO_SCAN_CONFIG_PATH",
     str(Path("data") / "server_auto_scan_config.json"),
 ).strip()
+ENV_SERVER_AUTO_SCAN_LEASE_PATH = os.getenv(
+    "SERVER_AUTO_SCAN_LEASE_PATH",
+    str(Path("data") / "server_auto_scan.lock"),
+).strip()
 ENV_SAVE_SCAN = _env_flag(os.getenv("SCAN_SAVE_ENABLED"))
 ENV_SAVE_DIR = os.getenv("SCAN_SAVE_DIR", str(Path("data") / "scans")).strip()
 ENV_PROVIDER_SNAPSHOT_DIR = os.getenv(
@@ -229,6 +235,11 @@ ENV_PROVIDER_SNAPSHOT_DIR = os.getenv(
 ENV_CROSS_PROVIDER_REPORT_FILENAME = os.getenv(
     "CROSS_PROVIDER_MATCH_REPORT_FILENAME", "cross_provider_match_report.json"
 ).strip()
+ENV_APP_HOST = (os.getenv("APP_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+ENV_OPEN_BROWSER_ON_START = _coerce_bool(
+    os.getenv("OPEN_BROWSER_ON_START"),
+    default=True,
+)
 
 
 def _should_save_scan(payload: dict) -> bool:
@@ -431,6 +442,84 @@ def _server_auto_scan_config_path() -> Optional[Path]:
     return Path(raw)
 
 
+def _server_auto_scan_lease_path() -> Optional[Path]:
+    raw = str(ENV_SERVER_AUTO_SCAN_LEASE_PATH or "").strip()
+    if not raw:
+        return None
+    return Path(raw)
+
+
+def _lock_file_nonblocking(handle: BinaryIO) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_file(handle: BinaryIO) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _try_acquire_server_auto_scan_lease() -> bool:
+    global _SERVER_AUTO_SCAN_LEASE_HANDLE
+    with _SERVER_AUTO_SCAN_LEASE_LOCK:
+        if _SERVER_AUTO_SCAN_LEASE_HANDLE is not None:
+            return True
+        path = _server_auto_scan_lease_path()
+        if path is None:
+            return True
+        handle: Optional[BinaryIO] = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            handle = path.open("a+b")
+            _lock_file_nonblocking(handle)
+        except OSError:
+            if handle is not None:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+            return False
+        _SERVER_AUTO_SCAN_LEASE_HANDLE = handle
+        return True
+
+
+def _release_server_auto_scan_lease() -> None:
+    global _SERVER_AUTO_SCAN_LEASE_HANDLE
+    with _SERVER_AUTO_SCAN_LEASE_LOCK:
+        handle = _SERVER_AUTO_SCAN_LEASE_HANDLE
+        _SERVER_AUTO_SCAN_LEASE_HANDLE = None
+    if handle is None:
+        return
+    try:
+        _unlock_file(handle)
+    except OSError:
+        pass
+    try:
+        handle.close()
+    except OSError:
+        pass
+
+
 def _normalize_server_auto_scan_config(raw: object) -> Optional[dict]:
     if not isinstance(raw, dict):
         return None
@@ -571,6 +660,29 @@ def _load_server_auto_scan_config() -> Optional[dict]:
         logging.warning("Failed to load server auto scan config", exc_info=True)
         return None
     return _normalize_server_auto_scan_config(payload)
+
+
+def _server_auto_scan_config_mtime() -> Optional[float]:
+    path = _server_auto_scan_config_path()
+    if path is None or not path.is_file():
+        return None
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _refresh_server_auto_scan_config_from_disk(last_mtime: Optional[float]) -> Optional[float]:
+    current_mtime = _server_auto_scan_config_mtime()
+    if current_mtime is None or current_mtime == last_mtime:
+        return current_mtime if current_mtime is not None else last_mtime
+    loaded = _load_server_auto_scan_config()
+    if loaded is None:
+        return current_mtime
+    current_config, _ = _get_server_auto_scan_config()
+    if loaded != current_config:
+        _set_server_auto_scan_config(loaded, persist=False)
+    return current_mtime
 
 
 def _set_server_auto_scan_config(config: Optional[dict], *, persist: bool = True) -> None:
@@ -809,7 +921,9 @@ def _server_auto_scan_loop() -> None:
     next_run_at: Optional[float] = None
     last_config_version = -1
     last_enabled = False
+    last_config_mtime = _server_auto_scan_config_mtime()
     while not _SERVER_AUTO_SCAN_STOP_EVENT.is_set():
+        last_config_mtime = _refresh_server_auto_scan_config_from_disk(last_config_mtime)
         config, config_version = _get_server_auto_scan_config()
         current_enabled = bool(config and config.get("enabled"))
         if config_version != last_config_version:
@@ -880,6 +994,9 @@ def _start_server_auto_scan() -> None:
     global _SERVER_AUTO_SCAN_THREAD
     if not ENV_SERVER_AUTO_SCAN_ENABLED:
         return
+    if not _try_acquire_server_auto_scan_lease():
+        logging.info("Server auto scan lease is already held by another process; skipping thread start")
+        return
     with _SERVER_AUTO_SCAN_LOCK:
         if _SERVER_AUTO_SCAN_THREAD and _SERVER_AUTO_SCAN_THREAD.is_alive():
             return
@@ -901,6 +1018,7 @@ def _stop_server_auto_scan() -> None:
         _SERVER_AUTO_SCAN_THREAD = None
     if thread and thread.is_alive():
         thread.join(timeout=2.0)
+    _release_server_auto_scan_lease()
     logging.info("Server auto scan thread stopped")
 
 
@@ -1261,13 +1379,43 @@ def ensure_data_dir() -> None:
     Path("data").mkdir(exist_ok=True)
 
 
+def configure_runtime(*, persist_startup_config: bool = True) -> dict:
+    loaded_auto_scan_config = _load_server_auto_scan_config()
+    should_persist = persist_startup_config and loaded_auto_scan_config is None
+    if loaded_auto_scan_config is None:
+        loaded_auto_scan_config = _default_server_auto_scan_config()
+        logging.info("No persisted server auto scan config found; using default startup config")
+    _set_server_auto_scan_config(
+        loaded_auto_scan_config,
+        persist=should_persist,
+    )
+    return loaded_auto_scan_config
+
+
+def _should_open_browser(host: str, no_browser: bool) -> bool:
+    if no_browser or not ENV_OPEN_BROWSER_ON_START:
+        return False
+    normalized_host = str(host or "").strip().lower()
+    return normalized_host in {"", "127.0.0.1", "localhost", "::1", "0.0.0.0"}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sports Arbitrage Scanner server")
+    parser.add_argument(
+        "--host",
+        default=ENV_APP_HOST,
+        help="Host interface to bind (default 127.0.0.1)",
+    )
     parser.add_argument(
         "--port",
         type=int,
         default=None,
         help="Port to run the local server on (default 5000, auto-fallback if busy)",
+    )
+    parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Do not open a browser automatically after startup",
     )
     args = parser.parse_args()
 
@@ -1279,25 +1427,17 @@ def main() -> None:
         )
     else:
         logging.getLogger().setLevel(logging.INFO)
-    loaded_auto_scan_config = _load_server_auto_scan_config()
-    persist_startup_config = loaded_auto_scan_config is None
-    if loaded_auto_scan_config is None:
-        loaded_auto_scan_config = _default_server_auto_scan_config()
-        logging.info("No persisted server auto scan config found; using default startup config")
-    _set_server_auto_scan_config(
-        loaded_auto_scan_config,
-        persist=persist_startup_config,
-    )
+    configure_runtime()
     _start_background_provider_services()
     _start_server_auto_scan()
     port = _choose_port(args.port)
-    if port > 0:
+    if port > 0 and _should_open_browser(args.host, args.no_browser):
         timer = threading.Timer(1.0, open_browser, args=(port,))
         timer.start()
     else:
         timer = None
     try:
-        app.run(port=port or 0, debug=False)
+        app.run(host=args.host, port=port or 0, debug=False)
     finally:
         _stop_server_auto_scan()
         _stop_background_provider_services()

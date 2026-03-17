@@ -107,10 +107,21 @@ SCAN_REQUEST_LOG_DIR = os.getenv(
     str(Path("data") / "request_logs"),
 ).strip()
 SCAN_REQUEST_LOG_MAX_BODY_CHARS_RAW = os.getenv("SCAN_REQUEST_LOG_MAX_BODY_CHARS", "2000").strip()
+SCAN_REQUEST_LOG_RETENTION_FILES_RAW = os.getenv(
+    "SCAN_REQUEST_LOG_RETENTION_FILES",
+    "20",
+).strip()
 try:
     SCAN_REQUEST_LOG_MAX_BODY_CHARS = max(0, int(float(SCAN_REQUEST_LOG_MAX_BODY_CHARS_RAW)))
 except (TypeError, ValueError):
     SCAN_REQUEST_LOG_MAX_BODY_CHARS = 2000
+try:
+    SCAN_REQUEST_LOG_RETENTION_FILES = max(
+        0,
+        int(float(SCAN_REQUEST_LOG_RETENTION_FILES_RAW)),
+    )
+except (TypeError, ValueError):
+    SCAN_REQUEST_LOG_RETENTION_FILES = 20
 
 LIVE_EVENT_MAX_FUTURE_SECONDS_RAW = os.getenv("LIVE_EVENT_MAX_FUTURE_SECONDS", "0").strip()
 LIVE_QUOTE_MAX_AGE_SECONDS_RAW = os.getenv("LIVE_QUOTE_MAX_AGE_SECONDS", "5").strip()
@@ -410,6 +421,32 @@ def _iso_now() -> str:
 def _provider_snapshot_filename(provider_key: object) -> str:
     token = re.sub(r"[^a-z0-9._-]+", "_", str(provider_key or "").strip().lower())
     return token or "provider"
+
+
+def _cleanup_old_request_logs(target_dir: Path, keep_path: Optional[Path] = None) -> None:
+    if SCAN_REQUEST_LOG_RETENTION_FILES <= 0:
+        return
+    try:
+        log_paths = sorted(
+            target_dir.glob("requests_*.jsonl"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return
+
+    kept = 0
+    for path in log_paths:
+        if keep_path is not None and path == keep_path:
+            kept += 1
+            continue
+        kept += 1
+        if kept <= SCAN_REQUEST_LOG_RETENTION_FILES:
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            continue
 
 
 def _cross_provider_match_tolerance_minutes() -> int:
@@ -918,6 +955,7 @@ class _ScanRequestLogger:
                     "max_body_chars": SCAN_REQUEST_LOG_MAX_BODY_CHARS,
                 }
             )
+            _cleanup_old_request_logs(target_dir, keep_path=path)
         except OSError as exc:
             self.enabled = False
             self.error = f"Failed to create request log file: {exc}"

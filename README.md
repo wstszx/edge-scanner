@@ -25,9 +25,29 @@ The scanner pulls odds from The Odds API across multiple regions (US, EU, UK, AU
 1. Clone this repo
 2. Install dependencies: `pip install -r requirements.txt`
 3. Get a free API key from [The Odds API](https://the-odds-api.com/)
-4. Run: `python app.py`
+4. Run locally: `python app.py`
 
-Your browser opens automatically. Enter your API key and scan.
+By default the development server binds to `127.0.0.1` and opens your browser automatically. Use `python app.py --host 0.0.0.0 --no-browser` only when you explicitly want LAN access.
+
+## Production Deployment
+
+Do not use Flask's built-in development server for production traffic.
+
+Recommended Linux split:
+
+1. Web service: `SERVER_AUTO_SCAN_ENABLED=0 gunicorn -w 2 --threads 8 -b 127.0.0.1:5000 wsgi:app`
+2. Background scanner: `SERVER_AUTO_SCAN_ENABLED=1 python auto_scan_worker.py`
+3. Reverse proxy: put Nginx in front of `127.0.0.1:5000` and terminate HTTPS there
+
+Notes:
+
+- `SERVER_AUTO_SCAN_ENABLED` now defaults to `0`, so background scans are opt-in
+- `SCAN_CUSTOM_PROVIDERS_ONLY=1` remains the safest low-cost mode for unattended scans
+- `auto_scan_worker.py` is single-process by design; if you accidentally start multiple copies, only one instance will acquire the auto-scan lease
+- keep the Flask/Gunicorn port private and expose only Nginx on `80/443`
+- rotate system logs with `logrotate` or your process manager
+
+More detail: `docs/production_deployment.md`
 
 ## Project Docs
 
@@ -270,8 +290,10 @@ Optional: write per-scan HTTP request logs (URL, params, status, response previe
 SCAN_REQUEST_LOG_ENABLED=1
 SCAN_REQUEST_LOG_DIR=data/request_logs
 SCAN_REQUEST_LOG_MAX_BODY_CHARS=2000
+SCAN_REQUEST_LOG_RETENTION_FILES=20
 ```
 When enabled, each scan writes a `requests_*.jsonl` file to `SCAN_REQUEST_LOG_DIR`.
+Older request logs are trimmed automatically to the newest `SCAN_REQUEST_LOG_RETENTION_FILES` files.
 The scan response includes:
 - `request_log.path`
 - `request_log.requests_logged`

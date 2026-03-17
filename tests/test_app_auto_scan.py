@@ -215,6 +215,39 @@ class ServerAutoScanAppTests(unittest.TestCase):
         mocked_start.assert_not_called()
         mocked_run_scan.assert_not_called()
 
+    def test_start_server_auto_scan_skips_thread_when_lease_is_held_elsewhere(self) -> None:
+        with (
+            patch.object(app_module, "ENV_SERVER_AUTO_SCAN_ENABLED", True),
+            patch.object(app_module, "_SERVER_AUTO_SCAN_THREAD", None),
+            patch.object(app_module, "_try_acquire_server_auto_scan_lease", return_value=False),
+            patch.object(app_module.threading, "Thread") as mocked_thread,
+        ):
+            app_module._start_server_auto_scan()
+
+        mocked_thread.assert_not_called()
+
+    def test_refresh_server_auto_scan_config_from_disk_updates_memory_when_file_changes(self) -> None:
+        current_config = {
+            "enabled": False,
+            "interval_minutes": 5,
+            "payload": {"sports": ["icehockey_nhl"]},
+        }
+        updated_config = {
+            "enabled": True,
+            "interval_minutes": 15,
+            "payload": {"sports": ["basketball_nba"]},
+        }
+        with (
+            patch.object(app_module, "_server_auto_scan_config_mtime", return_value=200.0),
+            patch.object(app_module, "_load_server_auto_scan_config", return_value=updated_config),
+            patch.object(app_module, "_get_server_auto_scan_config", return_value=(current_config, 1)),
+            patch.object(app_module, "_set_server_auto_scan_config") as mocked_set,
+        ):
+            refreshed_mtime = app_module._refresh_server_auto_scan_config_from_disk(100.0)
+
+        self.assertEqual(refreshed_mtime, 200.0)
+        mocked_set.assert_called_once_with(updated_config, persist=False)
+
 
 if __name__ == "__main__":
     unittest.main()

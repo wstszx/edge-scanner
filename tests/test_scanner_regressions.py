@@ -1,7 +1,10 @@
 import asyncio
 import concurrent.futures
 import inspect
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import scanner
@@ -126,6 +129,28 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertEqual(result.get("events"), [{"id": "event-1"}])
         stats = result.get("stats") or {}
         self.assertEqual(stats.get("context"), {"scan_mode": "live", "live": True})
+
+    def test_cleanup_old_request_logs_keeps_newest_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_dir = Path(tmpdir)
+            created = []
+            for index in range(4):
+                path = target_dir / f"requests_20260317_12000{index}.jsonl"
+                path.write_text(f"log-{index}\n", encoding="utf-8")
+                os.utime(path, (100 + index, 100 + index))
+                created.append(path)
+
+            with patch.object(scanner, "SCAN_REQUEST_LOG_RETENTION_FILES", 2):
+                scanner._cleanup_old_request_logs(target_dir)
+
+            remaining = sorted(path.name for path in target_dir.glob("requests_*.jsonl"))
+            self.assertEqual(
+                remaining,
+                [
+                    created[2].name,
+                    created[3].name,
+                ],
+            )
 
     def test_run_scan_async_live_mode_skips_odds_api_and_passes_scan_mode(self) -> None:
         def _fake_scan_single_sport(**kwargs):
