@@ -59,8 +59,8 @@ def _sample_arbitrage_opportunity(over_price: float = 2.37) -> dict:
                 "effective_price": over_price,
                 "point": 6.5,
                 "max_stake": 50.0,
-                "book_event_id": "sx-evt-1",
-                "book_event_url": "https://sx.bet/markets/evt-1",
+                "book_event_id": "L18053574",
+                "book_event_url": "https://sx.bet/hockey/nhl/game-lines/L18053574",
                 "quote_source": "ws",
                 "quote_updated_at": "2026-03-15T09:14:58Z",
                 "raw_percentage_odds": "50875000000000000000",
@@ -216,6 +216,44 @@ class BrowserScanFlowTests(unittest.TestCase):
                     self.assertIn("1", page.locator("#table-count").inner_text())
                     self.assertEqual(page.locator("#provider-data-list .provider-card").count(), 1)
                     self.assertIn("SX Bet", page.locator("#provider-data-list").inner_text())
+                    self.assertEqual(
+                        page.locator("#arb-desktop-list .arb-opportunity-leg a.arb-leg-open-link").first.get_attribute("href"),
+                        "https://sx.bet/hockey/nhl/game-lines/L18053574/OVER_UNDER",
+                    )
+
+                    deep_links = page.evaluate(
+                        """() => {
+                          const sxBook = {
+                            key: 'sx_bet',
+                            name: 'SX Bet',
+                            eventId: 'L18053574',
+                            eventUrl: 'https://sx.bet/hockey/nhl/game-lines/L18053574',
+                          };
+                          return {
+                            moneyline: resolveBookmakerOpenUrl(sxBook, { event_id: 'L18053574', market: 'h2h' }),
+                            spread: resolveBookmakerOpenUrl(sxBook, { event_id: 'L18053574', market: 'spreads' }),
+                            total: resolveBookmakerOpenUrl(sxBook, { event_id: 'L18053574', market: 'totals' }),
+                            untouched: resolveBookmakerOpenUrl(
+                              {
+                                key: 'betdex',
+                                name: 'BetDEX',
+                                eventId: '20578',
+                                eventUrl: 'https://www.betdex.com/events/icehky/nhl/20578?market=359445',
+                              },
+                              { event_id: '20578', market: 'totals' }
+                            ),
+                          };
+                        }"""
+                    )
+                    self.assertEqual(
+                        deep_links,
+                        {
+                            "moneyline": "https://sx.bet/hockey/nhl/game-lines/L18053574/MONEY_LINE",
+                            "spread": "https://sx.bet/hockey/nhl/game-lines/L18053574/SPREAD",
+                            "total": "https://sx.bet/hockey/nhl/game-lines/L18053574/OVER_UNDER",
+                            "untouched": "https://www.betdex.com/events/icehky/nhl/20578?market=359445",
+                        },
+                    )
 
                     browser.close()
             finally:

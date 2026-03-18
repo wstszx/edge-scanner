@@ -6734,6 +6734,61 @@
       }
     }
 
+    function isSxBetBook(book, url = '') {
+      const key = (book?.key || '').trim().toLowerCase();
+      const name = (book?.name || '').trim().toLowerCase();
+      if (key === 'sx_bet' || name === 'sx bet') {
+        return true;
+      }
+      try {
+        const host = new URL(normalizeUrl(url)).hostname.toLowerCase();
+        return host === 'sx.bet' || host.endsWith('.sx.bet');
+      } catch (err) {
+        return false;
+      }
+    }
+
+    function resolveSxBetMarketSegment(market) {
+      const normalized = `${market || ''}`.trim().toLowerCase();
+      if (!normalized) return '';
+      if (normalized === 'h2h' || normalized === 'h2h_3_way') {
+        return 'MONEY_LINE';
+      }
+      if (normalized === 'spreads' || normalized === 'alternate_spreads' || normalized.startsWith('spreads_')) {
+        return 'SPREAD';
+      }
+      if (normalized === 'totals' || normalized === 'alternate_totals' || normalized.startsWith('totals_')) {
+        return 'OVER_UNDER';
+      }
+      return '';
+    }
+
+    function withSxBetMarketSegment(url, market) {
+      const normalizedUrl = normalizeUrl(url);
+      if (!normalizedUrl) return '';
+      const marketSegment = resolveSxBetMarketSegment(market);
+      if (!marketSegment) return normalizedUrl;
+      try {
+        const parsed = new URL(normalizedUrl);
+        const host = parsed.hostname.toLowerCase();
+        if (host !== 'sx.bet' && !host.endsWith('.sx.bet')) {
+          return normalizedUrl;
+        }
+        const trimmedPath = (parsed.pathname || '/').replace(/\/+$/, '');
+        const match = trimmedPath.match(/^(.*\/game-lines\/[^/]+)(?:\/([^/]+))?$/i);
+        if (!match) {
+          return normalizedUrl;
+        }
+        if ((match[2] || '').toUpperCase() === marketSegment) {
+          return parsed.toString();
+        }
+        parsed.pathname = `${match[1]}/${marketSegment}`;
+        return parsed.toString();
+      } catch (err) {
+        return normalizedUrl;
+      }
+    }
+
     function resolveBookmakerOpenUrl(book, opp) {
       const eventId = `${book?.eventId ?? opp?.event_id ?? ''}`.trim();
       const isPurebet = isPurebetBook(book);
@@ -6742,7 +6797,12 @@
         : '';
       if (purebetEventPage) return purebetEventPage;
       const directEventUrl = normalizeUrl(book?.eventUrl);
-      if (directEventUrl) return directEventUrl;
+      if (directEventUrl) {
+        if (isSxBetBook(book, directEventUrl)) {
+          return withSxBetMarketSegment(directEventUrl, opp?.market);
+        }
+        return directEventUrl;
+      }
       const baseUrl = resolveBookmakerLink(book);
       const templated = withTemplatePlaceholders(baseUrl, book, opp);
       if (!templated) {
