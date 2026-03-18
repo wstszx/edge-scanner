@@ -5806,7 +5806,9 @@
           return;
         }
         refs.section?.classList.remove('hidden');
-        const point = leg.point !== undefined && leg.point !== null ? ` (${formatLine(leg.point)})` : '';
+        const point = leg.point !== undefined && leg.point !== null
+          ? ` (${formatLineForMarket(leg.point, selectedArbOpp.market)})`
+          : '';
         if (refs.title) refs.title.textContent = `${leg.outcome || '-'}${point}`;
         const isBaseMode = arbCalculatorState?.mode === `base_${idx}`;
         const maxStake = Number(leg.maxStake);
@@ -6103,8 +6105,8 @@
             <td>${formatPercent(opp.probability_percent)}</td>
             <td>${formatGapCell(opp)}</td>
             <td>${formatTaggedEventCell(opp.event || '', [sportLabel, marketLabel], commence)}</td>
-            <td>${formatMiddleSide(opp.side_a)}</td>
-            <td>${formatMiddleSide(opp.side_b)}</td>
+            <td>${formatMiddleSide(opp.side_a, opp.market)}</td>
+            <td>${formatMiddleSide(opp.side_b, opp.market)}</td>
             <td>${formatMiddleZoneCell(opp)}</td>
             <td class="profit-cell">${formatProfit(winBoth)}</td>
             <td class="profit-cell">${formatProfit(miss)}</td>
@@ -6320,9 +6322,9 @@
 
     function formatPlusMarket(opp) {
       if (!opp) return '';
-      if ((opp.market === 'spreads' || opp.market === 'totals') && opp.market_point !== undefined && opp.market_point !== null) {
+      if ((isDisplaySpreadMarket(opp.market) || isDisplayTotalMarket(opp.market)) && opp.market_point !== undefined && opp.market_point !== null) {
         const label = translateMarketLabel(opp.market || '');
-        return `${label} (${formatLine(opp.market_point)})`;
+        return `${label} (${formatLineForMarket(opp.market_point, opp.market)})`;
       }
       return translateMarketLabel(opp.market || '');
     }
@@ -6330,7 +6332,9 @@
     function formatPlusBet(opp) {
       if (!opp?.bet) return '';
       const exchangeBadge = opp.bet.is_exchange ? `<span class="exchange-badge">${t('exchange')}</span>` : '';
-      const point = opp.bet.point !== undefined && opp.bet.point !== null ? ` (${formatLine(opp.bet.point)})` : '';
+      const point = opp.bet.point !== undefined && opp.bet.point !== null
+        ? ` (${formatLineForMarket(opp.bet.point, opp.market)})`
+        : '';
       const bookBadge = opp.bet.soft_book ? `<span class="outcome-book">${escapeHtml(opp.bet.soft_book)}</span>` : '';
       const effectiveNote =
         opp.bet.is_exchange && opp.bet.effective_odds && opp.bet.effective_odds !== opp.bet.soft_odds
@@ -6406,7 +6410,9 @@
       if (!item) return '';
       const { legIndex = null, opp = null, sportLabel = '', marketLabel = '' } = options;
       const quoteMeta = buildQuoteMeta(item);
-      const point = item.point !== undefined && item.point !== null ? ` (${formatLine(item.point)})` : '';
+      const point = item.point !== undefined && item.point !== null
+        ? ` (${formatLineForMarket(item.point, opp?.market)})`
+        : '';
       const hasStake = Number.isFinite(Number(item.stake));
       const hasPayout = Number.isFinite(Number(item.payout));
       const stakeValue = hasStake ? formatCurrency(Number(item.stake)) : '-';
@@ -6476,7 +6482,9 @@
       if (!item) return '-';
       const { legIndex = null, opp = null } = options;
       const quoteMeta = buildQuoteMeta(item);
-      const point = item.point !== undefined && item.point !== null ? ` (${formatLine(item.point)})` : '';
+      const point = item.point !== undefined && item.point !== null
+        ? ` (${formatLineForMarket(item.point, opp?.market)})`
+        : '';
       const stakeValue = Number.isFinite(Number(item.stake)) ? formatCurrency(Number(item.stake)) : '-';
       const payoutValue = Number.isFinite(Number(item.payout)) ? formatCurrency(Number(item.payout)) : '-';
       const availableValue =
@@ -6850,7 +6858,7 @@
       const marketLabel = translateMarketLabel(opp.market || '');
       const point = opp.best_odds?.[0]?.point ?? opp.point;
       if (point !== undefined && point !== null) {
-        return `${marketLabel} (${point})`;
+        return `${marketLabel} (${formatLineForMarket(point, opp.market)})`;
       }
       return marketLabel;
     }
@@ -7077,8 +7085,8 @@
             <p class="arb-mobile-meta">${escapeHtml(context.commence || t('tbd'))}</p>
           </div>
           <div class="arb-mobile-outcomes">
-            <div class="arb-mobile-outcome">${formatMiddleSide(opp?.side_a)}</div>
-            <div class="arb-mobile-outcome">${formatMiddleSide(opp?.side_b)}</div>
+            <div class="arb-mobile-outcome">${formatMiddleSide(opp?.side_a, opp?.market)}</div>
+            <div class="arb-mobile-outcome">${formatMiddleSide(opp?.side_b, opp?.market)}</div>
           </div>
           <div class="arb-mobile-metrics">
             ${formatMobileMetric(t('table_gap'), formatGapCell(opp))}
@@ -7263,9 +7271,23 @@
         </div>`;
     }
 
-    function formatMiddleSide(side) {
+    function normalizeDisplayMarketKey(market) {
+      return `${market || ''}`.trim().toLowerCase();
+    }
+
+    function isDisplaySpreadMarket(market) {
+      const token = normalizeDisplayMarketKey(market);
+      return token === 'spreads' || token === 'alternate_spreads' || token.startsWith('spreads_');
+    }
+
+    function isDisplayTotalMarket(market) {
+      const token = normalizeDisplayMarketKey(market);
+      return token === 'totals' || token === 'alternate_totals' || token.startsWith('totals_');
+    }
+
+    function formatMiddleSide(side, market = '') {
       if (!side) return '';
-      const line = side.line !== undefined && side.line !== null ? ` ${formatLine(side.line)}` : '';
+      const line = side.line !== undefined && side.line !== null ? ` ${formatLineForMarket(side.line, market)}` : '';
       const odds = side.effective_price ? formatOddsDisplay(side.effective_price) : formatOddsDisplay(side.price);
       const availableValue =
         side.max_stake !== undefined &&
@@ -7300,6 +7322,14 @@
       const num = Number(value);
       const sign = num > 0 ? '+' : '';
       return `${sign}${num.toFixed(1)}`;
+    }
+
+    function formatLineForMarket(value, market) {
+      if (value === null || value === undefined || Number.isNaN(value)) return '';
+      if (isDisplayTotalMarket(market)) {
+        return Number(value).toFixed(1);
+      }
+      return formatLine(value);
     }
 
     function roiBandClass(roi) {

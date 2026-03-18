@@ -4532,7 +4532,7 @@ body {
 
 .arb-calculator-card .arb-calc-strip {
   display: grid;
-  grid-template-columns: 92px 112px minmax(0, 1fr) 82px;
+  grid-template-columns: 118px 112px minmax(0, 1fr) 86px;
   align-items: stretch;
   border-bottom: 1px solid #9cafc2;
   background: #d8d8da;
@@ -4567,9 +4567,11 @@ body {
 }
 
 .arb-calculator-card .arb-calc-strip-score strong {
-  font-size: clamp(1.36rem, 1.85vw, 1.7rem);
+  font-size: clamp(1.26rem, 1.72vw, 1.62rem);
   line-height: 1;
   letter-spacing: -0.04em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .arb-calculator-card .arb-calc-strip-sport {
@@ -4950,17 +4952,28 @@ body {
 }
 
 .arb-calculator-card .arb-calc-leg-edge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 4.9rem;
+  padding: 0.12rem 0.42rem;
+  border-radius: 999px;
+  background: rgba(95, 114, 134, 0.12);
   font-size: 0.68rem;
   font-weight: 800;
   line-height: 1;
   color: #5f7286;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .arb-calculator-card .arb-calc-leg-edge.gain {
+  background: rgba(45, 138, 70, 0.12);
   color: #2d8a46;
 }
 
 .arb-calculator-card .arb-calc-leg-edge.loss {
+  background: rgba(179, 63, 85, 0.12);
   color: #b33f55;
 }
 
@@ -5325,7 +5338,7 @@ body {
 
 .arb-calculator-card .arb-calc-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.25fr) minmax(96px, 0.95fr);
   gap: 0;
   margin-top: 0;
   min-height: 32px;
@@ -5382,6 +5395,8 @@ body {
   color: #4b6178;
   font-size: 0.76rem;
   line-height: 1.05;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .arb-calculator-card #arb-calc-profit.gain,
@@ -5406,7 +5421,7 @@ body {
 
 @media (max-width: 1680px) {
   .arb-calculator-card .arb-calc-strip {
-    grid-template-columns: 88px minmax(0, 1fr) 78px;
+    grid-template-columns: 106px minmax(0, 1fr) 82px;
   }
 
   .arb-calculator-card .arb-calc-strip-sport {
