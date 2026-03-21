@@ -1994,7 +1994,32 @@ def _live_state_is_explicitly_live(state: Optional[dict]) -> Optional[bool]:
 
 
 def _event_is_explicitly_live(event: dict) -> Optional[bool]:
-    return _live_state_is_explicitly_live(_event_live_state(event))
+    if not isinstance(event, dict):
+        return None
+
+    saw_explicit_false = False
+    event_live_state = _event_live_state(event)
+    explicit_event_state = _live_state_is_explicitly_live(event_live_state)
+    if explicit_event_state is True:
+        return True
+    if explicit_event_state is False:
+        saw_explicit_false = True
+
+    bookmakers = event.get("bookmakers")
+    if isinstance(bookmakers, list):
+        for bookmaker in bookmakers:
+            if not isinstance(bookmaker, dict):
+                continue
+            bookmaker_live_state = bookmaker.get("live_state")
+            explicit_bookmaker_state = _live_state_is_explicitly_live(bookmaker_live_state)
+            if explicit_bookmaker_state is True:
+                return True
+            if explicit_bookmaker_state is False:
+                saw_explicit_false = True
+
+    if saw_explicit_false:
+        return False
+    return None
 
 
 def _event_max_past_seconds() -> int:

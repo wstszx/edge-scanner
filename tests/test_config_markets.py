@@ -16,12 +16,15 @@ class ConfigMarketsTests(unittest.TestCase):
         )
 
     def test_unknown_soccer_league_uses_soccer_defaults(self) -> None:
-        self.assertEqual(markets_for_sport("soccer_uefa_champs_league"), ["spreads", "totals"])
+        self.assertEqual(
+            markets_for_sport("soccer_uefa_champs_league"),
+            ["h2h", "h2h_3_way", "spreads", "totals"],
+        )
 
     def test_azuro_football_league_uses_soccer_defaults(self) -> None:
         self.assertEqual(
             markets_for_sport("azuro__football__premier-league__england"),
-            ["spreads", "totals"],
+            ["h2h", "h2h_3_way", "spreads", "totals"],
         )
 
     def test_azuro_basketball_league_uses_core_markets(self) -> None:

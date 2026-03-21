@@ -211,6 +211,96 @@ class E2EPipelineAdditionalTests(unittest.TestCase):
         self.assertEqual(summary.get("events_scanned"), 1)
         self.assertEqual(summary.get("sports_scanned"), 1)
 
+    def test_prematch_soccer_pipeline_requests_and_analyzes_h2h_markets(self) -> None:
+        sports_payload = [
+            {
+                "key": SOCCER_LIVE_SPORT_KEY,
+                "title": "MLS",
+                "active": True,
+                "has_outrights": False,
+            }
+        ]
+        odds_events = [
+            {
+                "id": "prematch-soccer-event",
+                "sport_key": SOCCER_LIVE_SPORT_KEY,
+                "home_team": SOCCER_HOME_TEAM,
+                "away_team": SOCCER_AWAY_TEAM,
+                "commence_time": SOCCER_COMMENCE_TIME,
+                "bookmakers": [
+                    {
+                        "key": "book_a",
+                        "title": "Book A",
+                        "event_id": "book-a-soccer-event",
+                        "event_url": "https://example.com/book-a/prematch-soccer-event",
+                        "markets": [
+                            {
+                                "key": "h2h",
+                                "outcomes": [
+                                    {"name": SOCCER_HOME_TEAM, "price": 2.24},
+                                    {"name": SOCCER_AWAY_TEAM, "price": 1.8},
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "key": "book_b",
+                        "title": "Book B",
+                        "event_id": "book-b-soccer-event",
+                        "event_url": "https://example.com/book-b/prematch-soccer-event",
+                        "markets": [
+                            {
+                                "key": "h2h",
+                                "outcomes": [
+                                    {"name": SOCCER_HOME_TEAM, "price": 1.8},
+                                    {"name": SOCCER_AWAY_TEAM, "price": 2.24},
+                                ],
+                            }
+                        ],
+                    },
+                ],
+            }
+        ]
+
+        with (
+            patch.object(scanner, "fetch_sports", return_value=sports_payload) as mocked_fetch_sports,
+            patch.object(
+                scanner,
+                "fetch_odds_for_sport_multi_market",
+                return_value=(odds_events, []),
+            ) as mocked_fetch_odds,
+            patch.object(scanner, "_persist_provider_snapshots", return_value={}),
+            patch.object(scanner, "_persist_cross_provider_match_report", return_value=""),
+            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
+            patch.object(scanner, "time") as mocked_time,
+        ):
+            mocked_time.time.return_value = SCAN_EPOCH
+            mocked_time.perf_counter.side_effect = (1500.0 + i * 0.01 for i in range(10000))
+            result = scanner.run_scan(
+                api_key="dummy-key",
+                sports=[SOCCER_LIVE_SPORT_KEY],
+                scan_mode="prematch",
+                regions=["us"],
+                include_providers=[],
+                stake_amount=100.0,
+            )
+
+        mocked_fetch_sports.assert_called_once()
+        mocked_fetch_odds.assert_called_once()
+        fetch_args = mocked_fetch_odds.call_args.args
+        self.assertEqual(fetch_args[1], SOCCER_LIVE_SPORT_KEY)
+        self.assertIn("h2h", fetch_args[2])
+        self.assertIn("h2h_3_way", fetch_args[2])
+
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("scan_mode"), "prematch")
+        arbitrage = result.get("arbitrage") or {}
+        self.assertGreater(arbitrage.get("opportunities_count", 0), 0)
+        first = arbitrage["opportunities"][0]
+        self.assertEqual(first.get("market"), "h2h")
+        self.assertEqual(first.get("home_team"), SOCCER_HOME_TEAM)
+        self.assertEqual(first.get("away_team"), SOCCER_AWAY_TEAM)
+
     def test_live_e2e_pipeline_from_provider_fetch_to_arbitrage_output(self) -> None:
         sx_fetcher = _make_live_provider_fetcher(
             "sx_bet",

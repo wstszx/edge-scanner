@@ -168,6 +168,33 @@ class InplayArbitrageAdditionalTests(unittest.TestCase):
         self.assertEqual(stats.get("dropped_future"), 0)
         self.assertEqual(stats.get("suspicious_explicit_live_future"), 1)
 
+    def test_filter_live_events_keeps_merged_event_when_any_bookmaker_is_explicitly_live(self) -> None:
+        events = [
+            {
+                "id": "merged-live-event",
+                "commence_time": "2023-11-14T22:13:20Z",
+                "live_state": {"status": "scheduled", "is_live": False},
+                "bookmakers": [
+                    {
+                        "key": "book_a",
+                        "live_state": {"status": "scheduled", "is_live": False},
+                    },
+                    {
+                        "key": "book_b",
+                        "live_state": {"status": "live", "is_live": True},
+                    },
+                ],
+            }
+        ]
+
+        with patch("scanner.time.time", return_value=1_700_000_000):
+            filtered, stats = scanner._filter_live_events_for_scan(events)
+
+        filtered_ids = {event.get("id") for event in filtered}
+        self.assertEqual(filtered_ids, {"merged-live-event"})
+        self.assertEqual(stats.get("dropped_not_live_state"), 0)
+        self.assertEqual(stats.get("dropped_terminal_state"), 0)
+
     def test_live_state_compatibility_enforces_clock_tolerance(self) -> None:
         state_a = {"status": "live", "period": "Q2", "score": "55-50", "clock": "05:00"}
         state_b = {"status": "live", "period": "Q2", "score": "50-55", "clock": "08:10"}

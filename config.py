@@ -275,7 +275,7 @@ SPORT_OPTIONS = [
 DEFAULT_SPORT_OPTIONS = SPORT_OPTIONS
 
 AMERICAN_MARKETS = ["h2h", "spreads", "totals"]
-SOCCER_MARKETS = ["spreads", "totals"]
+SOCCER_MARKETS = ["h2h", "h2h_3_way", "spreads", "totals"]
 GENERIC_MARKETS = ["h2h"]
 
 ROI_BANDS = [
