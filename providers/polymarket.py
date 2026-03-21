@@ -164,6 +164,29 @@ SPORT_ALIASES: Dict[str, Sequence[str]] = {
     "soccer_france_ligue_one": ("ligue-1", "ligue-1-uber-eats", "ligue1"),
     "soccer_usa_mls": ("mls", "major-league-soccer"),
 }
+SPORT_RESULT_LEAGUE_HINTS: Dict[str, Sequence[str]] = {
+    "basketball_ncaab": ("cbb", "cwbb"),
+    "basketball_nba": ("nba",),
+    "soccer_epl": ("epl",),
+    "soccer_germany_bundesliga": ("bun",),
+    "soccer_italy_serie_a": ("sea",),
+    "soccer_france_ligue_one": ("fl1",),
+    "soccer_usa_mls": ("mls",),
+}
+TEAM_LOOKUP_STOPWORDS = {
+    "fc",
+    "cf",
+    "sc",
+    "ac",
+    "afc",
+    "club",
+    "the",
+}
+TEAM_LOOKUP_ABBREVIATIONS: Dict[str, Sequence[str]] = {
+    "mich": ("michigan",),
+    "stlou": ("saint louis", "st louis"),
+    "osu": ("ohio state",),
+}
 
 
 class ProviderError(Exception):
@@ -818,6 +841,52 @@ def _team_token(value: object) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _team_lookup_aliases(value: object, _seen: Optional[set[str]] = None) -> set[str]:
+    text = _clean_team_name(value).lower()
+    if not text:
+        return set()
+    seen = set(_seen or ())
+    base_token = _normalize_token(text).replace("-", "")
+    if base_token:
+        if base_token in seen:
+            return set()
+        seen.add(base_token)
+    text = re.sub(r"\bsaint\b", "st", text)
+    words = [
+        token
+        for token in re.sub(r"[^a-z0-9]+", " ", text).split()
+        if token and token not in TEAM_LOOKUP_STOPWORDS
+    ]
+    if not words:
+        return set()
+    aliases: set[str] = set()
+    compact = "".join(words)
+    spaced = " ".join(words)
+    aliases.add(spaced)
+    aliases.add(compact)
+    initials = "".join(word[0] for word in words if word)
+    if len(initials) >= 2:
+        aliases.add(initials)
+    for length in range(1, len(words) + 1):
+        segment_words = words[:length]
+        segment_spaced = " ".join(segment_words)
+        segment_compact = "".join(segment_words)
+        if segment_spaced:
+            aliases.add(segment_spaced)
+        if segment_compact:
+            aliases.add(segment_compact)
+    if compact:
+        for prefix_length in range(4, min(len(compact), 7) + 1):
+            aliases.add(compact[:prefix_length])
+    for token in list(aliases):
+        normalized = _normalize_token(token).replace("-", "")
+        for expansion in TEAM_LOOKUP_ABBREVIATIONS.get(normalized, ()):
+            expanded_aliases = _team_lookup_aliases(expansion, seen | {normalized})
+            if expanded_aliases:
+                aliases.update(expanded_aliases)
+    return {alias for alias in aliases if len(alias) >= 2}
+
+
 def _extract_matchup_from_text(text: object) -> Optional[Tuple[str, str]]:
     raw = _normalize_text(text)
     if not raw:
@@ -1151,6 +1220,139 @@ def _sports_result_is_tradeable(payload: object) -> bool:
     }:
         return False
     return True
+
+
+def _sports_result_lookup_keys(payload: object) -> List[str]:
+    if not isinstance(payload, dict):
+        return []
+    keys: List[str] = []
+    for value in (
+        payload.get("gameId"),
+        payload.get("metadataGameId"),
+        payload.get("slug"),
+        payload.get("marketSlug"),
+        payload.get("eventSlug"),
+        payload.get("gameSlug"),
+    ):
+        token = _normalize_text(value)
+        if token and token not in keys:
+            keys.append(token)
+    return keys
+
+
+def _sports_result_league_tokens(payload: object) -> List[str]:
+    if not isinstance(payload, dict):
+        return []
+    tokens: List[str] = []
+
+    def _append(token: object) -> None:
+        normalized = _normalize_token(token)
+        if normalized and normalized not in tokens:
+            tokens.append(normalized)
+
+    for value in (
+        payload.get("leagueAbbreviation"),
+        payload.get("league"),
+        payload.get("sport"),
+    ):
+        _append(value)
+    return tokens
+
+
+def _sports_result_matches_sport(payload: object, sport_key: str) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    result_tokens = set(_sports_result_league_tokens(payload))
+    if not result_tokens:
+        return True
+
+    sport_tokens = {
+        _normalize_token(alias)
+        for alias in (*SPORT_ALIASES.get(sport_key, ()), *SPORT_RESULT_LEAGUE_HINTS.get(sport_key, ()))
+        if _normalize_token(alias)
+    }
+    if result_tokens.intersection(sport_tokens):
+        return True
+
+    sport_family = _normalize_token(str(sport_key).split("_", 1)[0])
+    return bool(sport_family) and result_tokens == {sport_family}
+
+
+def _event_sports_league_tokens(event: object, sport_key: str = "") -> List[str]:
+    if not isinstance(event, dict):
+        return []
+    tokens: List[str] = []
+
+    def _append(token: object) -> None:
+        normalized = _normalize_token(token)
+        if normalized and normalized not in tokens:
+            tokens.append(normalized)
+
+    slug = _normalize_text(event.get("slug"))
+    slug_parts = [part for part in slug.split("-") if part]
+    if len(slug_parts) >= 4 and all(part.isdigit() for part in slug_parts[-3:]):
+        _append(slug_parts[0])
+
+    _, tag_slugs = _event_tags(event)
+    for tag_slug in sorted(tag_slugs):
+        _append(tag_slug)
+
+    for alias in SPORT_ALIASES.get(sport_key, ()):
+        _append(alias)
+    for alias in SPORT_RESULT_LEAGUE_HINTS.get(sport_key, ()):
+        _append(alias)
+    return tokens
+
+
+def _sports_result_matches_event(
+    payload: object,
+    event: object,
+    sport_key: str,
+) -> bool:
+    if not isinstance(payload, dict) or not isinstance(event, dict):
+        return False
+    matchup = _extract_matchup(event)
+    if not matchup:
+        return False
+
+    result_leagues = {
+        _normalize_token(payload.get("leagueAbbreviation")),
+        _normalize_token(payload.get("league")),
+    }
+    result_leagues.discard("")
+    event_leagues = set(_event_sports_league_tokens(event, sport_key))
+    if event_leagues and result_leagues and not event_leagues.intersection(result_leagues):
+        return False
+
+    event_home_aliases = _team_lookup_aliases(matchup[0])
+    event_away_aliases = _team_lookup_aliases(matchup[1])
+    result_home_aliases = _team_lookup_aliases(payload.get("homeTeam"))
+    result_away_aliases = _team_lookup_aliases(payload.get("awayTeam"))
+    if not event_home_aliases or not event_away_aliases:
+        return False
+    if not result_home_aliases or not result_away_aliases:
+        return False
+    direct_match = bool(event_home_aliases.intersection(result_home_aliases)) and bool(
+        event_away_aliases.intersection(result_away_aliases)
+    )
+    swapped_match = bool(event_home_aliases.intersection(result_away_aliases)) and bool(
+        event_away_aliases.intersection(result_home_aliases)
+    )
+    return direct_match or swapped_match
+
+
+def _recent_sport_result_index(results: object) -> Dict[str, dict]:
+    index: Dict[str, dict] = {}
+    if not isinstance(results, dict):
+        return index
+    for payload in results.values():
+        if not isinstance(payload, dict):
+            continue
+        copied = dict(payload)
+        for key in _sports_result_lookup_keys(payload):
+            if key and key not in index:
+                index[key] = copied
+    return index
 
 
 def _event_sports_result_keys(event: object) -> List[str]:
@@ -3170,6 +3372,7 @@ async def fetch_events_async(
         "realtime_sports_event_lookups": 0,
         "realtime_sports_events_supplemented": 0,
         "realtime_sports_event_lookup_errors": 0,
+        "realtime_sports_matchup_hits": 0,
         "realtime_sports_state_hits": 0,
         "realtime_sports_state_filtered_count": 0,
         "realtime_owner_active": False,
@@ -3225,13 +3428,18 @@ async def fetch_events_async(
     stats["payload_cache"] = payload_meta.get("cache", "miss")
     stats["pages_fetched"] += int(payload_meta.get("pages_fetched", 0) or 0)
     stats["retries_used"] += int(payload_meta.get("retries_used", 0) or 0)
+    recent_sport_results: Dict[str, dict] = {}
+    recent_sport_result_index: Dict[str, dict] = {}
     if realtime_manager is not None and _sports_websocket_enabled():
         recent_sport_results = realtime_manager.get_sport_results(
             max_age_seconds=max(120.0, _realtime_owner_stale_seconds())
         )
+        recent_sport_result_index = _recent_sport_result_index(recent_sport_results)
         live_game_ids: List[str] = []
         for sport_result in recent_sport_results.values():
             if not _sports_result_is_tradeable(sport_result):
+                continue
+            if not _sports_result_matches_sport(sport_result, sport_key):
                 continue
             game_id = _sports_result_game_id(sport_result)
             if game_id and game_id not in live_game_ids:
@@ -3273,7 +3481,9 @@ async def fetch_events_async(
             filtered_by_realtime_state = False
             if realtime_manager is not None and _sports_websocket_enabled():
                 for sport_result_key in _event_sports_result_keys(event):
-                    realtime_state = realtime_manager.get_sport_result(sport_result_key)
+                    realtime_state = recent_sport_result_index.get(sport_result_key)
+                    if realtime_state is None:
+                        realtime_state = realtime_manager.get_sport_result(sport_result_key)
                     if isinstance(realtime_state, dict):
                         stats["realtime_sports_state_hits"] += 1
                         if not _sports_result_is_tradeable(realtime_state):
@@ -3282,6 +3492,16 @@ async def fetch_events_async(
                             filtered_by_realtime_state = True
                             realtime_state = None
                             break
+                        break
+                if realtime_state is None and recent_sport_results:
+                    for sport_result in recent_sport_results.values():
+                        if not _sports_result_is_tradeable(sport_result):
+                            continue
+                        if not _sports_result_matches_event(sport_result, event, sport_key):
+                            continue
+                        realtime_state = dict(sport_result)
+                        stats["realtime_sports_state_hits"] += 1
+                        stats["realtime_sports_matchup_hits"] += 1
                         break
                 if filtered_by_realtime_state:
                     continue

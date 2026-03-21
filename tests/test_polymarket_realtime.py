@@ -512,8 +512,29 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
                         "elapsed": "61",
                         "live": True,
                     },
+                    "leagueAbbreviation": "nba",
+                },
+                "10077242": {
+                    "gameId": 10077242,
+                    "status": "InProgress",
+                    "homeTeam": "NYM",
+                    "awayTeam": "HOU",
+                    "leagueAbbreviation": "mlb",
                 }
             }
+        )
+
+        supplemental_loader = AsyncMock(
+            return_value=(
+                [live_event],
+                {
+                    "game_ids_requested": 1,
+                    "lookups": 1,
+                    "events_added": 1,
+                    "retries_used": 0,
+                    "lookup_errors": 0,
+                },
+            )
         )
 
         with (
@@ -532,22 +553,7 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
                     )
                 ),
             ),
-            patch.object(
-                polymarket,
-                "_load_game_events_by_ids_async",
-                new=AsyncMock(
-                    return_value=(
-                        [live_event],
-                        {
-                            "game_ids_requested": 1,
-                            "lookups": 1,
-                            "events_added": 1,
-                            "retries_used": 0,
-                            "lookup_errors": 0,
-                        },
-                    )
-                ),
-            ),
+            patch.object(polymarket, "_load_game_events_by_ids_async", new=supplemental_loader),
             patch.object(
                 polymarket,
                 "_load_clob_quote_map_async",
@@ -589,6 +595,7 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("evt-live", live_ids)
         live_event_out = next(event for event in events if event["id"] == "evt-live")
         self.assertEqual(live_event_out["live_state"]["status"], "live")
+        self.assertEqual(supplemental_loader.await_args.kwargs.get("game_ids"), ["90091303"])
         stats = polymarket.fetch_events_async.last_stats
         self.assertEqual(stats.get("realtime_sports_game_ids_observed"), 1)
         self.assertEqual(stats.get("realtime_sports_event_lookups"), 1)
@@ -712,6 +719,48 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         stats = polymarket.fetch_events_async.last_stats
         self.assertEqual(stats.get("realtime_sports_state_hits"), 1)
         self.assertEqual(stats.get("realtime_sports_state_filtered_count"), 1)
+
+
+class PolymarketSportsResultMatchingTests(unittest.TestCase):
+    def test_sports_result_matches_sport_filters_cross_sport_live_results(self) -> None:
+        self.assertTrue(
+            polymarket._sports_result_matches_sport(
+                {"leagueAbbreviation": "cwbb"},
+                "basketball_ncaab",
+            )
+        )
+        self.assertFalse(
+            polymarket._sports_result_matches_sport(
+                {"leagueAbbreviation": "mlb"},
+                "basketball_ncaab",
+            )
+        )
+
+    def test_sports_result_matches_event_with_college_basketball_abbreviations(self) -> None:
+        payload = {
+            "leagueAbbreviation": "cbb",
+            "homeTeam": "MICH",
+            "awayTeam": "STLOU",
+        }
+        event = {
+            "title": "Saint Louis Billikens vs. Michigan Wolverines",
+            "tags": [{"slug": "cbb"}],
+        }
+
+        self.assertTrue(polymarket._sports_result_matches_event(payload, event, "basketball_ncaab"))
+
+    def test_sports_result_matches_event_with_ohio_state_abbreviation(self) -> None:
+        payload = {
+            "leagueAbbreviation": "cwbb",
+            "homeTeam": "OSU",
+            "awayTeam": "HOWARD",
+        }
+        event = {
+            "title": "Howard Bison vs. Ohio State Buckeyes (W)",
+            "tags": [{"slug": "basketball"}],
+        }
+
+        self.assertTrue(polymarket._sports_result_matches_event(payload, event, "basketball_ncaab"))
 
 
 if __name__ == "__main__":
