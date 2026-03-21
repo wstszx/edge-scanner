@@ -254,7 +254,7 @@ class TestSxBetSegmentation(unittest.TestCase):
                 "sportXeventId": "evt-future",
                 "teamOneName": "Home Team",
                 "teamTwoName": "Away Team",
-                "gameTime": "2026-03-16T23:00:00Z",
+                "gameTime": "2030-03-16T23:00:00Z",
                 "type": 226,
                 "marketHash": "mh-future",
                 "outcomeOneName": "Home Team",
@@ -323,6 +323,12 @@ class TestSxBetSegmentation(unittest.TestCase):
 
 
 class TestPolymarketDepth(unittest.TestCase):
+    def test_extract_matchup_ignores_more_markets_suffix(self) -> None:
+        self.assertEqual(
+            polymarket._extract_matchup_from_text("Columbus Crew vs. Orlando City SC - More Markets"),
+            ("Columbus Crew", "Orlando City SC"),
+        )
+
     def test_book_depth_uses_asks_notional(self) -> None:
         depth = polymarket._book_ask_depth_notional(
             {
@@ -334,7 +340,26 @@ class TestPolymarketDepth(unittest.TestCase):
         )
         self.assertEqual(depth, 93.3)
 
-    def test_direct_h2h_market_carries_clob_stake(self) -> None:
+    def test_book_best_ask_quote_uses_lowest_ask_price_level(self) -> None:
+        quote = polymarket._book_best_ask_quote(
+            {
+                "asks": [
+                    {"price": "0.62", "size": "120"},
+                    {"price": "0.58", "size": "30"},
+                ]
+            }
+        )
+        self.assertEqual(
+            quote,
+            {
+                "probability": 0.58,
+                "decimal_odds": 1.724138,
+                "stake": 17.4,
+                "quote_source": "clob_book_best_ask",
+            },
+        )
+
+    def test_direct_h2h_market_prefers_clob_quote_price_and_stake(self) -> None:
         event = {
             "markets": [
                 {
@@ -352,12 +377,99 @@ class TestPolymarketDepth(unittest.TestCase):
             away_team="Away",
             requested_markets={"h2h"},
             now_utc=dt.datetime.now(dt.timezone.utc),
-            clob_depth_map={"tok_home": 120.5, "tok_away": 95.25},
+            clob_quote_map={
+                "tok_home": {
+                    "decimal_odds": 1.25,
+                    "stake": 120.5,
+                    "quote_source": "clob_book_best_ask",
+                },
+                "tok_away": {
+                    "decimal_odds": 1.666667,
+                    "stake": 95.25,
+                    "quote_source": "clob_book_best_ask",
+                },
+            },
         )
         self.assertEqual(len(markets), 1)
         outcomes = markets[0].get("outcomes") or []
+        self.assertEqual(outcomes[0].get("price"), 1.25)
+        self.assertEqual(outcomes[1].get("price"), 1.666667)
         self.assertEqual(outcomes[0].get("stake"), 120.5)
         self.assertEqual(outcomes[1].get("stake"), 95.25)
+
+    def test_more_markets_spread_is_not_misclassified_as_h2h(self) -> None:
+        event = {
+            "title": "Home vs Away - More Markets",
+            "markets": [
+                {
+                    "question": "Spread: Home (-1.5)",
+                    "outcomes": json.dumps(["Home", "Away"]),
+                    "outcomePrices": json.dumps([0.25, 0.75]),
+                    "clobTokenIds": json.dumps(["tok_spread_home", "tok_spread_away"]),
+                    "volumeNum": 500,
+                },
+                {
+                    "question": "Home vs Away: Both Teams to Score",
+                    "outcomes": json.dumps(["Yes", "No"]),
+                    "outcomePrices": json.dumps([0.51, 0.49]),
+                    "clobTokenIds": json.dumps(["tok_btts_yes", "tok_btts_no"]),
+                    "volumeNum": 100,
+                },
+            ],
+        }
+        markets = polymarket._pick_match_markets(
+            event=event,
+            home_team="Home",
+            away_team="Away",
+            requested_markets={"h2h", "both_teams_to_score"},
+            now_utc=dt.datetime.now(dt.timezone.utc),
+            clob_quote_map={
+                "tok_spread_home": {
+                    "decimal_odds": 4.0,
+                    "stake": 25.0,
+                    "quote_source": "clob_book_best_ask",
+                },
+                "tok_spread_away": {
+                    "decimal_odds": 1.333333,
+                    "stake": 75.0,
+                    "quote_source": "clob_book_best_ask",
+                },
+                "tok_btts_yes": {
+                    "decimal_odds": 1.5,
+                    "stake": 30.0,
+                    "quote_source": "clob_book_best_ask",
+                },
+                "tok_btts_no": {
+                    "decimal_odds": 2.1,
+                    "stake": 42.0,
+                    "quote_source": "clob_book_best_ask",
+                },
+            },
+        )
+        self.assertEqual(
+            markets,
+            [
+                {
+                    "key": "both_teams_to_score",
+                    "outcomes": [
+                        {
+                            "name": "Yes",
+                            "price": 1.5,
+                            "stake": 30.0,
+                            "raw_percentage_odds": 0.51,
+                            "quote_source": "clob_book_best_ask",
+                        },
+                        {
+                            "name": "No",
+                            "price": 2.1,
+                            "stake": 42.0,
+                            "raw_percentage_odds": 0.49,
+                            "quote_source": "clob_book_best_ask",
+                        },
+                    ],
+                }
+            ],
+        )
 
 
 class TestBookmakerFallbackSegmentation(unittest.TestCase):

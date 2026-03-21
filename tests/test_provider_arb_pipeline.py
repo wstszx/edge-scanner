@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import unittest
 from unittest.mock import patch
 
@@ -14,11 +15,19 @@ HOME_TEAM = "Home Team"
 AWAY_TEAM = "Away Team"
 
 
+def _scan_now_epoch() -> int:
+    return int(
+        dt.datetime(2026, 3, 19, 23, 55, tzinfo=dt.timezone.utc).timestamp()
+    )
+
+
 def _reset_provider_caches() -> None:
     betdex.ACCESS_TOKEN_CACHE["token"] = ""
     betdex.ACCESS_TOKEN_CACHE["expires_at"] = 0.0
 
     polymarket.disable_scan_cache()
+    polymarket.CLOB_QUOTE_CACHE["expires_at"] = 0.0
+    polymarket.CLOB_QUOTE_CACHE["entries"] = {}
 
     sx_bet.UPCOMING_CACHE["expires_at"] = 0.0
     sx_bet.UPCOMING_CACHE["entries"] = {}
@@ -140,6 +149,7 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
                 {counterparty_key: counterparty_fetcher},
                 clear=False,
             ),
+            patch("scanner.time.time", return_value=_scan_now_epoch()),
             patch.object(scanner, "_persist_provider_snapshots", return_value={}),
             patch.object(scanner, "_persist_cross_provider_match_report", return_value=""),
             patch.object(scanner, "_sport_scan_max_workers", return_value=1),
@@ -222,6 +232,31 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
         async def _fake_load_active_game_events_async(*args, **kwargs):
             return [polymarket_event], {"cache": "miss", "pages_fetched": 1, "retries_used": 0}
 
+        async def _fake_load_clob_quote_map_async(*args, **kwargs):
+            return (
+                {
+                    "tok-home": {
+                        "decimal_odds": 2.250002,
+                        "stake": 120.0,
+                        "quote_source": "clob_book_best_ask",
+                    },
+                    "tok-away": {
+                        "decimal_odds": 1.700001,
+                        "stake": 95.0,
+                        "quote_source": "clob_book_best_ask",
+                    },
+                },
+                {
+                    "token_count_requested": 2,
+                    "token_count_considered": 2,
+                    "token_count_truncated": 0,
+                    "books_fetched": 2,
+                    "books_with_quotes": 2,
+                    "book_errors": 0,
+                    "retries_used": 0,
+                },
+            )
+
         with (
             patch.object(polymarket, "_websocket_realtime_enabled", return_value=False),
             patch.object(polymarket, "get_shared_client", new=_fake_shared_client),
@@ -231,6 +266,7 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
                 "_load_active_game_events_async",
                 new=_fake_load_active_game_events_async,
             ),
+            patch.object(polymarket, "_load_clob_quote_map_async", new=_fake_load_clob_quote_map_async),
         ):
             events = asyncio.run(
                 polymarket.fetch_events_async(
@@ -244,10 +280,13 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
             outcomes = _standardized_outcomes(events, polymarket.PROVIDER_KEY)
             self.assertAlmostEqual(outcomes[HOME_TEAM]["price"], 2.250002, places=6)
             self.assertAlmostEqual(outcomes[AWAY_TEAM]["price"], 1.700001, places=6)
-            self.assertNotIn("stake", outcomes[HOME_TEAM])
+            self.assertEqual(outcomes[HOME_TEAM]["stake"], 120.0)
+            self.assertEqual(outcomes[AWAY_TEAM]["stake"], 95.0)
+            self.assertEqual(outcomes[HOME_TEAM]["quote_source"], "clob_book_best_ask")
             direct_stats = dict(polymarket.fetch_events_async.last_stats)
-            self.assertFalse(direct_stats.get("clob_http_fallback_enabled"))
-            self.assertEqual(direct_stats.get("clob_http_fallback_skipped"), 2)
+            self.assertTrue(direct_stats.get("clob_http_fallback_enabled"))
+            self.assertEqual(direct_stats.get("clob_http_fallback_skipped"), 0)
+            self.assertEqual(direct_stats.get("clob_books_with_quotes"), 2)
 
             result = self._run_provider_only_scan(
                 provider_key=polymarket.PROVIDER_KEY,
@@ -261,7 +300,7 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
             provider_title=polymarket.PROVIDER_TITLE,
             counterparty_title=sx_bet.PROVIDER_TITLE,
             stats_assertion=lambda stats: (
-                self.assertFalse(stats.get("clob_http_fallback_enabled")),
+                self.assertTrue(stats.get("clob_http_fallback_enabled")),
                 self.assertEqual(stats.get("events_with_market_count"), 1),
             ),
         )

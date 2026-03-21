@@ -131,11 +131,16 @@ CLOB_BOOK_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
     "entries": {},
 }
+CLOB_QUOTE_CACHE: Dict[str, object] = {
+    "expires_at": 0.0,
+    "entries": {},
+}
 SCAN_CACHE_CONTEXT: Dict[str, object] = {
     "active": False,
     "events": None,
     "events_meta": {},
     "clob_entries": {},
+    "clob_quotes": {},
 }
 SCAN_CACHE_LOCK = threading.RLock()
 SPORT_TAG_CACHE_ASYNC_LOCK: Optional[asyncio.Lock] = None
@@ -195,6 +200,7 @@ def enable_scan_cache() -> None:
         SCAN_CACHE_CONTEXT["events"] = None
         SCAN_CACHE_CONTEXT["events_meta"] = {}
         SCAN_CACHE_CONTEXT["clob_entries"] = {}
+        SCAN_CACHE_CONTEXT["clob_quotes"] = {}
 
 
 def disable_scan_cache() -> None:
@@ -203,6 +209,7 @@ def disable_scan_cache() -> None:
         SCAN_CACHE_CONTEXT["events"] = None
         SCAN_CACHE_CONTEXT["events_meta"] = {}
         SCAN_CACHE_CONTEXT["clob_entries"] = {}
+        SCAN_CACHE_CONTEXT["clob_quotes"] = {}
 
 
 def _websocket_realtime_enabled() -> bool:
@@ -769,6 +776,7 @@ def _clean_team_name(value: object) -> str:
         return ""
     # Drop suffix markers commonly used in market titles.
     text = re.sub(r"\s*\(([A-Za-z]{1,5})\)\s*$", "", text).strip()
+    text = re.sub(r"\s*[-–:]\s*more markets\s*$", "", text, flags=re.IGNORECASE).strip()
     return re.sub(r"\s+", " ", text)
 
 
@@ -812,6 +820,17 @@ def _extract_matchup(event: dict) -> Optional[Tuple[str, str]]:
     return None
 
 
+def _question_matches_matchup(question: object, home_team: str, away_team: str) -> bool:
+    matchup = _extract_matchup_from_text(question)
+    if not matchup:
+        return False
+    left_token = _team_token(matchup[0])
+    right_token = _team_token(matchup[1])
+    home_token = _team_token(home_team)
+    away_token = _team_token(away_team)
+    return {left_token, right_token} == {home_token, away_token}
+
+
 def _parse_list(value) -> List[object]:
     if isinstance(value, list):
         return value
@@ -834,6 +853,88 @@ def _parse_clob_token_ids(value: object) -> List[str]:
         if token_id and token_id not in token_ids:
             token_ids.append(token_id)
     return token_ids
+
+
+def _match_market_clob_token_ids(
+    market: dict,
+    home_team: str,
+    away_team: str,
+    requested_markets: set[str],
+) -> List[str]:
+    if not isinstance(market, dict):
+        return []
+
+    home_token = _team_token(home_team)
+    away_token = _team_token(away_team)
+    if not home_token or not away_token:
+        return []
+
+    outcomes = [_normalize_text(item) for item in _parse_list(market.get("outcomes"))]
+    prices = _parse_list(market.get("outcomePrices"))
+    if len(outcomes) != 2 or len(prices) != 2:
+        return []
+
+    token_ids = _parse_clob_token_ids(market.get("clobTokenIds"))[:2]
+    if len(token_ids) != 2:
+        return []
+
+    outcome_tokens = [_team_token(outcomes[0]), _team_token(outcomes[1])]
+    if (
+        "h2h" in requested_markets
+        and set(outcome_tokens) == {home_token, away_token}
+        and _question_matches_matchup(market.get("question"), home_team, away_team)
+    ):
+        return token_ids
+
+    normalized_outcomes = [token.lower() for token in outcome_tokens]
+    if normalized_outcomes not in (["yes", "no"], ["no", "yes"]):
+        return []
+
+    question = _normalize_text(market.get("question")).lower()
+    if {"btts", "both_teams_to_score"} & requested_markets and (
+        "both teams to score" in question or "btts" in question
+    ):
+        return token_ids
+
+    if "draw" in question:
+        return token_ids if "h2h_3_way" in requested_markets else []
+
+    if {"h2h", "h2h_3_way"} & requested_markets:
+        team_match = re.match(
+            r"^\s*will\s+(.+?)\s+win(?:\s+on\s+\d{4}-\d{2}-\d{2})?\??\s*$",
+            _normalize_text(market.get("question")),
+            flags=re.IGNORECASE,
+        )
+        if team_match:
+            team_token = _team_token(team_match.group(1))
+            if team_token == home_token or team_token == away_token:
+                return token_ids
+
+    return []
+
+
+def _event_match_clob_token_ids(
+    event: dict,
+    home_team: str,
+    away_team: str,
+    requested_markets: set[str],
+    now_utc: dt.datetime,
+) -> List[str]:
+    token_ids: List[str] = []
+    for market in (event.get("markets") or []):
+        if not isinstance(market, dict):
+            continue
+        if not _market_is_tradeable(market, now_utc):
+            continue
+        token_ids.extend(
+            _match_market_clob_token_ids(
+                market,
+                home_team,
+                away_team,
+                requested_markets,
+            )
+        )
+    return list(dict.fromkeys(token_ids))
 
 
 def _price_to_decimal_odds(price) -> Optional[float]:
@@ -868,6 +969,39 @@ def _book_ask_depth_notional(payload: object) -> Optional[float]:
     return round(total, 6)
 
 
+def _book_best_ask_quote(payload: object) -> Optional[dict]:
+    if not isinstance(payload, dict):
+        return None
+    asks = payload.get("asks")
+    if not isinstance(asks, list):
+        return None
+    best_price = None
+    best_size = None
+    for level in asks:
+        if not isinstance(level, dict):
+            continue
+        price = _safe_float(level.get("price"))
+        size = _safe_float(level.get("size"))
+        if price is None or size is None:
+            continue
+        if price <= 0 or price >= 1 or size <= 0:
+            continue
+        if best_price is None or float(price) < float(best_price):
+            best_price = float(price)
+            best_size = float(size)
+    if best_price is None or best_size is None:
+        return None
+    decimal_odds = _price_to_decimal_odds(best_price)
+    if decimal_odds is None:
+        return None
+    return {
+        "probability": round(float(best_price), 6),
+        "decimal_odds": decimal_odds,
+        "stake": round(float(best_price) * float(best_size), 6),
+        "quote_source": "clob_book_best_ask",
+    }
+
+
 def _price_level_map(levels: object) -> Dict[str, float]:
     mapping: Dict[str, float] = {}
     if not isinstance(levels, list):
@@ -894,6 +1028,32 @@ def _depth_from_level_map(levels: Dict[str, float]) -> Optional[float]:
     if total <= 0:
         return None
     return round(total, 6)
+
+
+def _best_ask_quote_from_level_map(levels: Dict[str, float]) -> Optional[dict]:
+    best_price = None
+    best_size = None
+    for price_key, size in (levels or {}).items():
+        price = _safe_float(price_key)
+        size_value = _safe_float(size)
+        if price is None or size_value is None:
+            continue
+        if price <= 0 or price >= 1 or size_value <= 0:
+            continue
+        if best_price is None or float(price) < float(best_price):
+            best_price = float(price)
+            best_size = float(size_value)
+    if best_price is None or best_size is None:
+        return None
+    decimal_odds = _price_to_decimal_odds(best_price)
+    if decimal_odds is None:
+        return None
+    return {
+        "probability": round(float(best_price), 6),
+        "decimal_odds": decimal_odds,
+        "stake": round(float(best_price) * float(best_size), 6),
+        "quote_source": "ws_book_best_ask",
+    }
 
 
 def _normalized_clob_token_ids(
@@ -1421,6 +1581,56 @@ class PolymarketRealtimeManager:
                     if depth is not None:
                         depths[asset_id] = depth
         return depths
+
+    def get_quote_map(
+        self,
+        asset_ids: Sequence[str],
+        max_age_seconds: float,
+    ) -> Dict[str, dict]:
+        now = time.time()
+        quotes: Dict[str, dict] = {}
+        missing: List[str] = []
+        with self._state_lock:
+            for asset_id in (_normalize_text(item) for item in asset_ids or []):
+                if not asset_id:
+                    continue
+                if self._owner_active:
+                    self._subscribed_asset_ids[asset_id] = now
+                entry = self._market_books.get(asset_id)
+                if not isinstance(entry, dict):
+                    missing.append(asset_id)
+                    continue
+                updated_at = _safe_float(entry.get("updated_at")) or 0.0
+                if max_age_seconds > 0 and updated_at > 0 and (now - updated_at) > max_age_seconds:
+                    missing.append(asset_id)
+                    continue
+                ask_levels = entry.get("asks")
+                if not isinstance(ask_levels, dict):
+                    missing.append(asset_id)
+                    continue
+                quote = _best_ask_quote_from_level_map(ask_levels)
+                if quote is not None:
+                    quotes[asset_id] = dict(quote)
+                else:
+                    missing.append(asset_id)
+        if missing:
+            shared_snapshot = self._load_shared_snapshot()
+            shared_books = shared_snapshot.get("market_books") if isinstance(shared_snapshot, dict) else {}
+            if isinstance(shared_books, dict):
+                for asset_id in missing:
+                    entry = shared_books.get(asset_id)
+                    if not isinstance(entry, dict):
+                        continue
+                    updated_at = _safe_float(entry.get("updated_at")) or 0.0
+                    if max_age_seconds > 0 and updated_at > 0 and (now - updated_at) > max_age_seconds:
+                        continue
+                    ask_levels = entry.get("asks")
+                    if not isinstance(ask_levels, dict):
+                        continue
+                    quote = _best_ask_quote_from_level_map(ask_levels)
+                    if quote is not None:
+                        quotes[asset_id] = dict(quote)
+        return quotes
 
     def get_sport_result(self, slug: object) -> Optional[dict]:
         token = _normalize_text(slug)
@@ -2124,10 +2334,147 @@ async def _load_clob_depth_map_async(
     }
 
 
-def _market_outcome_row(name: str, price: float, stake: Optional[float] = None) -> dict:
+async def _load_clob_quote_map_async(
+    client: httpx.AsyncClient,
+    token_ids: Sequence[str],
+    retries: int,
+    backoff_seconds: float,
+) -> Tuple[Dict[str, dict], dict]:
+    unique_token_ids = list(
+        dict.fromkeys(_normalize_text(token_id) for token_id in token_ids if _normalize_text(token_id))
+    )
+    total_requested = len(unique_token_ids)
+    max_books = _int_or_default(POLYMARKET_CLOB_MAX_BOOKS_RAW, 300, min_value=1)
+    if len(unique_token_ids) > max_books:
+        unique_token_ids = unique_token_ids[:max_books]
+    truncated_count = max(0, total_requested - len(unique_token_ids))
+
+    ttl = _int_or_default(POLYMARKET_CLOB_BOOK_CACHE_TTL_RAW, 4, min_value=0)
+    now = time.time()
+    cache_valid = ttl > 0 and now < float(CLOB_QUOTE_CACHE.get("expires_at", 0.0))
+    cache_entries = CLOB_QUOTE_CACHE.get("entries") if isinstance(CLOB_QUOTE_CACHE.get("entries"), dict) else {}
+    scan_cache_entries: Dict[str, object] = {}
+    if _scan_cache_active():
+        with SCAN_CACHE_LOCK:
+            cached_scan_entries = SCAN_CACHE_CONTEXT.get("clob_quotes")
+            if isinstance(cached_scan_entries, dict):
+                scan_cache_entries = cached_scan_entries
+            else:
+                scan_cache_entries = {}
+                SCAN_CACHE_CONTEXT["clob_quotes"] = scan_cache_entries
+
+    quote_by_token: Dict[str, dict] = {}
+    unresolved: List[str] = []
+    for token_id in unique_token_ids:
+        cached_quote = None
+        if token_id in scan_cache_entries:
+            cached_quote = scan_cache_entries.get(token_id)
+        elif cache_valid and token_id in cache_entries:
+            cached_quote = cache_entries.get(token_id)
+        if isinstance(cached_quote, dict) and _safe_float(cached_quote.get("decimal_odds")):
+            quote_by_token[token_id] = dict(cached_quote)
+        else:
+            unresolved.append(token_id)
+
+    retries_used = 0
+    books_fetched = 0
+    book_errors = 0
+    if unresolved:
+        max_workers = _int_or_default(POLYMARKET_CLOB_BOOK_WORKERS_RAW, 8, min_value=1)
+        worker_count = min(max_workers, len(unresolved))
+
+        async def _fetch_single_book(token_id: str) -> Tuple[str, Optional[dict], int, bool]:
+            try:
+                payload, retry_count = await _request_clob_json_async(
+                    client,
+                    "book",
+                    {"token_id": token_id},
+                    retries=retries,
+                    backoff_seconds=backoff_seconds,
+                )
+            except ProviderError:
+                return token_id, None, 0, True
+            return token_id, _book_best_ask_quote(payload), retry_count, False
+
+        if worker_count <= 1:
+            for token_id in unresolved:
+                resolved_token_id, quote, retry_count, had_error = await _fetch_single_book(token_id)
+                retries_used += retry_count
+                if had_error:
+                    cache_entries[resolved_token_id] = None
+                    scan_cache_entries[resolved_token_id] = None
+                    book_errors += 1
+                    continue
+                books_fetched += 1
+                if isinstance(quote, dict):
+                    quote_by_token[resolved_token_id] = dict(quote)
+                    cache_entries[resolved_token_id] = dict(quote)
+                    scan_cache_entries[resolved_token_id] = dict(quote)
+                else:
+                    cache_entries[resolved_token_id] = None
+                    scan_cache_entries[resolved_token_id] = None
+        else:
+            semaphore = asyncio.Semaphore(worker_count)
+
+            async def _limited_fetch(token_id: str) -> Tuple[str, Optional[dict], int, bool]:
+                async with semaphore:
+                    return await _fetch_single_book(token_id)
+
+            tasks = [asyncio.create_task(_limited_fetch(token_id)) for token_id in unresolved]
+            for task in asyncio.as_completed(tasks):
+                resolved_token_id, quote, retry_count, had_error = await task
+                retries_used += retry_count
+                if had_error:
+                    cache_entries[resolved_token_id] = None
+                    scan_cache_entries[resolved_token_id] = None
+                    book_errors += 1
+                    continue
+                books_fetched += 1
+                if isinstance(quote, dict):
+                    quote_by_token[resolved_token_id] = dict(quote)
+                    cache_entries[resolved_token_id] = dict(quote)
+                    scan_cache_entries[resolved_token_id] = dict(quote)
+                else:
+                    cache_entries[resolved_token_id] = None
+                    scan_cache_entries[resolved_token_id] = None
+
+    CLOB_QUOTE_CACHE["entries"] = cache_entries
+    CLOB_QUOTE_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+    if _scan_cache_active():
+        with SCAN_CACHE_LOCK:
+            SCAN_CACHE_CONTEXT["clob_quotes"] = scan_cache_entries
+
+    books_with_quotes = sum(
+        1
+        for token_id in unique_token_ids
+        if token_id in quote_by_token and _safe_float(quote_by_token[token_id].get("decimal_odds")) is not None
+    )
+    return quote_by_token, {
+        "token_count_requested": total_requested,
+        "token_count_considered": len(unique_token_ids),
+        "token_count_truncated": truncated_count,
+        "books_fetched": books_fetched,
+        "books_with_quotes": books_with_quotes,
+        "book_errors": book_errors,
+        "retries_used": retries_used,
+    }
+
+
+def _market_outcome_row(
+    name: str,
+    price: float,
+    stake: Optional[float] = None,
+    raw_percentage_odds: object = None,
+    quote_source: object = None,
+) -> dict:
     row = {"name": name, "price": round(float(price), 6)}
     if stake is not None and stake > 0:
         row["stake"] = round(float(stake), 6)
+    if raw_percentage_odds not in (None, ""):
+        row["raw_percentage_odds"] = raw_percentage_odds
+    source = _normalize_text(quote_source)
+    if source:
+        row["quote_source"] = source
     return row
 
 
@@ -2137,7 +2484,7 @@ def _pick_match_markets(
     away_team: str,
     requested_markets: set[str],
     now_utc: dt.datetime,
-    clob_depth_map: Optional[Dict[str, Optional[float]]] = None,
+    clob_quote_map: Optional[Dict[str, dict]] = None,
 ) -> List[dict]:
     home_token = _team_token(home_team)
     away_token = _team_token(away_team)
@@ -2160,20 +2507,36 @@ def _pick_match_markets(
         prices = _parse_list(market.get("outcomePrices"))
         if len(outcomes) != 2 or len(prices) != 2:
             continue
-        odds_0 = _price_to_decimal_odds(prices[0])
-        odds_1 = _price_to_decimal_odds(prices[1])
-        if odds_0 is None or odds_1 is None:
-            continue
 
         token_ids = _parse_clob_token_ids(market.get("clobTokenIds"))
-        stakes = [None, None]
-        if isinstance(clob_depth_map, dict):
-            for idx in range(2):
-                if idx >= len(token_ids):
-                    continue
-                depth = _safe_float(clob_depth_map.get(token_ids[idx]))
-                if depth is not None and depth > 0:
-                    stakes[idx] = round(float(depth), 6)
+        quote_details: List[dict] = []
+        for idx in range(2):
+            raw_probability = prices[idx]
+            quote_payload = (
+                clob_quote_map.get(token_ids[idx])
+                if isinstance(clob_quote_map, dict) and idx < len(token_ids) and isinstance(clob_quote_map.get(token_ids[idx]), dict)
+                else None
+            )
+            decimal_odds = _safe_float(quote_payload.get("decimal_odds")) if isinstance(quote_payload, dict) else None
+            stake = _safe_float(quote_payload.get("stake")) if isinstance(quote_payload, dict) else None
+            quote_source = _normalize_text(quote_payload.get("quote_source")) if isinstance(quote_payload, dict) else ""
+            if decimal_odds is None or decimal_odds <= 1:
+                decimal_odds = _price_to_decimal_odds(raw_probability)
+                stake = None
+                quote_source = "gamma_outcome_price"
+            if decimal_odds is None:
+                quote_details = []
+                break
+            quote_details.append(
+                {
+                    "odds": decimal_odds,
+                    "stake": round(float(stake), 6) if stake is not None and stake > 0 else None,
+                    "raw_percentage_odds": raw_probability,
+                    "quote_source": quote_source,
+                }
+            )
+        if len(quote_details) != 2:
+            continue
 
         outcome_tokens = [_team_token(outcomes[0]), _team_token(outcomes[1])]
         question = _normalize_text(market.get("question")).lower()
@@ -2181,12 +2544,27 @@ def _pick_match_markets(
         if "draw" in question:
             has_draw_prompt = True
 
-        if set(outcome_tokens) == {home_token, away_token}:
+        if (
+            set(outcome_tokens) == {home_token, away_token}
+            and _question_matches_matchup(market.get("question"), home_team, away_team)
+        ):
             direct_candidates.append(
                 {
                     "outcomes": [
-                        _market_outcome_row(outcomes[0], odds_0, stakes[0]),
-                        _market_outcome_row(outcomes[1], odds_1, stakes[1]),
+                        _market_outcome_row(
+                            outcomes[0],
+                            quote_details[0]["odds"],
+                            quote_details[0]["stake"],
+                            quote_details[0]["raw_percentage_odds"],
+                            quote_details[0]["quote_source"],
+                        ),
+                        _market_outcome_row(
+                            outcomes[1],
+                            quote_details[1]["odds"],
+                            quote_details[1]["stake"],
+                            quote_details[1]["raw_percentage_odds"],
+                            quote_details[1]["quote_source"],
+                        ),
                     ],
                     "volume": _safe_float(market.get("volumeNum") or market.get("volume")) or 0.0,
                 }
@@ -2196,16 +2574,14 @@ def _pick_match_markets(
         normalized_outcomes = [token.lower() for token in outcome_tokens]
         if normalized_outcomes == ["yes", "no"] or normalized_outcomes == ["no", "yes"]:
             yes_index = 0 if normalized_outcomes[0] == "yes" else 1
-            yes_odds = odds_0 if yes_index == 0 else odds_1
-            no_odds = odds_1 if yes_index == 0 else odds_0
-            yes_stake = stakes[yes_index]
-            no_stake = stakes[1 - yes_index]
+            yes_quote = quote_details[yes_index]
+            no_quote = quote_details[1 - yes_index]
             if "both teams to score" in question or "btts" in question:
-                btts_yes = {"odds": yes_odds, "stake": yes_stake}
-                btts_no = {"odds": no_odds, "stake": no_stake}
+                btts_yes = dict(yes_quote)
+                btts_no = dict(no_quote)
                 continue
             if "draw" in question:
-                draw_yes = {"odds": yes_odds, "stake": yes_stake}
+                draw_yes = dict(yes_quote)
                 continue
             team_match = re.match(
                 r"^\s*will\s+(.+?)\s+win(?:\s+on\s+\d{4}-\d{2}-\d{2})?\??\s*$",
@@ -2215,9 +2591,9 @@ def _pick_match_markets(
             if team_match:
                 team_token = _team_token(team_match.group(1))
                 if team_token == home_token:
-                    yes_by_team[home_token] = {"odds": yes_odds, "stake": yes_stake}
+                    yes_by_team[home_token] = dict(yes_quote)
                 elif team_token == away_token:
-                    yes_by_team[away_token] = {"odds": yes_odds, "stake": yes_stake}
+                    yes_by_team[away_token] = dict(yes_quote)
 
     collected: List[dict] = []
     if direct_candidates:
@@ -2237,11 +2613,15 @@ def _pick_match_markets(
                                 home_team,
                                 home_outcome["price"],
                                 _safe_float(home_outcome.get("stake")),
+                                home_outcome.get("raw_percentage_odds"),
+                                home_outcome.get("quote_source"),
                             ),
                             _market_outcome_row(
                                 away_team,
                                 away_outcome["price"],
                                 _safe_float(away_outcome.get("stake")),
+                                away_outcome.get("raw_percentage_odds"),
+                                away_outcome.get("quote_source"),
                             ),
                         ],
                     }
@@ -2262,43 +2642,53 @@ def _pick_match_markets(
             collected.append(
                 {
                     "key": "h2h",
-                    "outcomes": [
-                        _market_outcome_row(
-                            home_team,
-                            home_data["odds"],
-                            _safe_float(home_data.get("stake")),
-                        ),
-                        _market_outcome_row(
-                            away_team,
-                            away_data["odds"],
-                            _safe_float(away_data.get("stake")),
-                        ),
-                    ],
-                }
-            )
+                        "outcomes": [
+                            _market_outcome_row(
+                                home_team,
+                                home_data["odds"],
+                                _safe_float(home_data.get("stake")),
+                                home_data.get("raw_percentage_odds"),
+                                home_data.get("quote_source"),
+                            ),
+                            _market_outcome_row(
+                                away_team,
+                                away_data["odds"],
+                                _safe_float(away_data.get("stake")),
+                                away_data.get("raw_percentage_odds"),
+                                away_data.get("quote_source"),
+                            ),
+                        ],
+                    }
+                )
         if "h2h_3_way" in requested_markets and isinstance(draw_yes, dict):
             collected.append(
                 {
                     "key": "h2h_3_way",
-                    "outcomes": [
-                        _market_outcome_row(
-                            home_team,
-                            home_data["odds"],
-                            _safe_float(home_data.get("stake")),
-                        ),
-                        _market_outcome_row(
-                            "Draw",
-                            draw_yes["odds"],
-                            _safe_float(draw_yes.get("stake")),
-                        ),
-                        _market_outcome_row(
-                            away_team,
-                            away_data["odds"],
-                            _safe_float(away_data.get("stake")),
-                        ),
-                    ],
-                }
-            )
+                        "outcomes": [
+                            _market_outcome_row(
+                                home_team,
+                                home_data["odds"],
+                                _safe_float(home_data.get("stake")),
+                                home_data.get("raw_percentage_odds"),
+                                home_data.get("quote_source"),
+                            ),
+                            _market_outcome_row(
+                                "Draw",
+                                draw_yes["odds"],
+                                _safe_float(draw_yes.get("stake")),
+                                draw_yes.get("raw_percentage_odds"),
+                                draw_yes.get("quote_source"),
+                            ),
+                            _market_outcome_row(
+                                away_team,
+                                away_data["odds"],
+                                _safe_float(away_data.get("stake")),
+                                away_data.get("raw_percentage_odds"),
+                                away_data.get("quote_source"),
+                            ),
+                        ],
+                    }
+                )
 
     if (
         {"btts", "both_teams_to_score"} & requested_markets
@@ -2310,8 +2700,20 @@ def _pick_match_markets(
             {
                 "key": market_key,
                 "outcomes": [
-                    _market_outcome_row("Yes", btts_yes["odds"], _safe_float(btts_yes.get("stake"))),
-                    _market_outcome_row("No", btts_no["odds"], _safe_float(btts_no.get("stake"))),
+                    _market_outcome_row(
+                        "Yes",
+                        btts_yes["odds"],
+                        _safe_float(btts_yes.get("stake")),
+                        btts_yes.get("raw_percentage_odds"),
+                        btts_yes.get("quote_source"),
+                    ),
+                    _market_outcome_row(
+                        "No",
+                        btts_no["odds"],
+                        _safe_float(btts_no.get("stake")),
+                        btts_no.get("raw_percentage_odds"),
+                        btts_no.get("quote_source"),
+                    ),
                 ],
             }
         )
@@ -2500,10 +2902,12 @@ async def fetch_events_async(
         "clob_tokens_requested": 0,
         "clob_tokens_considered": 0,
         "clob_tokens_truncated": 0,
-        "clob_http_fallback_enabled": _http_clob_depth_enabled(),
+        "clob_http_fallback_enabled": True,
+        "clob_http_depth_enabled": _http_clob_depth_enabled(),
         "clob_http_fallback_skipped": 0,
         "clob_books_fetched": 0,
         "clob_books_with_depth": 0,
+        "clob_books_with_quotes": 0,
         "clob_book_errors": 0,
         "pages_fetched": 0,
         "retries_used": 0,
@@ -2612,19 +3016,17 @@ async def fetch_events_async(
             home_team, away_team = matchup
             stats["events_matchup_count"] += 1
             filtered_events.append((event, home_team, away_team, realtime_state))
+            clob_token_ids.extend(
+                _event_match_clob_token_ids(
+                    event,
+                    home_team,
+                    away_team,
+                    supported_markets,
+                    now_utc,
+                )
+            )
 
-            for market in (event.get("markets") or []):
-                if not isinstance(market, dict):
-                    continue
-                if not _market_is_tradeable(market, now_utc):
-                    continue
-                outcomes = _parse_list(market.get("outcomes"))
-                prices = _parse_list(market.get("outcomePrices"))
-                if len(outcomes) != 2 or len(prices) != 2:
-                    continue
-                clob_token_ids.extend(_parse_clob_token_ids(market.get("clobTokenIds"))[:2])
-
-        clob_depth_map: Dict[str, Optional[float]] = {}
+        clob_quote_map: Dict[str, dict] = {}
         if clob_token_ids:
             normalized_token_ids, total_requested, truncated_count = _normalized_clob_token_ids(clob_token_ids)
             stats["clob_tokens_requested"] = total_requested
@@ -2640,37 +3042,41 @@ async def fetch_events_async(
                         unresolved_token_ids,
                         warmup_seconds,
                     )
-                realtime_depth_map = realtime_manager.get_depth_map(
+                realtime_quote_map = realtime_manager.get_quote_map(
                     normalized_token_ids,
                     max_age_seconds=_ws_book_max_age_seconds(),
                 )
-                if realtime_depth_map:
-                    clob_depth_map.update(realtime_depth_map)
+                if realtime_quote_map:
+                    clob_quote_map.update(realtime_quote_map)
                 unresolved_token_ids = [
-                    token_id for token_id in normalized_token_ids if token_id not in clob_depth_map
+                    token_id for token_id in normalized_token_ids if token_id not in clob_quote_map
                 ]
-                stats["realtime_market_books_hit"] = len(clob_depth_map)
+                stats["realtime_market_books_hit"] = len(clob_quote_map)
                 stats["realtime_market_books_missed"] = len(unresolved_token_ids)
                 stats["realtime_market_books_pending"] = len(unresolved_token_ids)
                 _apply_realtime_stats(stats, realtime_manager.snapshot())
-            if unresolved_token_ids and _http_clob_depth_enabled():
-                rest_depth_map, clob_meta = await _load_clob_depth_map_async(
+            if unresolved_token_ids:
+                rest_quote_map, clob_meta = await _load_clob_quote_map_async(
                     client=client,
                     token_ids=unresolved_token_ids,
                     retries=retries,
                     backoff_seconds=backoff,
                 )
-                clob_depth_map.update(rest_depth_map)
+                clob_quote_map.update(rest_quote_map)
                 stats["retries_used"] += int(clob_meta.get("retries_used", 0) or 0)
                 stats["clob_books_fetched"] = int(clob_meta.get("books_fetched", 0) or 0)
                 stats["clob_book_errors"] = int(clob_meta.get("book_errors", 0) or 0)
-            elif unresolved_token_ids:
-                stats["clob_http_fallback_skipped"] = len(unresolved_token_ids)
-            stats["clob_books_with_depth"] = sum(
+            stats["clob_http_fallback_skipped"] = sum(
                 1
                 for token_id in normalized_token_ids
-                if token_id in clob_depth_map and _safe_float(clob_depth_map[token_id]) is not None
+                if token_id not in clob_quote_map
             )
+            stats["clob_books_with_quotes"] = sum(
+                1
+                for token_id in normalized_token_ids
+                if token_id in clob_quote_map and _safe_float(clob_quote_map[token_id].get("decimal_odds")) is not None
+            )
+            stats["clob_books_with_depth"] = stats["clob_books_with_quotes"]
 
         for event, home_team, away_team, realtime_state in filtered_events:
             market_list = _pick_match_markets(
@@ -2679,7 +3085,7 @@ async def fetch_events_async(
                 away_team,
                 supported_markets,
                 now_utc,
-                clob_depth_map=clob_depth_map,
+                clob_quote_map=clob_quote_map,
             )
             if not market_list:
                 continue
@@ -2758,7 +3164,8 @@ fetch_events.last_stats = {
     "provider": PROVIDER_KEY,
     "source": POLYMARKET_SOURCE or "api",
     "skipped_unsupported_sport": False,
-    "clob_http_fallback_enabled": _http_clob_depth_enabled(),
+    "clob_http_fallback_enabled": True,
+    "clob_http_depth_enabled": _http_clob_depth_enabled(),
     "clob_http_fallback_skipped": 0,
     "events_returned_count": 0,
 }

@@ -5,7 +5,7 @@ import datetime as real_dt
 import json
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from providers import betdex, bookmaker_xyz, polymarket, sx_bet
 
@@ -63,6 +63,8 @@ class ProviderContractReplayTests(unittest.IsolatedAsyncioTestCase):
         polymarket.SPORT_TAG_CACHE["mapping"] = {}
         polymarket.CLOB_BOOK_CACHE["expires_at"] = 0.0
         polymarket.CLOB_BOOK_CACHE["entries"] = {}
+        polymarket.CLOB_QUOTE_CACHE["expires_at"] = 0.0
+        polymarket.CLOB_QUOTE_CACHE["entries"] = {}
 
         sx_bet.UPCOMING_CACHE["expires_at"] = 0.0
         sx_bet.UPCOMING_CACHE["entries"] = {}
@@ -93,6 +95,7 @@ class ProviderContractReplayTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(polymarket, "get_shared_client", new=_fake_shared_client),
             patch.object(polymarket, "_request_json_async", side_effect=_fake_request_json_async),
+            patch.object(polymarket, "_load_clob_quote_map_async", new=AsyncMock(return_value=({}, {}))),
             patch.object(polymarket, "_websocket_realtime_enabled", return_value=False),
             patch.object(polymarket, "_http_clob_depth_enabled", return_value=False),
             patch.object(polymarket.dt, "datetime", _FrozenPolymarketDateTime),
