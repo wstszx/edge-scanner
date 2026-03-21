@@ -1,77 +1,35 @@
 name: Deploy to VPS
 
+# 触发条件：当推送到 main 分支时自动执行（如果你的主分支叫 master，请改成 master）
 on:
   push:
     branches:
-      - main
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-  workflow_dispatch:
-
-concurrency:
-  group: production-deploy
-  cancel-in-progress: false
-
-permissions:
-  contents: read
+      - main 
 
 jobs:
   deploy:
-    name: Deploy Production
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
     steps:
-      - name: Deploy selected commit over SSH
+      - name: SSH into VPS and Deploy
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          DEPLOY_SHA: ${{ github.sha }}
-          REPO_DIR: ${{ vars.DEPLOY_REPO_DIR != '' && vars.DEPLOY_REPO_DIR || '/root/edge-scanner' }}
-          VENV_PYTHON: ${{ vars.DEPLOY_VENV_PYTHON != '' && vars.DEPLOY_VENV_PYTHON || '/root/edge-scanner/venv/bin/python' }}
-          WEB_SERVICE: ${{ vars.DEPLOY_WEB_SERVICE != '' && vars.DEPLOY_WEB_SERVICE || 'edge-scanner' }}
-          WORKER_SERVICE: ${{ vars.DEPLOY_WORKER_SERVICE != '' && vars.DEPLOY_WORKER_SERVICE || 'edge-scanner-worker' }}
         with:
           host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_SSH_USER != '' && secrets.VPS_SSH_USER || 'root' }}
+          username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          fingerprint: ${{ secrets.VPS_HOST_FINGERPRINT }}
-          envs: DEPLOY_SHA,REPO_DIR,VENV_PYTHON,WEB_SERVICE,WORKER_SERVICE
+          port: ${{ secrets.VPS_PORT }}
           script: |
-            set -Eeuo pipefail
-
-            echo "Deploying commit ${DEPLOY_SHA} on $(hostname)"
-
-            if [ ! -d "${REPO_DIR}" ]; then
-              echo "Missing repository directory: ${REPO_DIR}"
-              exit 1
-            fi
-
-            cd "${REPO_DIR}"
-
-            if [ -n "$(git status --porcelain)" ]; then
-              echo "Remote repository has uncommitted changes. Refusing to deploy."
-              git status --short
-              exit 1
-            fi
-
-            git fetch --prune origin
-            git checkout "${DEPLOY_SHA}"
-
-            if [ ! -x "${VENV_PYTHON}" ]; then
-              echo "Missing virtualenv Python: ${VENV_PYTHON}"
-              exit 1
-            fi
-
-            "${VENV_PYTHON}" -m pip install -r requirements.txt
-
-            sudo -n systemctl daemon-reload
-            sudo -n systemctl restart "${WEB_SERVICE}"
-            sudo -n systemctl is-active --quiet "${WEB_SERVICE}"
-
-            if sudo -n systemctl list-unit-files --type=service --no-legend | grep -q "^${WORKER_SERVICE}\.service"; then
-              sudo -n systemctl restart "${WORKER_SERVICE}"
-              sudo -n systemctl is-active --quiet "${WORKER_SERVICE}"
-            fi
-
-            echo "Deployment finished at commit $(git rev-parse --short HEAD)"
+            # 1. 进入项目目录
+            cd /root/edge-scanner
+            
+            # 2. 拉取最新代码（使用强制覆盖模式，避免因为在 VPS 上误碰了代码导致冲突）
+            # 注：这不会删除你的 .env 配置文件，因为它在 .gitignore 中
+            git fetch --all
+            git reset --hard origin/main
+            git pull origin main
+            
+            # 3. 激活虚拟环境并更新依赖（如果有新依赖的话）
+            source venv/bin/activate
+            pip install -r requirements.txt
+            
+            # 4. 重启后端的 Web 和 Worker 两个服务
+            systemctl restart edge-scanner edge-scanner-worker
