@@ -300,6 +300,23 @@ class PolymarketRealtimeTests(unittest.TestCase):
             ],
         )
 
+    def test_handle_market_message_prefers_payload_timestamp(self) -> None:
+        manager = polymarket.PolymarketRealtimeManager()
+
+        asyncio.run(
+            manager._handle_market_message(
+                {
+                    "event_type": "book",
+                    "asset_id": "token-a",
+                    "bids": [],
+                    "asks": [{"price": "0.45", "size": "10"}],
+                    "timestamp": 1773593001000,
+                }
+            )
+        )
+
+        self.assertAlmostEqual(manager._market_books["token-a"]["updated_at"], 1773593001.0, places=6)
+
     def test_event_live_state_payload_promotes_live_game_state(self) -> None:
         payload = polymarket._event_live_state_payload(
             event={},
@@ -331,6 +348,8 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
                     "decimal_odds": 1.818182,
                     "stake": 12.0,
                     "quote_source": "ws_book_best_ask",
+                    "observed_at": 1773593000.0,
+                    "updated_at": 1773593000.0,
                 }
             }
         )
@@ -344,6 +363,8 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
                         "decimal_odds": 1.538462,
                         "stake": 15.0,
                         "quote_source": "clob_book_best_ask",
+                        "observed_at": 1773593001.0,
+                        "updated_at": 1773593001.0,
                     }
                 },
                 {
@@ -390,6 +411,10 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(outcomes[1]["price"], 1.538462, places=6)
         self.assertEqual(outcomes[0]["stake"], 12.0)
         self.assertEqual(outcomes[1]["stake"], 15.0)
+        self.assertEqual(outcomes[0]["observed_at"], 1773593000.0)
+        self.assertEqual(outcomes[1]["observed_at"], 1773593001.0)
+        self.assertEqual(outcomes[0]["last_updated"], 1773593000.0)
+        self.assertEqual(outcomes[1]["last_updated"], 1773593001.0)
         stats = polymarket.fetch_events_async.last_stats
         self.assertEqual(stats.get("realtime_market_books_hit"), 1)
         self.assertEqual(stats.get("realtime_market_books_missed"), 1)

@@ -901,6 +901,7 @@ def _fetch_prices_by_market(
             backoff_seconds=backoff_seconds,
             timeout=timeout,
         )
+        observed_at = time.time()
         pages_fetched += 1
         retries_used += attempt
         if not isinstance(payload, dict):
@@ -914,6 +915,7 @@ def _fetch_prices_by_market(
                 for row in rows:
                     if not isinstance(row, dict):
                         continue
+                    row["observed_at"] = observed_at
                     side = _canonical_price_side(row.get("side"))
                     if side == "for":
                         side_counts["for"] += 1
@@ -922,6 +924,7 @@ def _fetch_prices_by_market(
                     else:
                         side_counts["unknown"] += 1
             if market_id:
+                entry["observed_at"] = observed_at
                 out[market_id] = entry
     return out, {
         "pages_fetched": pages_fetched,
@@ -954,6 +957,7 @@ async def _fetch_prices_by_market_async(
             backoff_seconds=backoff_seconds,
             timeout=timeout,
         )
+        observed_at = time.time()
         pages_fetched += 1
         retries_used += attempt
         if not isinstance(payload, dict):
@@ -967,6 +971,7 @@ async def _fetch_prices_by_market_async(
                 for row in rows:
                     if not isinstance(row, dict):
                         continue
+                    row["observed_at"] = observed_at
                     side = _canonical_price_side(row.get("side"))
                     if side == "for":
                         side_counts["for"] += 1
@@ -975,6 +980,7 @@ async def _fetch_prices_by_market_async(
                     else:
                         side_counts["unknown"] += 1
             if market_id:
+                entry["observed_at"] = observed_at
                 out[market_id] = entry
     return out, {
         "pages_fetched": pages_fetched,
@@ -1089,7 +1095,13 @@ def _best_back_prices(entry: Optional[dict], back_side: Optional[str] = None) ->
             and (amount or 0.0) > (existing_amount or 0.0)
         )
         if is_better_price or is_tie_better_size:
-            best[outcome_id] = {"price": float(price), "amount": amount}
+            best[outcome_id] = {
+                "price": float(price),
+                "amount": amount,
+                "observed_at": item.get("observed_at")
+                if item.get("observed_at") not in (None, "")
+                else entry.get("observed_at"),
+            }
     return best
 
 
@@ -1592,6 +1604,9 @@ async def fetch_events_async(
                         row["stake"] = round(float(stake_value), 6)
                     if market_updated_at:
                         row["last_updated"] = market_updated_at
+                    observed_at = price_row.get("observed_at") if isinstance(price_row, dict) else None
+                    if observed_at not in (None, ""):
+                        row["observed_at"] = observed_at
                     outcomes.append(row)
 
                 if len(outcomes) < 2:
@@ -1613,12 +1628,14 @@ async def fetch_events_async(
                                                 "name": home_team,
                                                 "price": home_out["price"],
                                                 **({"last_updated": home_out["last_updated"]} if home_out.get("last_updated") else {}),
+                                                **({"observed_at": home_out["observed_at"]} if home_out.get("observed_at") not in (None, "") else {}),
                                                 **({"stake": home_out["stake"]} if _safe_float(home_out.get("stake")) else {}),
                                             },
                                             {
                                                 "name": away_team,
                                                 "price": away_out["price"],
                                                 **({"last_updated": away_out["last_updated"]} if away_out.get("last_updated") else {}),
+                                                **({"observed_at": away_out["observed_at"]} if away_out.get("observed_at") not in (None, "") else {}),
                                                 **({"stake": away_out["stake"]} if _safe_float(away_out.get("stake")) else {}),
                                             },
                                         ],
@@ -1631,12 +1648,14 @@ async def fetch_events_async(
                                                 "name": outcomes[0]["title"],
                                                 "price": outcomes[0]["price"],
                                                 **({"last_updated": outcomes[0]["last_updated"]} if outcomes[0].get("last_updated") else {}),
+                                                **({"observed_at": outcomes[0]["observed_at"]} if outcomes[0].get("observed_at") not in (None, "") else {}),
                                                 **({"stake": outcomes[0]["stake"]} if _safe_float(outcomes[0].get("stake")) else {}),
                                             },
                                             {
                                                 "name": outcomes[1]["title"],
                                                 "price": outcomes[1]["price"],
                                                 **({"last_updated": outcomes[1]["last_updated"]} if outcomes[1].get("last_updated") else {}),
+                                                **({"observed_at": outcomes[1]["observed_at"]} if outcomes[1].get("observed_at") not in (None, "") else {}),
                                                 **({"stake": outcomes[1]["stake"]} if _safe_float(outcomes[1].get("stake")) else {}),
                                             },
                                         ],
@@ -1659,6 +1678,7 @@ async def fetch_events_async(
                                 "price": outcome["price"],
                                 "point": round(float(point), 6),
                                 **({"last_updated": outcome["last_updated"]} if outcome.get("last_updated") else {}),
+                                **({"observed_at": outcome["observed_at"]} if outcome.get("observed_at") not in (None, "") else {}),
                                 **({"stake": outcome["stake"]} if _safe_float(outcome.get("stake")) else {}),
                             }
                         )
@@ -1685,6 +1705,7 @@ async def fetch_events_async(
                             "price": outcome["price"],
                             "point": round(float(point), 6),
                             **({"last_updated": outcome["last_updated"]} if outcome.get("last_updated") else {}),
+                            **({"observed_at": outcome["observed_at"]} if outcome.get("observed_at") not in (None, "") else {}),
                             **({"stake": outcome["stake"]} if _safe_float(outcome.get("stake")) else {}),
                         }
                     if "Over" in totals and "Under" in totals:
@@ -1721,6 +1742,8 @@ async def fetch_events_async(
                             }
                             if outcome.get("last_updated"):
                                 row["last_updated"] = outcome["last_updated"]
+                            if outcome.get("observed_at") not in (None, ""):
+                                row["observed_at"] = outcome["observed_at"]
                             if _safe_float(outcome.get("stake")):
                                 row["stake"] = outcome["stake"]
                             _, title_point = _parse_spread_title(outcome["title"])

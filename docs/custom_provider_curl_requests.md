@@ -4,7 +4,6 @@ This document lists all data-fetch interfaces used by custom providers in `provi
 It is intended for endpoint health checks and manual API validation.
 
 Registered custom providers:
-- `purebet`
 - `betdex`
 - `bookmaker_xyz`
 - `sx_bet`
@@ -13,13 +12,6 @@ Registered custom providers:
 ## 0) Common Variables
 
 ```bash
-# Purebet
-PUREBET_API_BASE="https://v3api.purebet.io"
-PUREBET_ORIGIN="https://purebet.io"
-PUREBET_REFERER="https://purebet.io/"
-PUREBET_UA="Mozilla/5.0"
-PUREBET_EVENT_ID="REPLACE_EVENT_ID"
-
 # BetDEX
 BETDEX_API_BASE="https://production.api.monacoprotocol.xyz"
 BETDEX_APP_ID="REPLACE_APP_ID"
@@ -64,40 +56,9 @@ POLY_END_DATE_MIN="2026-01-01T00:00:00Z"
 POLY_TOKEN_ID="REPLACE_CLOB_TOKEN_ID"
 ```
 
-## 1) Purebet (`providers/purebet.py`)
+## 1) BetDEX (`providers/betdex.py`)
 
-### 1.1 Event list `/events`
-
-```bash
-curl -sS -G "$PUREBET_API_BASE/events" \
-  -H "Origin: $PUREBET_ORIGIN" \
-  -H "Referer: $PUREBET_REFERER" \
-  -H "User-Agent: $PUREBET_UA" \
-  --data-urlencode "live=false"
-```
-
-### 1.2 Active leagues `/activeLeagues`
-
-```bash
-curl -sS -G "$PUREBET_API_BASE/activeLeagues" \
-  -H "Origin: $PUREBET_ORIGIN" \
-  -H "Referer: $PUREBET_REFERER" \
-  -H "User-Agent: $PUREBET_UA"
-```
-
-### 1.3 Event markets `/markets?event=<event_id>`
-
-```bash
-curl -sS -G "$PUREBET_API_BASE/markets" \
-  -H "Origin: $PUREBET_ORIGIN" \
-  -H "Referer: $PUREBET_REFERER" \
-  -H "User-Agent: $PUREBET_UA" \
-  --data-urlencode "event=$PUREBET_EVENT_ID"
-```
-
-## 2) BetDEX (`providers/betdex.py`)
-
-### 2.1 Official session token `POST /sessions` (recommended)
+### 1.1 Official session token `POST /sessions` (recommended)
 
 ```bash
 curl -sS "$BETDEX_API_BASE/sessions" \
@@ -119,7 +80,7 @@ BETDEX_TOKEN="$(curl -sS "$BETDEX_API_BASE/sessions" \
 echo "$BETDEX_TOKEN"
 ```
 
-### 2.2 Legacy public website session `GET /api/session` (best-effort)
+### 1.2 Legacy public website session `GET /api/session` (best-effort)
 
 ```bash
 curl -i -sS "$BETDEX_SESSION_URL" \
@@ -129,7 +90,7 @@ curl -i -sS "$BETDEX_SESSION_URL" \
 
 As of `2026-03-16`, this endpoint may return `429 Too Many Requests` with `x-vercel-mitigated: challenge`, which indicates front-end bot protection rather than a documented Monaco API limit.
 
-### 2.3 Events `/events`
+### 1.3 Events `/events`
 
 ```bash
 curl -sS -G "$BETDEX_API_BASE/events" \
@@ -142,7 +103,7 @@ curl -sS -G "$BETDEX_API_BASE/events" \
   --data-urlencode "subcategoryIds=$BETDEX_SUBCATEGORY"
 ```
 
-### 2.4 Markets `/markets` (repeated `eventIds` and `statuses`)
+### 1.4 Markets `/markets` (repeated `eventIds` and `statuses`)
 
 ```bash
 curl -sS -G "$BETDEX_API_BASE/markets" \
@@ -157,7 +118,7 @@ curl -sS -G "$BETDEX_API_BASE/markets" \
   --data-urlencode "statuses=Open"
 ```
 
-### 2.5 Market prices `/market-prices` (repeated `marketIds`)
+### 1.5 Market prices `/market-prices` (repeated `marketIds`)
 
 ```bash
 curl -sS -G "$BETDEX_API_BASE/market-prices" \
@@ -168,16 +129,16 @@ curl -sS -G "$BETDEX_API_BASE/market-prices" \
   --data-urlencode "marketIds=$BETDEX_MARKET_ID_2"
 ```
 
-## 3) bookmaker.xyz (`providers/bookmaker_xyz.py`)
+## 2) bookmaker.xyz (`providers/bookmaker_xyz.py`)
 
-### 3.1 Home page (used to discover const asset path)
+### 2.1 Home page (used to discover const asset path)
 
 ```bash
 curl -sS "$BOOKMAKER_HOME" \
   -H "User-Agent: $BOOKMAKER_UA"
 ```
 
-### 3.2 Const asset (`/assets/const-*.js`)
+### 2.2 Const asset (`/assets/const-*.js`)
 
 ```bash
 CONST_ASSET_PATH="/assets/const-REPLACE_HASH.js"
@@ -185,7 +146,7 @@ curl -sS "${BOOKMAKER_PUBLIC_BASE}${CONST_ASSET_PATH}" \
   -H "User-Agent: $BOOKMAKER_UA"
 ```
 
-### 3.3 Official market-manager `/games-by-filters`
+### 2.3 Official market-manager `/games-by-filters`
 
 ```bash
 curl -sS -G "$BOOKMAKER_MARKET_MANAGER_BASE/games-by-filters" \
@@ -202,7 +163,7 @@ curl -sS -G "$BOOKMAKER_MARKET_MANAGER_BASE/games-by-filters" \
   --data-urlencode "perPage=100"
 ```
 
-### 3.4 Official market-manager `/conditions-by-game-ids`
+### 2.4 Official market-manager `/conditions-by-game-ids`
 
 ```bash
 curl -sS "$BOOKMAKER_MARKET_MANAGER_BASE/conditions-by-game-ids" \
@@ -217,21 +178,21 @@ curl -sS "$BOOKMAKER_MARKET_MANAGER_BASE/conditions-by-game-ids" \
 JSON
 ```
 
-## 4) SX Bet (`providers/sx_bet.py`)
+## 3) SX Bet (`providers/sx_bet.py`)
 
 Optional auth headers:
 - `Authorization: Bearer $SX_BEARER`
 - `X-API-Key: $SX_API_KEY`
 - `Cookie: $SX_COOKIE`
 
-### 4.1 Upcoming fixtures `/summary/upcoming/{baseToken}/{sportId}`
+### 3.1 Upcoming fixtures `/summary/upcoming/{baseToken}/{sportId}`
 
 ```bash
 curl -sS "$SX_BASE/summary/upcoming/$SX_BASE_TOKEN/$SX_SPORT_ID" \
   -H "User-Agent: $SX_UA"
 ```
 
-### 4.2 Best odds `/orders/odds/best`
+### 3.2 Best odds `/orders/odds/best`
 
 ```bash
 curl -sS -G "$SX_BASE/orders/odds/best" \
@@ -243,7 +204,7 @@ curl -sS -G "$SX_BASE/orders/odds/best" \
   --data-urlencode "baseToken=$SX_BASE_TOKEN"
 ```
 
-### 4.3 Orders `/orders`
+### 3.3 Orders `/orders`
 
 ```bash
 curl -sS -G "$SX_BASE/orders" \
@@ -255,14 +216,14 @@ curl -sS -G "$SX_BASE/orders" \
   --data-urlencode "baseToken=$SX_BASE_TOKEN"
 ```
 
-## 5) Polymarket (`providers/polymarket.py`)
+## 4) Polymarket (`providers/polymarket.py`)
 
 Optional auth headers:
 - `Authorization: Bearer $POLY_BEARER`
 - `X-API-Key: $POLY_API_KEY`
 - `Cookie: $POLY_COOKIE`
 
-### 5.1 Sports tags `/sports`
+### 4.1 Sports tags `/sports`
 
 ```bash
 curl -sS "$POLY_API_BASE/sports" \
@@ -272,7 +233,7 @@ curl -sS "$POLY_API_BASE/sports" \
   -H "Cookie: $POLY_COOKIE"
 ```
 
-### 5.2 Active events `/events`
+### 4.2 Active events `/events`
 
 ```bash
 curl -sS -G "$POLY_API_BASE/events" \
@@ -291,7 +252,7 @@ curl -sS -G "$POLY_API_BASE/events" \
   --data-urlencode "offset=0"
 ```
 
-### 5.3 CLOB order book `/book?token_id=<token_id>`
+### 4.3 CLOB order book `/book?token_id=<token_id>`
 
 ```bash
 curl -sS -G "$POLY_CLOB_BASE/book" \
@@ -302,10 +263,13 @@ curl -sS -G "$POLY_CLOB_BASE/book" \
   --data-urlencode "token_id=$POLY_TOKEN_ID"
 ```
 
-## 6) Quick Check Tips
+## 5) Quick Check Tips
 
 Add `-i` to inspect HTTP status and headers:
 
 ```bash
-curl -i -sS -G "$PUREBET_API_BASE/events" --data-urlencode "live=false" | head
+curl -i -sS -G "$POLY_API_BASE/events" \
+  --data-urlencode "tag_id=$POLY_TAG_ID" \
+  --data-urlencode "active=true" \
+  --data-urlencode "closed=false" | head
 ```

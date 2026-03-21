@@ -32,7 +32,6 @@
 - Python 函数、变量、模块名使用 `snake_case`
 - 常量使用 `UPPER_SNAKE_CASE`
 - Provider 统一使用规范化 key：
-  - `purebet`
   - `betdex`
   - `bookmaker_xyz`
   - `sx_bet`

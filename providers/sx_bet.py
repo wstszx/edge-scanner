@@ -2337,6 +2337,13 @@ def _load_best_odds_map(
             out_one = item.get("outcomeOne") if isinstance(item.get("outcomeOne"), dict) else {}
             out_two = item.get("outcomeTwo") if isinstance(item.get("outcomeTwo"), dict) else {}
             odds_entry = _best_odds_entry_from_payloads(out_one, out_two)
+            observed_at = time.time()
+            if odds_entry.get("odds_one") is not None:
+                odds_entry["observed_at_one"] = observed_at
+            if odds_entry.get("odds_two") is not None:
+                odds_entry["observed_at_two"] = observed_at
+            if odds_entry.get("odds_one") is not None or odds_entry.get("odds_two") is not None:
+                odds_entry["observed_at"] = observed_at
             odds_one = odds_entry.get("odds_one")
             odds_two = odds_entry.get("odds_two")
             odds_map[market_hash] = odds_entry
@@ -2422,6 +2429,13 @@ async def _load_best_odds_map_async(
             out_one = item.get("outcomeOne") if isinstance(item.get("outcomeOne"), dict) else {}
             out_two = item.get("outcomeTwo") if isinstance(item.get("outcomeTwo"), dict) else {}
             odds_entry = _best_odds_entry_from_payloads(out_one, out_two)
+            observed_at = time.time()
+            if odds_entry.get("odds_one") is not None:
+                odds_entry["observed_at_one"] = observed_at
+            if odds_entry.get("odds_two") is not None:
+                odds_entry["observed_at_two"] = observed_at
+            if odds_entry.get("odds_one") is not None or odds_entry.get("odds_two") is not None:
+                odds_entry["observed_at"] = observed_at
             odds_one = odds_entry.get("odds_one")
             odds_two = odds_entry.get("odds_two")
             odds_map[market_hash] = odds_entry
@@ -2963,6 +2977,8 @@ async def fetch_events_async(
         odds_two = candidate.get("odds_two")
         outcome_one_last_updated = candidate.get("outcome_one_last_updated")
         outcome_two_last_updated = candidate.get("outcome_two_last_updated")
+        outcome_one_observed_at = candidate.get("outcome_one_observed_at")
+        outcome_two_observed_at = candidate.get("outcome_two_observed_at")
         outcome_one_quote_source = candidate.get("outcome_one_quote_source")
         outcome_two_quote_source = candidate.get("outcome_two_quote_source")
         outcome_one_raw_percentage = candidate.get("outcome_one_raw_percentage_odds")
@@ -2979,6 +2995,8 @@ async def fetch_events_async(
                     odds_two = mapped_odds_two
                 outcome_one_last_updated = outcome_one_last_updated or mapped.get("updated_at_one")
                 outcome_two_last_updated = outcome_two_last_updated or mapped.get("updated_at_two")
+                outcome_one_observed_at = outcome_one_observed_at or mapped.get("observed_at_one")
+                outcome_two_observed_at = outcome_two_observed_at or mapped.get("observed_at_two")
                 if mapped.get("raw_percentage_one") not in (None, ""):
                     outcome_one_raw_percentage = mapped.get("raw_percentage_one")
                 if mapped.get("raw_percentage_two") not in (None, ""):
@@ -2999,6 +3017,10 @@ async def fetch_events_async(
                     outcome_one_last_updated = realtime_mapped.get("updated_at_one")
                 if realtime_mapped.get("updated_at_two") not in (None, ""):
                     outcome_two_last_updated = realtime_mapped.get("updated_at_two")
+                if realtime_mapped.get("observed_at_one") not in (None, ""):
+                    outcome_one_observed_at = realtime_mapped.get("observed_at_one")
+                if realtime_mapped.get("observed_at_two") not in (None, ""):
+                    outcome_two_observed_at = realtime_mapped.get("observed_at_two")
                 if realtime_mapped.get("source_one") not in (None, ""):
                     outcome_one_quote_source = realtime_mapped.get("source_one")
                 if realtime_mapped.get("source_two") not in (None, ""):
@@ -3080,6 +3102,10 @@ async def fetch_events_async(
             outcomes[0]["last_updated"] = outcome_one_last_updated
         if outcome_two_last_updated not in (None, ""):
             outcomes[1]["last_updated"] = outcome_two_last_updated
+        if outcome_one_observed_at not in (None, ""):
+            outcomes[0]["observed_at"] = outcome_one_observed_at
+        if outcome_two_observed_at not in (None, ""):
+            outcomes[1]["observed_at"] = outcome_two_observed_at
         if outcome_one_quote_source not in (None, ""):
             outcomes[0]["quote_source"] = outcome_one_quote_source
         if outcome_two_quote_source not in (None, ""):

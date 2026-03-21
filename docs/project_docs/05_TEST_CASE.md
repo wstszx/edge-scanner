@@ -17,7 +17,6 @@
 | UT-NOT-001 | `notifier.py` | 通知阈值过滤与摘要格式化 | 仅发送高于阈值的机会 | `tests/test_notifier.py` |
 | UT-CFG-001 | `config.py` | 不同体育的默认市场推导 | 返回与体育类型匹配的市场集合 | `tests/test_config_markets.py` |
 | UT-PROV-001 | `providers/bookmaker_xyz.py` | 扫描期缓存启停 | 缓存命中与清理逻辑正确 | `tests/test_bookmaker_xyz_cache.py` |
-| UT-PROV-002 | `providers/purebet.py` | 市场解析、事件归一化 | 返回统一事件/市场结构 | `tests/test_purebet_market_parsing.py` |
 | UT-PROV-003 | `providers/polymarket.py` | 实时状态与异步抓取 | 运行时状态、异步获取可用 | `tests/test_polymarket_realtime.py` |
 | UT-PROV-004 | `scanner.py` | Provider 快照与后续合并事件隔离 | 快照中只保留该 Provider 原始盘口 | `tests/test_scanner_regressions.py` |
 
@@ -28,7 +27,7 @@
 | IT-APP-001 | `POST /scan` | 非法 JSON | 返回 `400` 和 `Invalid JSON payload` | `tests/test_app_scan_inputs.py` |
 | IT-APP-002 | `POST /scan` | JSON 不是对象 | 返回 `400` 和 `Scan payload must be a JSON object` | `tests/test_app_scan_inputs.py` |
 | IT-APP-003 | `POST /scan` | `sharpBook` 非字符串 | 回退到默认 Sharp Book | `tests/test_app_scan_inputs.py` |
-| IT-APP-004 | `POST /scan` | 布尔字符串输入 | 正确解析 `allSports` / `allMarkets` / `includePurebet` / `saveScan` | `tests/test_app_scan_inputs.py` |
+| IT-APP-004 | `POST /scan` | 布尔字符串输入 | 正确解析 `allSports` / `allMarkets` / `saveScan` | `tests/test_app_scan_inputs.py` |
 | IT-APP-005 | `POST /scan` | `includeProviders=[]` 且选中 Provider 型 bookmaker | 自动推导 Provider Key | `tests/test_app_scan_inputs.py` |
 | IT-APP-006 | `POST /scan` | 嵌套结果结构写历史 | 从 `opportunities` 嵌套中提取并写历史 | `tests/test_app_scan_inputs.py` |
 | IT-APP-007 | `GET /` | 首页访问 | 返回 `200`，并预热后台 Provider 服务 | `tests/test_app_scan_inputs.py` |

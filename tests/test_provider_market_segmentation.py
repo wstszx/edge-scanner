@@ -23,6 +23,19 @@ class TestBetdexSegmentation(unittest.TestCase):
         key = betdex._scoped_market_key("totals", "FOOTBALL_OVER_UNDER_HALF_TIME_TOTAL_GOALS")
         self.assertEqual(key, "totals_h1")
 
+    def test_best_back_prices_preserves_observed_at(self) -> None:
+        prices = betdex._best_back_prices(
+            {
+                "observed_at": 1773593002.0,
+                "prices": [
+                    {"outcomeId": "o1", "side": "against", "price": 2.05, "amount": 100.0},
+                    {"outcomeId": "o2", "side": "against", "price": 1.8, "amount": 80.0},
+                ],
+            }
+        )
+        self.assertEqual(prices["o1"]["observed_at"], 1773593002.0)
+        self.assertEqual(prices["o2"]["observed_at"], 1773593002.0)
+
 
 class TestSxBetSegmentation(unittest.TestCase):
     def test_summary_scaled_implied_odds_are_converted(self) -> None:

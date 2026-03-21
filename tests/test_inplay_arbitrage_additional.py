@@ -67,6 +67,27 @@ class InplayArbitrageAdditionalTests(unittest.TestCase):
                 )
             )
 
+    def test_live_quote_age_prefers_observed_at_over_older_provider_update_time(self) -> None:
+        game = {"live_state": {"status": "live", "updated_at": 10}, "updated_at": 5}
+        bookmaker = {"updated_at": 15}
+        market = {"updated_at": 30, "observed_at": 99}
+        outcome = {"last_updated": 60}
+
+        age = scanner._live_quote_age_seconds(game, bookmaker, market, outcome, now_epoch=100.0)
+        self.assertEqual(age, 1.0)
+
+        with patch.object(scanner, "LIVE_QUOTE_MAX_AGE_SECONDS_RAW", "5"):
+            self.assertTrue(
+                scanner._is_live_quote_fresh(
+                    game,
+                    bookmaker,
+                    market,
+                    outcome,
+                    scan_mode="live",
+                    now_epoch=100.0,
+                )
+            )
+
     def test_live_quote_freshness_boundary_allows_equal_max_age(self) -> None:
         game = {"live_state": {"status": "live"}}
         bookmaker = {}

@@ -792,11 +792,6 @@ def _execute_scan_payload(
         stake = payload.get("stake")
         bookmakers = payload.get("bookmakers")
         commission = payload.get("commission")
-        include_purebet = (
-            _coerce_bool(payload.get("includePurebet"), default=False)
-            if "includePurebet" in payload
-            else None
-        )
         include_providers_raw = payload.get("includeProviders")
         sharp_book_raw = payload.get("sharpBook")
         if isinstance(sharp_book_raw, str):
@@ -930,7 +925,6 @@ def _execute_scan_payload(
             min_edge_percent=min_edge_percent,
             bankroll=bankroll_value,
             kelly_fraction=kelly_fraction,
-            include_purebet=include_purebet,
             include_providers=include_providers_value,
         )
         if isinstance(result, dict) and "scan_mode" not in result:

@@ -1070,7 +1070,7 @@ def _book_ask_depth_notional(payload: object) -> Optional[float]:
     return round(total, 6)
 
 
-def _book_best_ask_quote(payload: object) -> Optional[dict]:
+def _book_best_ask_quote(payload: object, observed_at: object = None) -> Optional[dict]:
     if not isinstance(payload, dict):
         return None
     asks = payload.get("asks")
@@ -1095,12 +1095,16 @@ def _book_best_ask_quote(payload: object) -> Optional[dict]:
     decimal_odds = _price_to_decimal_odds(best_price)
     if decimal_odds is None:
         return None
-    return {
+    row = {
         "probability": round(float(best_price), 6),
         "decimal_odds": decimal_odds,
         "stake": round(float(best_price) * float(best_size), 6),
         "quote_source": "clob_book_best_ask",
     }
+    if observed_at not in (None, ""):
+        row["observed_at"] = observed_at
+        row["updated_at"] = observed_at
+    return row
 
 
 def _price_level_map(levels: object) -> Dict[str, float]:
@@ -1131,7 +1135,10 @@ def _depth_from_level_map(levels: Dict[str, float]) -> Optional[float]:
     return round(total, 6)
 
 
-def _best_ask_quote_from_level_map(levels: Dict[str, float]) -> Optional[dict]:
+def _best_ask_quote_from_level_map(
+    levels: Dict[str, float],
+    observed_at: object = None,
+) -> Optional[dict]:
     best_price = None
     best_size = None
     for price_key, size in (levels or {}).items():
@@ -1149,12 +1156,16 @@ def _best_ask_quote_from_level_map(levels: Dict[str, float]) -> Optional[dict]:
     decimal_odds = _price_to_decimal_odds(best_price)
     if decimal_odds is None:
         return None
-    return {
+    row = {
         "probability": round(float(best_price), 6),
         "decimal_odds": decimal_odds,
         "stake": round(float(best_price) * float(best_size), 6),
         "quote_source": "ws_book_best_ask",
     }
+    if observed_at not in (None, ""):
+        row["observed_at"] = observed_at
+        row["updated_at"] = observed_at
+    return row
 
 
 def _normalized_clob_token_ids(
@@ -1934,7 +1945,10 @@ class PolymarketRealtimeManager:
                 if not isinstance(ask_levels, dict):
                     missing.append(asset_id)
                     continue
-                quote = _best_ask_quote_from_level_map(ask_levels)
+                quote = _best_ask_quote_from_level_map(
+                    ask_levels,
+                    observed_at=updated_at or None,
+                )
                 if quote is not None:
                     quotes[asset_id] = dict(quote)
                 else:
@@ -1953,7 +1967,10 @@ class PolymarketRealtimeManager:
                     ask_levels = entry.get("asks")
                     if not isinstance(ask_levels, dict):
                         continue
-                    quote = _best_ask_quote_from_level_map(ask_levels)
+                    quote = _best_ask_quote_from_level_map(
+                        ask_levels,
+                        observed_at=updated_at or None,
+                    )
                     if quote is not None:
                         quotes[asset_id] = dict(quote)
         return quotes
@@ -2348,6 +2365,11 @@ class PolymarketRealtimeManager:
                     asset_id,
                     {"bids": {}, "asks": {}, "updated_at": 0.0},
                 )
+                message_timestamp = _safe_float(payload.get("timestamp"))
+                if message_timestamp is None:
+                    message_timestamp = _safe_float(payload.get("ts"))
+                if message_timestamp is not None and message_timestamp > 1e12:
+                    message_timestamp /= 1000.0
                 if event_type == "book":
                     entry["bids"] = _price_level_map(payload.get("bids"))
                     entry["asks"] = _price_level_map(payload.get("asks"))
@@ -2369,7 +2391,7 @@ class PolymarketRealtimeManager:
                             bucket.pop(price_key, None)
                         else:
                             bucket[price_key] = float(size)
-                entry["updated_at"] = now
+                entry["updated_at"] = message_timestamp if message_timestamp is not None and message_timestamp > 0 else now
 
     async def _handle_sports_message(self, raw: object) -> None:
         messages = self._decode_ws_messages(raw)
@@ -2772,7 +2794,7 @@ async def _load_clob_quote_map_async(
                 )
             except ProviderError:
                 return token_id, None, 0, True
-            return token_id, _book_best_ask_quote(payload), retry_count, False
+            return token_id, _book_best_ask_quote(payload, observed_at=time.time()), retry_count, False
 
         if worker_count <= 1:
             for token_id in unresolved:
@@ -2844,6 +2866,8 @@ def _market_outcome_row(
     stake: Optional[float] = None,
     raw_percentage_odds: object = None,
     quote_source: object = None,
+    observed_at: object = None,
+    last_updated: object = None,
 ) -> dict:
     row = {"name": name, "price": round(float(price), 6)}
     if stake is not None and stake > 0:
@@ -2853,6 +2877,10 @@ def _market_outcome_row(
     source = _normalize_text(quote_source)
     if source:
         row["quote_source"] = source
+    if observed_at not in (None, ""):
+        row["observed_at"] = observed_at
+    if last_updated not in (None, ""):
+        row["last_updated"] = last_updated
     return row
 
 
@@ -2898,10 +2926,14 @@ def _pick_match_markets(
             decimal_odds = _safe_float(quote_payload.get("decimal_odds")) if isinstance(quote_payload, dict) else None
             stake = _safe_float(quote_payload.get("stake")) if isinstance(quote_payload, dict) else None
             quote_source = _normalize_text(quote_payload.get("quote_source")) if isinstance(quote_payload, dict) else ""
+            quote_observed_at = quote_payload.get("observed_at") if isinstance(quote_payload, dict) else None
+            quote_last_updated = quote_payload.get("updated_at") if isinstance(quote_payload, dict) else None
             if decimal_odds is None or decimal_odds <= 1:
                 decimal_odds = _price_to_decimal_odds(raw_probability)
                 stake = None
                 quote_source = "gamma_outcome_price"
+                quote_observed_at = None
+                quote_last_updated = None
             if decimal_odds is None:
                 quote_details = []
                 break
@@ -2911,6 +2943,8 @@ def _pick_match_markets(
                     "stake": round(float(stake), 6) if stake is not None and stake > 0 else None,
                     "raw_percentage_odds": raw_probability,
                     "quote_source": quote_source,
+                    "observed_at": quote_observed_at,
+                    "last_updated": quote_last_updated,
                 }
             )
         if len(quote_details) != 2:
@@ -2935,6 +2969,8 @@ def _pick_match_markets(
                             quote_details[0]["stake"],
                             quote_details[0]["raw_percentage_odds"],
                             quote_details[0]["quote_source"],
+                            quote_details[0].get("observed_at"),
+                            quote_details[0].get("last_updated"),
                         ),
                         _market_outcome_row(
                             outcomes[1],
@@ -2942,6 +2978,8 @@ def _pick_match_markets(
                             quote_details[1]["stake"],
                             quote_details[1]["raw_percentage_odds"],
                             quote_details[1]["quote_source"],
+                            quote_details[1].get("observed_at"),
+                            quote_details[1].get("last_updated"),
                         ),
                     ],
                     "volume": _safe_float(market.get("volumeNum") or market.get("volume")) or 0.0,
@@ -2993,6 +3031,8 @@ def _pick_match_markets(
                                 _safe_float(home_outcome.get("stake")),
                                 home_outcome.get("raw_percentage_odds"),
                                 home_outcome.get("quote_source"),
+                                home_outcome.get("observed_at"),
+                                home_outcome.get("last_updated"),
                             ),
                             _market_outcome_row(
                                 away_team,
@@ -3000,6 +3040,8 @@ def _pick_match_markets(
                                 _safe_float(away_outcome.get("stake")),
                                 away_outcome.get("raw_percentage_odds"),
                                 away_outcome.get("quote_source"),
+                                away_outcome.get("observed_at"),
+                                away_outcome.get("last_updated"),
                             ),
                         ],
                     }
@@ -3027,6 +3069,8 @@ def _pick_match_markets(
                                 _safe_float(home_data.get("stake")),
                                 home_data.get("raw_percentage_odds"),
                                 home_data.get("quote_source"),
+                                home_data.get("observed_at"),
+                                home_data.get("last_updated"),
                             ),
                             _market_outcome_row(
                                 away_team,
@@ -3034,6 +3078,8 @@ def _pick_match_markets(
                                 _safe_float(away_data.get("stake")),
                                 away_data.get("raw_percentage_odds"),
                                 away_data.get("quote_source"),
+                                away_data.get("observed_at"),
+                                away_data.get("last_updated"),
                             ),
                         ],
                     }
@@ -3049,6 +3095,8 @@ def _pick_match_markets(
                                 _safe_float(home_data.get("stake")),
                                 home_data.get("raw_percentage_odds"),
                                 home_data.get("quote_source"),
+                                home_data.get("observed_at"),
+                                home_data.get("last_updated"),
                             ),
                             _market_outcome_row(
                                 "Draw",
@@ -3056,6 +3104,8 @@ def _pick_match_markets(
                                 _safe_float(draw_yes.get("stake")),
                                 draw_yes.get("raw_percentage_odds"),
                                 draw_yes.get("quote_source"),
+                                draw_yes.get("observed_at"),
+                                draw_yes.get("last_updated"),
                             ),
                             _market_outcome_row(
                                 away_team,
@@ -3063,6 +3113,8 @@ def _pick_match_markets(
                                 _safe_float(away_data.get("stake")),
                                 away_data.get("raw_percentage_odds"),
                                 away_data.get("quote_source"),
+                                away_data.get("observed_at"),
+                                away_data.get("last_updated"),
                             ),
                         ],
                     }
@@ -3084,6 +3136,8 @@ def _pick_match_markets(
                         _safe_float(btts_yes.get("stake")),
                         btts_yes.get("raw_percentage_odds"),
                         btts_yes.get("quote_source"),
+                        btts_yes.get("observed_at"),
+                        btts_yes.get("last_updated"),
                     ),
                     _market_outcome_row(
                         "No",
@@ -3091,6 +3145,8 @@ def _pick_match_markets(
                         _safe_float(btts_no.get("stake")),
                         btts_no.get("raw_percentage_odds"),
                         btts_no.get("quote_source"),
+                        btts_no.get("observed_at"),
+                        btts_no.get("last_updated"),
                     ),
                 ],
             }

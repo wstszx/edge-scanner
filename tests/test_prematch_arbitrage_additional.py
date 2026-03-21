@@ -345,18 +345,6 @@ class PrematchArbitrageAdditionalTests(unittest.TestCase):
                 "sport_errors": [],
                 "provider_updates": {},
                 "provider_snapshot_updates": {},
-                "purebet_update": {
-                    "events_merged": 0,
-                    "sports": [],
-                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
-                    "league_sync": {
-                        "live_updates": 0,
-                        "cache_hits": 0,
-                        "stale_cache_uses": 0,
-                        "dynamic_added": 0,
-                        "unresolved": 0,
-                    },
-                },
                 "events_scanned": 0,
                 "total_profit": 0.0,
                 "arb_opportunities": [],

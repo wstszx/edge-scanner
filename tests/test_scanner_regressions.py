@@ -56,18 +56,6 @@ class ScannerRegressionTests(unittest.TestCase):
                 "sport_errors": [],
                 "provider_updates": {},
                 "provider_snapshot_updates": {},
-                "purebet_update": {
-                    "events_merged": 0,
-                    "sports": [],
-                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
-                    "league_sync": {
-                        "live_updates": 0,
-                        "cache_hits": 0,
-                        "stale_cache_uses": 0,
-                        "dynamic_added": 0,
-                        "unresolved": 0,
-                    },
-                },
                 "events_scanned": 0,
                 "total_profit": 0.0,
                 "arb_opportunities": [],
@@ -239,18 +227,6 @@ class ScannerRegressionTests(unittest.TestCase):
                 "sport_errors": [],
                 "provider_updates": {},
                 "provider_snapshot_updates": {},
-                "purebet_update": {
-                    "events_merged": 0,
-                    "sports": [],
-                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
-                    "league_sync": {
-                        "live_updates": 0,
-                        "cache_hits": 0,
-                        "stale_cache_uses": 0,
-                        "dynamic_added": 0,
-                        "unresolved": 0,
-                    },
-                },
                 "events_scanned": 0,
                 "total_profit": 0.0,
                 "arb_opportunities": [],
@@ -286,7 +262,6 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertEqual(defaults, ["sx_bet", "betdex", "polymarket"])
 
     def test_registered_provider_fetchers_use_async_entrypoints_for_migrated_providers(self) -> None:
-        self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["purebet"]))
         self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["betdex"]))
         self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["bookmaker_xyz"]))
         self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["sx_bet"]))
@@ -296,12 +271,12 @@ class ScannerRegressionTests(unittest.TestCase):
 
     def test_dedupe_proxy_provider_keys_returns_unique_registered_keys(self) -> None:
         deduped = scanner._dedupe_proxy_provider_keys(
-            ["bookmaker_xyz", "sx_bet", "bookmaker_xyz", "purebet"],
+            ["bookmaker_xyz", "sx_bet", "bookmaker_xyz", "betdex"],
             explicit_provider_keys=["sx_bet"],
         )
         self.assertIn("bookmaker_xyz", deduped)
         self.assertIn("sx_bet", deduped)
-        self.assertIn("purebet", deduped)
+        self.assertIn("betdex", deduped)
         self.assertEqual(deduped.count("bookmaker_xyz"), 1)
 
     def test_dedupe_proxy_provider_keys_ignores_unregistered_provider_keys(self) -> None:
@@ -1202,8 +1177,8 @@ class ScannerRegressionTests(unittest.TestCase):
             "away_team": "Away Team",
             "bookmakers": [
                 {
-                    "key": "Purebet",
-                    "title": "Purebet",
+                    "key": "BetDEX",
+                    "title": "BetDEX",
                     "markets": [
                         {
                             "key": "totals",
@@ -1237,18 +1212,18 @@ class ScannerRegressionTests(unittest.TestCase):
             commission_rate=0.05,
         )
         self.assertTrue(entries)
-        purebet_legs = []
+        exchange_legs = []
         for entry in entries:
             for side_key in ("side_a", "side_b"):
                 side = entry.get(side_key) or {}
-                if (side.get("bookmaker") or "").strip().lower() == "purebet":
-                    purebet_legs.append(side)
-        self.assertTrue(purebet_legs)
+                if (side.get("bookmaker") or "").strip().lower() == "betdex":
+                    exchange_legs.append(side)
+        self.assertTrue(exchange_legs)
         self.assertTrue(
             any(
                 float(side.get("effective_price") or 0.0)
                 < float(side.get("price") or 0.0)
-                for side in purebet_legs
+                for side in exchange_legs
             )
         )
 
@@ -1509,18 +1484,6 @@ class ScannerRegressionTests(unittest.TestCase):
                 "sport_errors": [],
                 "provider_updates": {},
                 "provider_snapshot_updates": {},
-                "purebet_update": {
-                    "events_merged": 0,
-                    "sports": [],
-                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
-                    "league_sync": {
-                        "live_updates": 0,
-                        "cache_hits": 0,
-                        "stale_cache_uses": 0,
-                        "dynamic_added": 0,
-                        "unresolved": 0,
-                    },
-                },
                 "events_scanned": 0,
                 "total_profit": 0.0,
                 "arb_opportunities": [],
@@ -1539,7 +1502,7 @@ class ScannerRegressionTests(unittest.TestCase):
                 api_key="dummy",
                 sports=["americanfootball_nfl"],
                 all_sports=True,
-                include_purebet=True,
+                include_providers=["sx_bet"],
             )
 
         self.assertTrue(result.get("success"))
@@ -1580,18 +1543,6 @@ class ScannerRegressionTests(unittest.TestCase):
                 "sport_errors": [],
                 "provider_updates": {},
                 "provider_snapshot_updates": {},
-                "purebet_update": {
-                    "events_merged": 0,
-                    "sports": [],
-                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
-                    "league_sync": {
-                        "live_updates": 0,
-                        "cache_hits": 0,
-                        "stale_cache_uses": 0,
-                        "dynamic_added": 0,
-                        "unresolved": 0,
-                    },
-                },
                 "events_scanned": 0,
                 "total_profit": 0.0,
                 "arb_opportunities": [],
@@ -1649,18 +1600,6 @@ class ScannerRegressionTests(unittest.TestCase):
                 "sport_errors": [],
                 "provider_updates": {},
                 "provider_snapshot_updates": {},
-                "purebet_update": {
-                    "events_merged": 0,
-                    "sports": [],
-                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
-                    "league_sync": {
-                        "live_updates": 0,
-                        "cache_hits": 0,
-                        "stale_cache_uses": 0,
-                        "dynamic_added": 0,
-                        "unresolved": 0,
-                    },
-                },
                 "events_scanned": 0,
                 "total_profit": 0.0,
                 "arb_opportunities": [],
@@ -1710,18 +1649,6 @@ class ScannerRegressionTests(unittest.TestCase):
                 "sport_errors": [],
                 "provider_updates": {},
                 "provider_snapshot_updates": {},
-                "purebet_update": {
-                    "events_merged": 0,
-                    "sports": [],
-                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
-                    "league_sync": {
-                        "live_updates": 0,
-                        "cache_hits": 0,
-                        "stale_cache_uses": 0,
-                        "dynamic_added": 0,
-                        "unresolved": 0,
-                    },
-                },
                 "events_scanned": 0,
                 "total_profit": 0.0,
                 "arb_opportunities": [],
@@ -1739,66 +1666,6 @@ class ScannerRegressionTests(unittest.TestCase):
                 api_key="",
                 sports=["americanfootball_nfl"],
                 include_providers=["sx_bet"],
-            )
-
-        self.assertTrue(result.get("success"))
-        self.assertEqual(captured_should_fetch_api, [False])
-
-    def test_run_scan_include_purebet_without_api_keys_runs_provider_only(self) -> None:
-        captured_should_fetch_api = []
-
-        def _fake_scan_single_sport(**kwargs):
-            captured_should_fetch_api.append(bool(kwargs.get("should_fetch_api")))
-            sport = kwargs.get("sport") or {}
-            sport_key = sport.get("key") or ""
-            sport_title = sport.get("title") or sport_key
-            return {
-                "skipped": False,
-                "sport_key": sport_key,
-                "sport_timing": {
-                    "sport_key": sport_key,
-                    "sport": sport_title,
-                    "api_fetch_ms": 0.0,
-                    "provider_fetch_ms": 0.0,
-                    "analysis_ms": 0.0,
-                    "events_scanned": 0,
-                    "providers": [],
-                    "total_ms": 0.0,
-                },
-                "timing_steps": [],
-                "api_market_skips": [],
-                "sport_errors": [],
-                "provider_updates": {},
-                "provider_snapshot_updates": {},
-                "purebet_update": {
-                    "events_merged": 0,
-                    "sports": [],
-                    "details": {"requested": 0, "success": 0, "failed": 0, "empty": 0, "retries": 0},
-                    "league_sync": {
-                        "live_updates": 0,
-                        "cache_hits": 0,
-                        "stale_cache_uses": 0,
-                        "dynamic_added": 0,
-                        "unresolved": 0,
-                    },
-                },
-                "events_scanned": 0,
-                "total_profit": 0.0,
-                "arb_opportunities": [],
-                "middle_opportunities": [],
-                "plus_ev_opportunities": [],
-                "stale_event_filters": [],
-                "successful": 1,
-            }
-
-        with (
-            patch.object(scanner, "_scan_single_sport", side_effect=_fake_scan_single_sport),
-            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
-        ):
-            result = scanner.run_scan(
-                api_key="",
-                sports=["americanfootball_nfl"],
-                include_purebet=True,
             )
 
         self.assertTrue(result.get("success"))

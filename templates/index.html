@@ -6753,21 +6753,6 @@
       });
     }
 
-    function isPurebetBook(book) {
-      const key = (book?.key || '').trim().toLowerCase();
-      const name = (book?.name || '').trim().toLowerCase();
-      return key === 'purebet' || name === 'purebet';
-    }
-
-    function isPurebetHost(url) {
-      try {
-        const host = new URL(url).hostname.toLowerCase();
-        return host === 'purebet.io' || host.endsWith('.purebet.io');
-      } catch (err) {
-        return false;
-      }
-    }
-
     function isSxBetBook(book, url = '') {
       const key = (book?.key || '').trim().toLowerCase();
       const name = (book?.name || '').trim().toLowerCase();
@@ -6824,12 +6809,6 @@
     }
 
     function resolveBookmakerOpenUrl(book, opp) {
-      const eventId = `${book?.eventId ?? opp?.event_id ?? ''}`.trim();
-      const isPurebet = isPurebetBook(book);
-      const purebetEventPage = isPurebet && eventId
-        ? `https://purebet.io/event/${encodeURIComponent(eventId)}`
-        : '';
-      if (purebetEventPage) return purebetEventPage;
       const directEventUrl = normalizeUrl(book?.eventUrl);
       if (directEventUrl) {
         if (isSxBetBook(book, directEventUrl)) {
@@ -6841,18 +6820,6 @@
       const templated = withTemplatePlaceholders(baseUrl, book, opp);
       if (!templated) {
         return '';
-      }
-      if (!isPurebet || !isPurebetHost(templated)) {
-        return templated;
-      }
-      try {
-        const parsed = new URL(templated);
-        const path = (parsed.pathname || '/').replace(/\/+$/, '');
-        if (!path || path === '/' || path === '/event') {
-          return templated;
-        }
-      } catch (err) {
-        return templated;
       }
       return templated;
     }

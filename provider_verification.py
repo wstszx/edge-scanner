@@ -17,13 +17,11 @@ DEFAULT_PROVIDERS = [
     "bookmaker_xyz",
     "sx_bet",
     "polymarket",
-    "purebet",
 ]
 
 DEFAULT_PROVIDER_TESTS = [
     "tests/test_provider_market_segmentation.py",
     "tests/test_provider_sport_coverage.py",
-    "tests/test_purebet_market_parsing.py",
     "tests/test_polymarket_realtime.py",
     "tests/test_bookmaker_xyz_cache.py",
     "tests/test_scanner_regressions.py",
@@ -45,9 +43,6 @@ OFFICIAL_DOCS: dict[str, list[str]] = {
         "https://docs.polymarket.com/developers/gamma-markets-api/get-events",
         "https://docs.polymarket.com/developers/CLOB/introduction",
     ],
-    "purebet": [
-        "https://docs.purebet.io/",
-    ],
 }
 
 PROVIDER_TITLES = {
@@ -55,7 +50,6 @@ PROVIDER_TITLES = {
     "bookmaker_xyz": "bookmaker.xyz",
     "sx_bet": "SX Bet",
     "polymarket": "Polymarket",
-    "purebet": "Purebet",
 }
 
 
@@ -147,12 +141,6 @@ def _provider_empty_feed_note(provider_key: str, summary: dict[str, Any]) -> Opt
 
 def _provider_notes(provider_key: str, summary: dict[str, Any], stake_amount: float) -> list[str]:
     notes: list[str] = []
-    if provider_key == "purebet":
-        errors = _provider_error_list(summary)
-        if errors:
-            notes.append(
-                "Purebet failures should be checked against docs.purebet.io before changing parsing code."
-            )
     empty_feed_note = _provider_empty_feed_note(provider_key, summary)
     if empty_feed_note:
         notes.append(empty_feed_note)
@@ -176,11 +164,7 @@ def summarize_provider_statuses(
     for provider_key in provider_keys:
         summary = custom_providers.get(provider_key)
         if not isinstance(summary, dict):
-            if provider_key == "purebet":
-                purebet_summary = result.get("purebet")
-                summary = purebet_summary if isinstance(purebet_summary, dict) else {}
-            else:
-                summary = {}
+            summary = {}
         enabled = bool(summary.get("enabled", provider_key in custom_providers))
         events_merged = int(summary.get("events_merged", 0) or 0)
         errors = _provider_error_list(summary)
@@ -341,8 +325,6 @@ def run_live_scan(
     stake_amount: float,
     all_markets: bool,
 ) -> dict[str, Any]:
-    include_purebet = "purebet" in provider_keys
-    include_providers = [key for key in provider_keys if key != "purebet"]
     return run_scan(
         api_key="",
         sports=[sport_key],
@@ -352,8 +334,7 @@ def run_live_scan(
         stake_amount=stake_amount,
         regions=list(regions),
         bookmakers=None,
-        include_purebet=include_purebet,
-        include_providers=include_providers,
+        include_providers=list(provider_keys),
     )
 
 

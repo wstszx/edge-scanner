@@ -99,7 +99,7 @@ GitHub Actions automation is available at `.github/workflows/provider-verificati
 Useful flags:
 
 - `--skip-tests` - skip the provider-focused pytest subset
-- `--providers betdex bookmaker_xyz sx_bet polymarket purebet` - verify only selected providers
+- `--providers betdex bookmaker_xyz sx_bet polymarket` - verify only selected providers
 - `--out-dir data/provider_verification` - choose a custom report directory
 - `--summary-only` - print only failed providers and suspicious result highlights
 - `--json-stdout` - print the full JSON payload to stdout
@@ -132,40 +132,6 @@ ODDS_API_KEYS=key_one,key_two,key_three
 ```
 If you run provider-only scans (`includeProviders`/provider bookmakers without Odds API books), API keys are optional.
 
-Optional Purebet (Solana) integration (read-only for now):
-```
-PUREBET_ENABLED=1
-PUREBET_SOURCE=file
-PUREBET_SAMPLE_PATH=data/purebet_sample.json
-```
-`PUREBET_SAMPLE_PATH` should be a JSON array of events normalized to the Odds API event schema
-(bookmakers -> markets -> outcomes).
-V3 API mode (default):
-```
-PUREBET_ENABLED=1
-PUREBET_SOURCE=api
-PUREBET_API_BASE=https://v3api.purebet.io
-PUREBET_LIVE=0
-PUREBET_LEAGUE_MAP={"487":"basketball_nba","1980":"soccer_epl"}
-PUREBET_MARKETS_ENABLED=1
-PUREBET_MIN_STAKE=50
-PUREBET_MAX_AGE_SECONDS=60
-PUREBET_MARKET_WORKERS=8
-PUREBET_MARKET_RETRIES=2
-PUREBET_RETRY_BACKOFF=0.4
-PUREBET_LEAGUE_SYNC_ENABLED=1
-PUREBET_LEAGUE_SYNC_TTL=600
-PUREBET_USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) ...
-PUREBET_ORIGIN=https://purebet.io
-PUREBET_REFERER=https://purebet.io/
-PUREBET_FUZZY_MATCH_THRESHOLD=0.85
-EVENT_TIME_TOLERANCE_MINUTES=15
-```
-`PUREBET_LEAGUE_MAP` lets you pin league IDs manually.
-When `PUREBET_LEAGUE_SYNC_ENABLED=1`, scanner also pulls `/activeLeagues` and auto-infers league mapping
-for supported sports, cached for `PUREBET_LEAGUE_SYNC_TTL` seconds.
-Purebet is treated as an exchange, so the commission rate applies to its prices.
-
 Custom provider routing (scanner-level, provider modules in `providers/`):
 ```
 BETDEX_ENABLED=0
@@ -174,8 +140,6 @@ SX_BET_ENABLED=0
 POLYMARKET_ENABLED=0
 ```
 Provider rate-limit reference: `docs/provider_rate_limits.md`
-
-`PUREBET_ENABLED` still controls Purebet default.
 
 bookmaker.xyz dictionary settings:
 ```
@@ -252,7 +216,6 @@ You can also override per request with `includeProviders`:
   "includeProviders": ["BetDEX", "bookmaker.xyz", "SX Bet", "polymarket"]
 }
 ```
-`includePurebet` remains supported and overrides Purebet on/off for that request.
 
 Live arbitrage mode:
 ```json
@@ -310,7 +273,6 @@ CUSTOM_PROVIDER_SNAPSHOT_DIR=data/provider_snapshots
 ```
 Each provider is written to its own file, e.g.:
 - `data/provider_snapshots/polymarket.json`
-- `data/provider_snapshots/purebet.json`
 - `data/provider_snapshots/betdex.json`
 
 Optional: drop stale fixtures before opportunity calculation (applies to merged API + custom provider events):
@@ -385,7 +347,6 @@ Configurable via the UI:
 ```
 Each provider is written to its own file, e.g.:
 - `data/provider_snapshots/polymarket.json`
-- `data/provider_snapshots/purebet.json`
 - `data/provider_snapshots/betdex.json`
 
 Optional: drop stale fixtures before opportunity calculation (applies to merged API + custom provider events):

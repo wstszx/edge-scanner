@@ -11,9 +11,6 @@ from .bookmaker_xyz import fetch_events_async as fetch_bookmaker_xyz_events_asyn
 from .polymarket import PROVIDER_TITLE as POLYMARKET_TITLE
 from .polymarket import fetch_events as fetch_polymarket_events
 from .polymarket import fetch_events_async as fetch_polymarket_events_async
-from .purebet import PROVIDER_TITLE as PUREBET_TITLE
-from .purebet import fetch_events as fetch_purebet_events
-from .purebet import fetch_events_async as fetch_purebet_events_async
 from .sx_bet import PROVIDER_TITLE as SX_BET_TITLE
 from .sx_bet import fetch_events as fetch_sx_bet_events
 from .sx_bet import fetch_events_async as fetch_sx_bet_events_async
@@ -21,7 +18,6 @@ from .sx_bet import fetch_events_async as fetch_sx_bet_events_async
 ProviderFetcher = Callable[..., List[dict] | Awaitable[List[dict]]]
 
 PROVIDER_FETCHERS: Dict[str, ProviderFetcher] = {
-    "purebet": fetch_purebet_events_async,
     "betdex": fetch_betdex_events_async,
     "bookmaker_xyz": fetch_bookmaker_xyz_events_async,
     "sx_bet": fetch_sx_bet_events_async,
@@ -29,7 +25,6 @@ PROVIDER_FETCHERS: Dict[str, ProviderFetcher] = {
 }
 
 PROVIDER_TITLES: Dict[str, str] = {
-    "purebet": PUREBET_TITLE,
     "betdex": BETDEX_TITLE,
     "bookmaker_xyz": BOOKMAKER_XYZ_TITLE,
     "sx_bet": SX_BET_TITLE,
@@ -37,7 +32,6 @@ PROVIDER_TITLES: Dict[str, str] = {
 }
 
 PROVIDER_ALIASES: Dict[str, str] = {
-    "purebet": "purebet",
     "betdex": "betdex",
     "bet dex": "betdex",
     "bet-dex": "betdex",

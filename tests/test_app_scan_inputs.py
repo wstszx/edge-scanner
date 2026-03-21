@@ -55,7 +55,6 @@ class ScanInputValidationTests(unittest.TestCase):
                     "saveScan": "false",
                     "allSports": "false",
                     "allMarkets": "false",
-                    "includePurebet": "false",
                 },
             )
         self.assertEqual(response.status_code, 200)
@@ -64,7 +63,6 @@ class ScanInputValidationTests(unittest.TestCase):
         kwargs = mocked_run_scan.call_args.kwargs
         self.assertFalse(kwargs.get("all_sports"))
         self.assertFalse(kwargs.get("all_markets"))
-        self.assertFalse(kwargs.get("include_purebet"))
 
     def test_scan_derives_include_providers_when_empty_list_is_sent(self) -> None:
         with patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan:

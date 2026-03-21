@@ -46,7 +46,6 @@
 | `regions` | `string[]` | 否 | 区域列表，如 `us`、`eu` |
 | `bookmakers` | `string[]` | 否 | 仅扫描指定 Bookmaker |
 | `commission` | `number` | 否 | 百分比输入，例如 `5` 表示 5% |
-| `includePurebet` | `bool` | 否 | 是否显式启用 / 禁用 Purebet |
 | `includeProviders` | `string` / `string[]` | 否 | 指定自定义 Provider |
 | `sharpBook` | `string` | 否 | +EV 参考 Sharp Book |
 | `minEdgePercent` | `number` | 否 | +EV 最小 edge |
@@ -99,7 +98,6 @@
   "regions": ["us", "eu"],
   "commission_rate": 0.05,
   "stale_event_filters": {},
-  "purebet": {},
   "custom_providers": {},
   "provider_snapshot_paths": {},
   "cross_provider_match_report_path": "data/provider_snapshots/cross_provider_match_report.json",

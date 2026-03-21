@@ -15,22 +15,17 @@ class ProviderVerificationTests(unittest.TestCase):
                     "events_merged": 5,
                     "sports": [{"sport_key": "basketball_nba", "events_returned": 5}],
                 },
-                "purebet": {
+                "sx_bet": {
                     "enabled": True,
                     "events_merged": 0,
                     "sports": [{"sport_key": "basketball_nba", "error": "upstream 521"}],
                 },
             },
-            "purebet": {
-                "enabled": True,
-                "events_merged": 0,
-                "sports": [{"sport_key": "basketball_nba", "error": "upstream 521"}],
-            },
         }
 
         statuses = pv.summarize_provider_statuses(
             result,
-            provider_keys=["bookmaker_xyz", "purebet"],
+            provider_keys=["bookmaker_xyz", "sx_bet"],
             stake_amount=100.0,
         )
 
@@ -141,14 +136,14 @@ class ProviderVerificationTests(unittest.TestCase):
             "regions": ["us", "eu"],
             "providers": [
                 {
-                    "key": "purebet",
-                    "name": "Purebet",
+                    "key": "sx_bet",
+                    "name": "SX Bet",
                     "status": "error",
                     "enabled": True,
                     "events_merged": 0,
                     "errors": ["upstream 521"],
                     "notes": ["check docs"],
-                    "docs": ["https://docs.purebet.io/"],
+                    "docs": ["https://api.docs.sx.bet/"],
                 }
             ],
             "tests": {"ran": True, "ok": True, "returncode": 0},
@@ -158,7 +153,7 @@ class ProviderVerificationTests(unittest.TestCase):
                 "arbitrage_count": 1,
                 "middle_count": 1,
                 "plus_ev_count": 0,
-                "sport_errors": [{"sport_key": "basketball_nba", "error": "Purebet: upstream 521"}],
+                "sport_errors": [{"sport_key": "basketball_nba", "error": "SX Bet: upstream 521"}],
                 "top_arbitrage": [
                     {
                         "event": "A vs B",
@@ -185,7 +180,7 @@ class ProviderVerificationTests(unittest.TestCase):
         )
 
         self.assertIn("provider alerts:", summary)
-        self.assertIn("Purebet [error]", summary)
+        self.assertIn("SX Bet [error]", summary)
         self.assertIn("arbitrage suspect", summary)
         self.assertIn("middle negative EV", summary)
         self.assertIn("latest_json=data/x.json", summary)
@@ -221,7 +216,7 @@ class ProviderVerificationTests(unittest.TestCase):
         with patch.object(pv, "run_scan", return_value={"success": True}) as mocked_run_scan:
             result = pv.run_live_scan(
                 sport_key="basketball_nba",
-                provider_keys=["sx_bet", "purebet"],
+                provider_keys=["sx_bet", "polymarket"],
                 regions=["us"],
                 stake_amount=100.0,
                 all_markets=False,
@@ -229,8 +224,10 @@ class ProviderVerificationTests(unittest.TestCase):
 
         self.assertEqual(result, {"success": True})
         self.assertEqual(mocked_run_scan.call_args.kwargs.get("scan_mode"), "live")
-        self.assertEqual(mocked_run_scan.call_args.kwargs.get("include_providers"), ["sx_bet"])
-        self.assertTrue(mocked_run_scan.call_args.kwargs.get("include_purebet"))
+        self.assertEqual(
+            mocked_run_scan.call_args.kwargs.get("include_providers"),
+            ["sx_bet", "polymarket"],
+        )
 
 
 if __name__ == "__main__":

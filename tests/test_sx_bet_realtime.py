@@ -161,6 +161,8 @@ class SXBetRealtimeTests(unittest.TestCase):
                     "odds_two": 1.63,
                     "updated_at_one": 1773593000000,
                     "updated_at_two": 1773593001000,
+                    "observed_at_one": 1773593002.0,
+                    "observed_at_two": 1773593002.5,
                     "source_one": "ws",
                     "source_two": "ws",
                 }
@@ -232,6 +234,8 @@ class SXBetRealtimeTests(unittest.TestCase):
         self.assertEqual(outcomes[1]["price"], 1.63)
         self.assertEqual(outcomes[0]["last_updated"], 1773593000000)
         self.assertEqual(outcomes[1]["last_updated"], 1773593001000)
+        self.assertEqual(outcomes[0]["observed_at"], 1773593002.0)
+        self.assertEqual(outcomes[1]["observed_at"], 1773593002.5)
         self.assertEqual(outcomes[0]["quote_source"], "ws")
         self.assertEqual(outcomes[1]["quote_source"], "ws")
         stats = sx_bet.fetch_events_async.last_stats
@@ -323,6 +327,8 @@ class SXBetRealtimeTests(unittest.TestCase):
                         "odds_two": 1.74,
                         "updated_at_one": 1773594000000,
                         "updated_at_two": 1773594000500,
+                        "observed_at_one": 1773594002.0,
+                        "observed_at_two": 1773594002.5,
                         "source_one": "rest_snapshot",
                         "source_two": "rest_snapshot",
                     }
@@ -369,6 +375,8 @@ class SXBetRealtimeTests(unittest.TestCase):
         outcomes = (events[0]["bookmakers"][0]["markets"][0].get("outcomes") or [])
         self.assertEqual(outcomes[0]["price"], 2.21)
         self.assertEqual(outcomes[1]["price"], 1.74)
+        self.assertEqual(outcomes[0]["observed_at"], 1773594002.0)
+        self.assertEqual(outcomes[1]["observed_at"], 1773594002.5)
         self.assertEqual(outcomes[0]["quote_source"], "rest_snapshot")
         self.assertEqual(outcomes[1]["quote_source"], "rest_snapshot")
         self.assertEqual(realtime_manager.merge_calls[0][0], "rest_snapshot")

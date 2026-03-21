@@ -86,7 +86,6 @@ EXCHANGE_BOOKMAKERS = {
     "sportsbet_ex": {"name": "Sportsbet Exchange"},
     "matchbook": {"name": "Matchbook"},
     "betdex": {"name": "BetDEX"},
-    "purebet": {"name": "Purebet"},
 }
 
 EXCHANGE_KEYS = set(EXCHANGE_BOOKMAKERS.keys())
@@ -368,7 +367,6 @@ BOOKMAKER_LABELS = {
     "bookmaker_xyz": "bookmaker.xyz",
     "sx_bet": "SX Bet",
     "polymarket": "Polymarket",
-    "purebet": "Purebet",
 }
 
 BOOKMAKER_URLS = {
@@ -398,14 +396,12 @@ BOOKMAKER_URLS = {
     "bookmaker_xyz": "https://bookmaker.xyz/",
     "sx_bet": "https://sx.bet/",
     "polymarket": "https://polymarket.com/",
-    "purebet": "https://purebet.io/",
 }
 
 ALL_BOOKMAKER_KEYS: list[str] = []
 for key in [
     "pinnacle",
     "polymarket",
-    "purebet",
     "betdex",
     "bookmaker_xyz",
     "sx_bet",
@@ -426,7 +422,6 @@ for key in SOFT_BOOK_KEYS:
 _DEFAULT_ALLOWED_ARBITRAGE_BOOKMAKER_KEYS = [
     "pinnacle",
     "polymarket",
-    "purebet",
     "betdex",
     "bookmaker_xyz",
     "sx_bet",

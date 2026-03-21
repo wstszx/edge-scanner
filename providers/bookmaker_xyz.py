@@ -1412,6 +1412,7 @@ async def _load_market_manager_snapshot_async(
                 backoff_seconds=backoff_seconds,
                 timeout=timeout,
             )
+            observed_at = time.time()
             requests_made += 1
             retries_used += attempt
             conditions = payload.get("conditions") or []
@@ -1431,6 +1432,7 @@ async def _load_market_manager_snapshot_async(
                     {
                         **raw_condition,
                         "game": dict(game),
+                        "observed_at": observed_at,
                     }
                 )
 
@@ -1503,6 +1505,7 @@ def _load_conditions_snapshot(
                 backoff_seconds=backoff_seconds,
                 timeout=timeout,
             )
+            observed_at = time.time()
             total_retries_used += retries_used
             pages_fetched += 1
             page_items = (
@@ -1515,6 +1518,7 @@ def _load_conditions_snapshot(
             valid_page_items = [item for item in page_items if isinstance(item, dict)]
             for item in valid_page_items:
                 item["__chain_id"] = chain_id
+                item["observed_at"] = observed_at
                 all_conditions.append(item)
             if len(valid_page_items) < page_size:
                 break
@@ -1584,6 +1588,7 @@ async def _load_conditions_snapshot_async(
                 backoff_seconds=backoff_seconds,
                 timeout=timeout,
             )
+            observed_at = time.time()
             total_retries_used += retries_used
             pages_fetched += 1
             page_items = (
@@ -1596,6 +1601,7 @@ async def _load_conditions_snapshot_async(
             valid_page_items = [item for item in page_items if isinstance(item, dict)]
             for item in valid_page_items:
                 item["__chain_id"] = chain_id
+                item["observed_at"] = observed_at
                 all_conditions.append(item)
             if len(valid_page_items) < page_size:
                 break
@@ -1823,6 +1829,7 @@ def _normalize_condition_market(
     raw_outcomes = condition.get("outcomes")
     if not isinstance(raw_outcomes, list) or len(raw_outcomes) < 2:
         return None
+    observed_at = condition.get("observed_at") if condition.get("observed_at") not in (None, "") else condition.get("__observed_at")
 
     parsed_outcomes: List[dict] = []
     market_meta: Optional[dict] = None
@@ -1919,8 +1926,16 @@ def _normalize_condition_market(
             return {
                 "key": "h2h",
                 "outcomes": [
-                    {"name": home_team, "price": home_selection["price"]},
-                    {"name": away_team, "price": away_selection["price"]},
+                    {
+                        "name": home_team,
+                        "price": home_selection["price"],
+                        **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                    },
+                    {
+                        "name": away_team,
+                        "price": away_selection["price"],
+                        **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                    },
                 ],
             }
 
@@ -1928,13 +1943,23 @@ def _normalize_condition_market(
         point_1 = home_selection.get("point")
         point_2 = away_selection.get("point")
         if point_1 is not None and point_2 is not None:
-            return {
-                "key": "spreads",
-                "outcomes": [
-                    {"name": home_team, "price": home_selection["price"], "point": round(float(point_1), 6)},
-                    {"name": away_team, "price": away_selection["price"], "point": round(float(point_2), 6)},
-                ],
-            }
+                return {
+                    "key": "spreads",
+                    "outcomes": [
+                        {
+                            "name": home_team,
+                            "price": home_selection["price"],
+                            "point": round(float(point_1), 6),
+                            **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                        },
+                        {
+                            "name": away_team,
+                            "price": away_selection["price"],
+                            "point": round(float(point_2), 6),
+                            **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                        },
+                    ],
+                }
 
     if "totals" in requested_markets and over_selection and under_selection and len(parsed_outcomes) == 2:
         if "total" in market_name:
@@ -1945,8 +1970,18 @@ def _normalize_condition_market(
                 return {
                     "key": "totals",
                     "outcomes": [
-                        {"name": "Over", "price": over_selection["price"], "point": point},
-                        {"name": "Under", "price": under_selection["price"], "point": point},
+                        {
+                            "name": "Over",
+                            "price": over_selection["price"],
+                            "point": point,
+                            **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                        },
+                        {
+                            "name": "Under",
+                            "price": under_selection["price"],
+                            "point": point,
+                            **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                        },
                     ],
                 }
 
@@ -1977,6 +2012,8 @@ def _normalize_condition_market(
                 row["point"] = round(float(point), 6)
             if market_name:
                 row["description"] = _normalize_text(market_meta.get("market_name"))
+            if observed_at not in (None, ""):
+                row["observed_at"] = observed_at
             dynamic_outcomes.append(row)
         return {"key": dynamic_key, "outcomes": dynamic_outcomes}
 
@@ -2003,11 +2040,20 @@ def _fallback_h2h_market(condition: dict, home_team: str, away_team: str) -> Opt
             sort_order = float(index)
         parsed.append({"price": round(float(price), 6), "sort_order": sort_order})
     parsed.sort(key=lambda item: item.get("sort_order") if item.get("sort_order") is not None else 9999.0)
+    observed_at = condition.get("observed_at") if condition.get("observed_at") not in (None, "") else condition.get("__observed_at")
     return {
         "key": "h2h",
         "outcomes": [
-            {"name": home_team, "price": parsed[0]["price"]},
-            {"name": away_team, "price": parsed[1]["price"]},
+            {
+                "name": home_team,
+                "price": parsed[0]["price"],
+                **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+            },
+            {
+                "name": away_team,
+                "price": parsed[1]["price"],
+                **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+            },
         ],
     }
 

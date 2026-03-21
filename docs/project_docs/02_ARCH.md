@@ -39,7 +39,6 @@ edge-scanner/
 |   |-- betdex.py
 |   |-- bookmaker_xyz.py
 |   |-- polymarket.py
-|   |-- purebet.py
 |   `-- sx_bet.py
 |-- templates/
 |   `-- index.html
