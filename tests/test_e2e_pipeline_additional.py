@@ -13,6 +13,10 @@ HOME_TEAM = "Edge Home"
 AWAY_TEAM = "Edge Away"
 SCAN_EPOCH = int(dt.datetime(2026, 3, 21, 12, 0, tzinfo=dt.timezone.utc).timestamp())
 COMMENCE_TIME = "2026-03-21T12:05:00Z"
+SOCCER_LIVE_SPORT_KEY = "soccer_usa_mls"
+SOCCER_HOME_TEAM = "Toronto FC"
+SOCCER_AWAY_TEAM = "Columbus Crew"
+SOCCER_COMMENCE_TIME = "2026-03-21T17:00:00Z"
 
 
 def _make_live_provider_fetcher(
@@ -327,6 +331,126 @@ class E2EPipelineAdditionalTests(unittest.TestCase):
         self.assertTrue(result.get("success"))
         self.assertEqual(result.get("scan_mode"), "live")
         self.assertGreater((result.get("arbitrage") or {}).get("opportunities_count", 0), 0)
+
+    def test_live_soccer_pipeline_analyzes_provider_h2h_markets_even_when_base_defaults_exclude_them(self) -> None:
+        def _soccer_fetcher(
+            provider_key: str,
+            provider_title: str,
+            home_price: float,
+            away_price: float,
+        ):
+            async def _fetcher(
+                sport_key: str,
+                markets: list[str],
+                regions: list[str],
+                bookmakers=None,
+                context=None,
+            ) -> list[dict]:
+                lowered = {
+                    str(book).strip().lower()
+                    for book in (bookmakers or [])
+                    if str(book).strip()
+                }
+                if lowered and provider_key not in lowered and provider_title.lower() not in lowered:
+                    return []
+                _fetcher.last_stats = {
+                    "sport_key": sport_key,
+                    "markets": list(markets),
+                    "regions": list(regions),
+                    "bookmakers": list(bookmakers or []),
+                    "context": dict(context or {}),
+                }
+                return [
+                    {
+                        "id": "live-soccer-event",
+                        "sport_key": sport_key,
+                        "home_team": SOCCER_HOME_TEAM,
+                        "away_team": SOCCER_AWAY_TEAM,
+                        "commence_time": SOCCER_COMMENCE_TIME,
+                        "live_state": {
+                            "status": "live",
+                            "period": "2H",
+                            "score": "1-1",
+                            "clock": "79:00",
+                            "updated_at": SCAN_EPOCH - 1,
+                        },
+                        "bookmakers": [
+                            {
+                                "key": provider_key,
+                                "title": provider_title,
+                                "event_id": f"{provider_key}-soccer-live-event",
+                                "event_url": f"https://example.com/{provider_key}/event/live-soccer-event",
+                                "live_state": {
+                                    "status": "live",
+                                    "period": "2H",
+                                    "score": "1-1",
+                                    "clock": "79:00",
+                                    "updated_at": SCAN_EPOCH - 1,
+                                },
+                                "markets": [
+                                    {
+                                        "key": "h2h",
+                                        "updated_at": SCAN_EPOCH - 1,
+                                        "outcomes": [
+                                            {
+                                                "name": SOCCER_HOME_TEAM,
+                                                "price": home_price,
+                                                "updated_at": SCAN_EPOCH - 1,
+                                            },
+                                            {
+                                                "name": SOCCER_AWAY_TEAM,
+                                                "price": away_price,
+                                                "updated_at": SCAN_EPOCH - 1,
+                                            },
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+
+            _fetcher.last_stats = {}
+            return _fetcher
+
+        sx_fetcher = _soccer_fetcher("sx_bet", "SX Bet", 2.32, 1.8)
+        poly_fetcher = _soccer_fetcher("polymarket", "Polymarket", 1.78, 2.34)
+
+        with (
+            patch.dict(
+                scanner.PROVIDER_FETCHERS,
+                {"sx_bet": sx_fetcher, "polymarket": poly_fetcher},
+                clear=False,
+            ),
+            patch.object(scanner, "fetch_sports") as mocked_fetch_sports,
+            patch.object(scanner, "_persist_provider_snapshots", return_value={}),
+            patch.object(scanner, "_persist_cross_provider_match_report", return_value=""),
+            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
+            patch.object(scanner, "_provider_fetch_max_workers", return_value=1),
+            patch.object(scanner, "time") as mocked_time,
+        ):
+            mocked_time.time.return_value = SCAN_EPOCH
+            mocked_time.perf_counter.side_effect = (3500.0 + i * 0.01 for i in range(10000))
+            result = scanner.run_scan(
+                api_key="",
+                sports=[SOCCER_LIVE_SPORT_KEY],
+                scan_mode="live",
+                regions=["us"],
+                include_providers=["sx_bet", "polymarket"],
+                bookmakers=["sx_bet", "polymarket"],
+                stake_amount=100.0,
+            )
+
+        mocked_fetch_sports.assert_not_called()
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("scan_mode"), "live")
+        arbitrage = result.get("arbitrage") or {}
+        self.assertGreater(arbitrage.get("opportunities_count", 0), 0)
+        first = arbitrage["opportunities"][0]
+        self.assertEqual(first.get("market"), "h2h")
+        self.assertEqual(first.get("home_team"), SOCCER_HOME_TEAM)
+        self.assertEqual(first.get("away_team"), SOCCER_AWAY_TEAM)
+        self.assertEqual((first.get("live_state") or {}).get("status"), "live")
 
     def test_prematch_e2e_pipeline_merges_api_and_provider_events_before_arbitrage(self) -> None:
         sports_payload = [

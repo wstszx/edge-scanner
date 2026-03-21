@@ -5412,7 +5412,14 @@ async def _scan_single_sport(
         game["sport_key"] = sport_key
         game["sport_title"] = sport.get("title")
         game["sport_display"] = SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
-        arb_markets = _available_markets(game) if all_markets else base_markets
+        if normalized_scan_mode == SCAN_MODE_LIVE:
+            # Live providers may return sport-specific markets beyond the prematch defaults
+            # (for example soccer h2h/h2h_3_way even when base defaults are spreads/totals).
+            # Analyze the markets actually present on the merged live event so we don't miss
+            # valid provider-only in-play opportunities.
+            arb_markets = _available_markets(game)
+        else:
+            arb_markets = _available_markets(game) if all_markets else base_markets
         for market_key in arb_markets:
             new_entries = _collect_market_entries(
                 game,
