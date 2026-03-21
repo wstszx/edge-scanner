@@ -437,6 +437,26 @@ _DEFAULT_ALLOWED_ARBITRAGE_BOOKMAKER_KEYS = [
     "matchbook",
 ]
 
+
+def _validate_exchange_bookmaker_config() -> tuple[str, ...]:
+    warnings: list[str] = []
+    for key, meta in EXCHANGE_BOOKMAKERS.items():
+        label = str(meta.get("name") or "").strip()
+        if not label:
+            warnings.append(f"{key} is missing an exchange display name")
+        if key not in ALL_BOOKMAKER_KEYS:
+            warnings.append(f"{key} is missing from ALL_BOOKMAKER_KEYS")
+        if not str(BOOKMAKER_LABELS.get(key) or "").strip():
+            warnings.append(f"{key} is missing a bookmaker label")
+        if not str(BOOKMAKER_URLS.get(key) or "").strip():
+            warnings.append(f"{key} is missing a bookmaker URL")
+        if key not in _DEFAULT_ALLOWED_ARBITRAGE_BOOKMAKER_KEYS:
+            warnings.append(f"{key} is missing from default arbitrage bookmaker keys")
+    return tuple(dict.fromkeys(warnings))
+
+
+EXCHANGE_CONFIG_WARNINGS = _validate_exchange_bookmaker_config()
+
 _ENV_ALLOWED_ARBITRAGE_BOOKMAKERS = (
     _env_list("ARBITRAGE_ALLOWED_BOOKMAKER_KEYS")
     or _env_list("SUPPORTED_ARBITRAGE_BOOKMAKER_KEYS")

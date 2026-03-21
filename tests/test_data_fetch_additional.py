@@ -67,6 +67,27 @@ class ScannerDataFetchTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 429)
         self.assertEqual(str(ctx.exception), "Rate limited")
 
+    def test_request_falls_back_to_default_message_when_error_body_missing(self) -> None:
+        response = Mock(status_code=503)
+        response.json.side_effect = ValueError("not json")
+        response.text = ""
+        with patch.object(scanner.requests, "get", return_value=response):
+            with self.assertRaises(scanner.ScannerError) as ctx:
+                scanner._request("https://example.test/odds", {"markets": "h2h"})
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertEqual(str(ctx.exception), "Unknown error")
+
+    def test_request_error_json_list_should_be_wrapped_as_scanner_error(self) -> None:
+        response = Mock(status_code=500)
+        response.json.return_value = [{"message": "service down"}]
+        response.text = '[{"message": "service down"}]'
+        with patch.object(scanner.requests, "get", return_value=response):
+            with self.assertRaises(scanner.ScannerError) as ctx:
+                scanner._request("https://example.test/odds", {"markets": "h2h"})
+
+        self.assertEqual(ctx.exception.status_code, 500)
+        self.assertEqual(str(ctx.exception), '[{"message": "service down"}]')
+
     def test_api_key_pool_rotates_key_on_429_then_succeeds(self) -> None:
         calls: list[dict] = []
         expected_response = object()
@@ -96,6 +117,13 @@ class ScannerDataFetchTests(unittest.TestCase):
                 pool.request("https://example.test/odds", {"regions": "us"})
         self.assertEqual(ctx.exception.status_code, 500)
         self.assertEqual(pool.calls_made, 1)
+
+    def test_api_key_pool_rejects_empty_key_set(self) -> None:
+        pool = scanner.ApiKeyPool([" ", "", "\t"])
+        with self.assertRaises(scanner.ScannerError) as ctx:
+            pool.request("https://example.test/odds", {"regions": "us"})
+        self.assertEqual(ctx.exception.status_code, 401)
+        self.assertEqual(str(ctx.exception), "API key is required")
 
     def test_fetch_sports_parse_error_message(self) -> None:
         fake_response = Mock()
@@ -201,6 +229,45 @@ class ScannerDataFetchTests(unittest.TestCase):
         self.assertEqual(payload, [{"id": "evt-1"}])
         self.assertEqual(retries_used, 1)
 
+    def test_purebet_get_json_raises_after_retriable_status_exhausted(self) -> None:
+        first = Mock(status_code=503)
+        second = Mock(status_code=503)
+
+        with (
+            patch.object(scanner.requests, "get", side_effect=[first, second]),
+            patch.object(scanner.time, "sleep"),
+        ):
+            with self.assertRaises(scanner.ScannerError) as ctx:
+                scanner._purebet_get_json(
+                    "https://v3api.purebet.io/events",
+                    params={"live": "false"},
+                    headers={"User-Agent": "test"},
+                    retries=1,
+                    backoff_seconds=0.0,
+                    timeout=30,
+                )
+
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertIn("Purebet API request failed (503)", str(ctx.exception))
+
+    def test_purebet_get_json_raises_after_network_error_exhausted(self) -> None:
+        with (
+            patch.object(scanner.requests, "get", side_effect=requests.Timeout("timed out")),
+            patch.object(scanner.time, "sleep"),
+        ):
+            with self.assertRaises(scanner.ScannerError) as ctx:
+                scanner._purebet_get_json(
+                    "https://v3api.purebet.io/events",
+                    params={"live": "false"},
+                    headers={"User-Agent": "test"},
+                    retries=1,
+                    backoff_seconds=0.0,
+                    timeout=30,
+                )
+
+        self.assertIsNone(ctx.exception.status_code)
+        self.assertIn("Purebet network error", str(ctx.exception))
+
 
 class AsyncHttpFetchTests(unittest.IsolatedAsyncioTestCase):
     async def test_request_json_retries_network_error_then_succeeds(self) -> None:
@@ -272,4 +339,59 @@ class AsyncHttpFetchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(ctx.exception), "Status 404")
         self.assertEqual(ctx.exception.status_code, 404)
         self.assertEqual(len(client.calls), 1)
+
+    async def test_request_json_retries_retriable_status_then_succeeds(self) -> None:
+        url = "https://example.test/api"
+        client = _FakeAsyncClient(
+            [
+                _httpx_json_response(503, {"error": "busy"}, url),
+                _httpx_json_response(200, {"ok": True}, url),
+            ]
+        )
+        sleeper = AsyncMock()
+
+        with patch("providers._async_http.asyncio.sleep", sleeper):
+            payload, retries_used = await async_http.request_json(
+                client=client,
+                method="GET",
+                url=url,
+                retries=1,
+                backoff_seconds=0.01,
+                error_cls=_ProviderError,
+                network_error_prefix="Network failed",
+                parse_error_message="Parse failed",
+                status_error_message=lambda code: f"Status {code}",
+            )
+
+        self.assertEqual(payload, {"ok": True})
+        self.assertEqual(retries_used, 1)
+        self.assertEqual(len(client.calls), 2)
+        sleeper.assert_awaited_once()
+
+    async def test_request_json_raises_status_after_retries_exhausted(self) -> None:
+        url = "https://example.test/api"
+        client = _FakeAsyncClient(
+            [
+                _httpx_json_response(503, {"error": "busy"}, url),
+                _httpx_json_response(503, {"error": "still busy"}, url),
+            ]
+        )
+
+        with patch("providers._async_http.asyncio.sleep", AsyncMock()):
+            with self.assertRaises(_ProviderError) as ctx:
+                await async_http.request_json(
+                    client=client,
+                    method="GET",
+                    url=url,
+                    retries=1,
+                    backoff_seconds=0.01,
+                    error_cls=_ProviderError,
+                    network_error_prefix="Network failed",
+                    parse_error_message="Parse failed",
+                    status_error_message=lambda code: f"Status {code}",
+                )
+
+        self.assertEqual(str(ctx.exception), "Status 503")
+        self.assertEqual(ctx.exception.status_code, 503)
+        self.assertEqual(len(client.calls), 2)
 

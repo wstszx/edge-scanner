@@ -95,6 +95,24 @@ class InplayArbitrageAdditionalTests(unittest.TestCase):
                 )
             )
 
+    def test_live_quote_age_falls_back_across_market_bookmaker_event_state(self) -> None:
+        game = {"live_state": {"status": "live", "updated_at": 96}, "updated_at": 95}
+        bookmaker = {"updated_at": 97}
+        market = {"updated_at": 98}
+
+        self.assertEqual(
+            scanner._live_quote_age_seconds(game, bookmaker, market, outcome={}, now_epoch=100.0),
+            2.0,
+        )
+        self.assertEqual(
+            scanner._live_quote_age_seconds(game, bookmaker, market={}, outcome={}, now_epoch=100.0),
+            3.0,
+        )
+        self.assertEqual(
+            scanner._live_quote_age_seconds(game, bookmaker={}, market={}, outcome={}, now_epoch=100.0),
+            4.0,
+        )
+
     def test_filter_live_events_tracks_terminal_and_non_live_states(self) -> None:
         events = [
             {
@@ -122,6 +140,34 @@ class InplayArbitrageAdditionalTests(unittest.TestCase):
         self.assertEqual(stats.get("dropped_terminal_state"), 1)
         self.assertEqual(stats.get("dropped_not_live_state"), 1)
 
+    def test_filter_live_events_explicit_live_still_respects_future_window(self) -> None:
+        events = [
+            {
+                "id": "explicit-live-within-window",
+                "commence_time": "2023-11-14T22:13:30Z",
+                "live_state": {"status": "live", "is_live": True},
+            },
+            {
+                "id": "explicit-live-outside-window",
+                "commence_time": "2023-11-14T22:50:00Z",
+                "live_state": {"status": "live", "is_live": True},
+            },
+        ]
+
+        with (
+            patch("scanner.time.time", return_value=1_700_000_000),
+            patch.object(scanner, "LIVE_EVENT_MAX_FUTURE_SECONDS_RAW", "10"),
+        ):
+            filtered, stats = scanner._filter_live_events_for_scan(events)
+
+        filtered_ids = {event.get("id") for event in filtered}
+        self.assertEqual(
+            filtered_ids,
+            {"explicit-live-within-window", "explicit-live-outside-window"},
+        )
+        self.assertEqual(stats.get("dropped_future"), 0)
+        self.assertEqual(stats.get("suspicious_explicit_live_future"), 1)
+
     def test_live_state_compatibility_enforces_clock_tolerance(self) -> None:
         state_a = {"status": "live", "period": "Q2", "score": "55-50", "clock": "05:00"}
         state_b = {"status": "live", "period": "Q2", "score": "50-55", "clock": "08:10"}
@@ -131,6 +177,43 @@ class InplayArbitrageAdditionalTests(unittest.TestCase):
 
         with patch.object(scanner, "LIVE_STATE_CLOCK_TOLERANCE_SECONDS_RAW", "200"):
             self.assertTrue(scanner._live_states_are_compatible([state_a, state_b], "live"))
+
+    def test_collect_market_entries_transitions_when_score_race_resolves(self) -> None:
+        game = self._build_live_h2h_game()
+        game["bookmakers"][1]["live_state"] = {
+            "status": "live",
+            "period": "Q2",
+            "score": "56-50",
+            "clock": "05:12",
+        }
+
+        with patch("scanner.time.time", return_value=100.0), patch.object(
+            scanner, "LIVE_QUOTE_MAX_AGE_SECONDS_RAW", "5"
+        ):
+            mismatched = scanner._collect_market_entries(
+                game,
+                market_key="h2h",
+                stake_total=100.0,
+                commission_rate=0.0,
+                scan_mode="live",
+            )
+
+            game["bookmakers"][1]["live_state"] = {
+                "status": "live",
+                "period": "Q2",
+                "score": "55-50",
+                "clock": "05:12",
+            }
+            resolved = scanner._collect_market_entries(
+                game,
+                market_key="h2h",
+                stake_total=100.0,
+                commission_rate=0.0,
+                scan_mode="live",
+            )
+
+        self.assertEqual(mismatched, [])
+        self.assertTrue(resolved)
 
     def test_collect_market_entries_transitions_when_live_state_race_resolves(self) -> None:
         game = self._build_live_h2h_game()
@@ -342,6 +425,30 @@ class InplayArbitrageAdditionalTests(unittest.TestCase):
             )
 
         self.assertEqual(entries, [])
+
+    def test_filter_live_events_uses_future_window_when_state_not_explicit(self) -> None:
+        events = [
+            {
+                "id": "within-future-window",
+                "commence_time": "2023-11-14T22:13:30Z",
+                "live_state": {},
+            },
+            {
+                "id": "outside-future-window",
+                "commence_time": "2023-11-14T22:13:32Z",
+                "live_state": {},
+            },
+        ]
+
+        with (
+            patch("scanner.time.time", return_value=1_700_000_000),
+            patch.object(scanner, "LIVE_EVENT_MAX_FUTURE_SECONDS_RAW", "10"),
+        ):
+            filtered, stats = scanner._filter_live_events_for_scan(events)
+
+        filtered_ids = {event.get("id") for event in filtered}
+        self.assertEqual(filtered_ids, {"within-future-window"})
+        self.assertEqual(stats.get("dropped_future"), 1)
 
 
 if __name__ == "__main__":

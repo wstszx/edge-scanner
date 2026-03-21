@@ -40,6 +40,7 @@ apply_config_env()
 from config import (
     DEFAULT_BANKROLL,
     DEFAULT_COMMISSION,
+    EXCHANGE_CONFIG_WARNINGS,
     DEFAULT_KELLY_FRACTION,
     DEFAULT_MIDDLE_SORT,
     DEFAULT_REGION_KEYS,
@@ -2039,6 +2040,7 @@ def _filter_live_events_for_scan(events: Sequence[dict]) -> Tuple[List[dict], di
     now_epoch = int(time.time())
     max_past_seconds = _event_max_past_seconds()
     max_future_seconds = _live_event_max_future_seconds()
+    explicit_live_future_seconds = max(max_future_seconds, max_past_seconds)
     min_epoch = now_epoch - max_past_seconds
     max_epoch = now_epoch + max_future_seconds
     filtered: List[dict] = []
@@ -2047,12 +2049,17 @@ def _filter_live_events_for_scan(events: Sequence[dict]) -> Tuple[List[dict], di
     dropped_missing_time = 0
     dropped_not_live_state = 0
     dropped_terminal_state = 0
+    suspicious_explicit_live_future = 0
     for event in events:
         if not isinstance(event, dict):
             continue
+        event_epoch = _event_time_seconds(event)
         explicit_live = _event_is_explicitly_live(event)
         if explicit_live is not None:
             if explicit_live:
+                if event_epoch is not None:
+                    if event_epoch > now_epoch + explicit_live_future_seconds:
+                        suspicious_explicit_live_future += 1
                 filtered.append(event)
                 continue
             state_token = _event_live_state_token(event)
@@ -2061,7 +2068,6 @@ def _filter_live_events_for_scan(events: Sequence[dict]) -> Tuple[List[dict], di
             else:
                 dropped_not_live_state += 1
             continue
-        event_epoch = _event_time_seconds(event)
         if event_epoch is None:
             dropped_missing_time += 1
             continue
@@ -2078,6 +2084,7 @@ def _filter_live_events_for_scan(events: Sequence[dict]) -> Tuple[List[dict], di
         "dropped_missing_time": dropped_missing_time,
         "dropped_not_live_state": dropped_not_live_state,
         "dropped_terminal_state": dropped_terminal_state,
+        "suspicious_explicit_live_future": suspicious_explicit_live_future,
     }
 
 
@@ -3731,7 +3738,10 @@ def _request(url: str, params: Dict[str, str]) -> requests.Response:
     if resp.status_code >= 400:
         try:
             payload = resp.json()
-            message = payload.get("message") or payload.get("error")
+            if isinstance(payload, dict):
+                message = payload.get("message") or payload.get("error")
+            else:
+                message = resp.text or str(payload)
         except ValueError:
             message = resp.text or "Unknown error"
         raise ScannerError(message or f"API request failed ({resp.status_code})", status_code=resp.status_code)
@@ -5377,7 +5387,10 @@ async def _scan_single_sport(
     dropped_past = int(time_filter_stats.get("dropped_past", 0) or 0)
     dropped_future = int(time_filter_stats.get("dropped_future", 0) or 0)
     dropped_missing = int(time_filter_stats.get("dropped_missing_time", 0) or 0)
-    if dropped_past or dropped_future or dropped_missing:
+    suspicious_explicit_live_future = int(
+        time_filter_stats.get("suspicious_explicit_live_future", 0) or 0
+    )
+    if dropped_past or dropped_future or dropped_missing or suspicious_explicit_live_future:
         filter_payload = {
             "sport_key": sport_key,
             "scan_mode": normalized_scan_mode,
@@ -5386,6 +5399,8 @@ async def _scan_single_sport(
         }
         if dropped_future:
             filter_payload["dropped_future"] = dropped_future
+        if suspicious_explicit_live_future:
+            filter_payload["suspicious_explicit_live_future"] = suspicious_explicit_live_future
         stale_event_filters.append(filter_payload)
 
     arb_opportunities: List[dict] = []
@@ -5565,6 +5580,21 @@ async def run_scan_async(
     if normalized_scan_mode == SCAN_MODE_LIVE:
         should_fetch_api = False
     include_purebet = PUREBET_BOOK_KEY in enabled_provider_set
+    warnings: List[str] = []
+    api_disabled_reason = ""
+    warnings.extend(EXCHANGE_CONFIG_WARNINGS)
+    if normalized_scan_mode == SCAN_MODE_LIVE:
+        api_disabled_reason = "live_mode_provider_only"
+    elif provider_only_via_bookmakers:
+        api_disabled_reason = "provider_only_bookmakers_selected"
+        warnings.append(
+            "Odds API fetch skipped because only custom provider bookmakers were selected."
+        )
+    elif provider_only_via_missing_api_key:
+        api_disabled_reason = "provider_only_without_api_key"
+        warnings.append(
+            "Odds API fetch skipped because no API key was provided and custom providers were used."
+        )
     request_logger.log_meta(
         {
             "type": "scan_config",
@@ -5574,6 +5604,8 @@ async def run_scan_async(
             "bookmakers": list(normalized_bookmakers),
             "enabled_provider_keys": list(enabled_provider_keys),
             "should_fetch_api": bool(should_fetch_api),
+            "api_disabled_reason": api_disabled_reason,
+            "warnings": list(warnings),
         }
     )
     timing_steps.append(
@@ -5685,6 +5717,8 @@ async def run_scan_async(
             "success": True,
             "scan_mode": normalized_scan_mode,
             "scan_time": _iso_now(),
+            "warnings": warnings,
+            "api_disabled_reason": api_disabled_reason,
             "api_market_skips": [],
             "provider_snapshot_paths": {},
             "cross_provider_match_report_path": "",
@@ -5926,6 +5960,8 @@ async def run_scan_async(
         "success": True,
         "scan_mode": normalized_scan_mode,
         "scan_time": scan_time,
+        "warnings": warnings,
+        "api_disabled_reason": api_disabled_reason,
         "api_market_skips": api_market_skips,
         "provider_snapshot_paths": provider_snapshot_paths,
         "cross_provider_match_report_path": cross_provider_match_report_path,

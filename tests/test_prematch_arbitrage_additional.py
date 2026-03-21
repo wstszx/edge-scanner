@@ -182,6 +182,112 @@ class PrematchArbitrageAdditionalTests(unittest.TestCase):
         self.assertAlmostEqual(best["roi_percent"], 25.0, places=2)
         self.assertAlmostEqual(best["stakes"]["guaranteed_profit"], 25.0, places=2)
 
+    def test_collect_market_entries_rejects_single_bookmaker_only_combo(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "book_a",
+                    "title": "Book A",
+                    "markets": [{"key": "h2h", "outcomes": [{"name": "Home Team", "price": 2.4}, {"name": "Away Team", "price": 2.4}]}],
+                }
+            ],
+        }
+
+        entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.0,
+            scan_mode="prematch",
+        )
+
+        self.assertEqual(entries, [])
+
+    def test_collect_market_entries_exchange_commission_can_remove_nominal_arbitrage(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "book_home",
+                    "title": "Book Home",
+                    "markets": [{"key": "h2h", "outcomes": [{"name": "Home Team", "price": 2.0}, {"name": "Away Team", "price": 1.5}]}],
+                },
+                {
+                    "key": "betdex",
+                    "title": "BetDEX",
+                    "markets": [{"key": "h2h", "outcomes": [{"name": "Home Team", "price": 1.6}, {"name": "Away Team", "price": 2.05}]}],
+                },
+            ],
+        }
+
+        no_commission = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.0,
+            scan_mode="prematch",
+        )
+        with_commission = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.05,
+            scan_mode="prematch",
+        )
+
+        self.assertTrue(no_commission)
+        self.assertGreater(no_commission[0]["roi_percent"], 0.0)
+        self.assertEqual(with_commission, [])
+
+    def test_collect_market_entries_three_way_known_arbitrage_profit(self) -> None:
+        game = {
+            "sport_key": "soccer_epl",
+            "sport_display": "EPL",
+            "home_team": "Home FC",
+            "away_team": "Away FC",
+            "bookmakers": [
+                {
+                    "key": "book_home",
+                    "title": "Book Home",
+                    "markets": [{"key": "h2h", "outcomes": [{"name": "Home FC", "price": 3.8}, {"name": "Draw", "price": 3.0}, {"name": "Away FC", "price": 2.4}]}],
+                },
+                {
+                    "key": "book_draw",
+                    "title": "Book Draw",
+                    "markets": [{"key": "h2h", "outcomes": [{"name": "Home FC", "price": 3.2}, {"name": "Draw", "price": 3.9}, {"name": "Away FC", "price": 2.1}]}],
+                },
+                {
+                    "key": "book_away",
+                    "title": "Book Away",
+                    "markets": [{"key": "h2h", "outcomes": [{"name": "Home FC", "price": 3.1}, {"name": "Draw", "price": 3.1}, {"name": "Away FC", "price": 3.7}]}],
+                },
+            ],
+        }
+
+        entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=120.0,
+            commission_rate=0.0,
+            scan_mode="prematch",
+        )
+
+        self.assertTrue(entries)
+        best = entries[0]
+        by_outcome = {item["outcome"]: item for item in best["best_odds"]}
+        self.assertEqual(by_outcome["Home FC"]["bookmaker_key"], "book_home")
+        self.assertEqual(by_outcome["Draw"]["bookmaker_key"], "book_draw")
+        self.assertEqual(by_outcome["Away FC"]["bookmaker_key"], "book_away")
+        self.assertGreater(best["stakes"]["guaranteed_profit"], 0.0)
+        self.assertGreater(best["roi_percent"], 0.0)
+
     def test_calculate_stakes_extreme_odds_are_finite_and_positive(self) -> None:
         outcomes = [
             {"name": "A", "bookmaker": "Book A", "display_price": 1000.0, "effective_price": 1000.0},

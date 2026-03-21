@@ -2,7 +2,7 @@
 
 import unittest
 
-from config import markets_for_sport
+from config import ALL_BOOKMAKER_KEYS, BOOKMAKER_LABELS, BOOKMAKER_URLS, EXCHANGE_BOOKMAKERS, EXCHANGE_CONFIG_WARNINGS, markets_for_sport
 
 
 class ConfigMarketsTests(unittest.TestCase):
@@ -29,6 +29,15 @@ class ConfigMarketsTests(unittest.TestCase):
             markets_for_sport("azuro__basketball__euroleague__international-tournaments"),
             ["h2h", "spreads", "totals"],
         )
+
+    def test_exchange_config_warnings_are_empty(self) -> None:
+        self.assertEqual(EXCHANGE_CONFIG_WARNINGS, ())
+
+    def test_exchange_bookmakers_have_required_metadata(self) -> None:
+        for key in EXCHANGE_BOOKMAKERS:
+            self.assertIn(key, ALL_BOOKMAKER_KEYS)
+            self.assertTrue(str(BOOKMAKER_LABELS.get(key) or "").strip())
+            self.assertTrue(str(BOOKMAKER_URLS.get(key) or "").strip())
 
 
 if __name__ == "__main__":

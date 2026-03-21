@@ -277,3 +277,262 @@ class E2EPipelineAdditionalTests(unittest.TestCase):
         betdex_stats = ((betdex_summary.get("sports") or [{}])[0]).get("stats") or {}
         self.assertEqual(sx_stats.get("context"), {"scan_mode": "live", "live": True})
         self.assertEqual(betdex_stats.get("context"), {"scan_mode": "live", "live": True})
+
+    def test_live_e2e_pipeline_does_not_call_odds_api_even_when_api_key_exists(self) -> None:
+        sx_fetcher = _make_live_provider_fetcher(
+            "sx_bet",
+            "SX Bet",
+            home_price=2.31,
+            away_price=1.80,
+        )
+        betdex_fetcher = _make_live_provider_fetcher(
+            "betdex",
+            "BetDEX",
+            home_price=1.79,
+            away_price=2.30,
+        )
+
+        with (
+            patch.dict(
+                scanner.PROVIDER_FETCHERS,
+                {"sx_bet": sx_fetcher, "betdex": betdex_fetcher},
+                clear=False,
+            ),
+            patch.object(
+                scanner,
+                "fetch_odds_for_sport_multi_market",
+                side_effect=AssertionError("live mode should not fetch odds API"),
+            ) as mocked_fetch_odds,
+            patch.object(scanner, "fetch_sports") as mocked_fetch_sports,
+            patch.object(scanner, "_persist_provider_snapshots", return_value={}),
+            patch.object(scanner, "_persist_cross_provider_match_report", return_value=""),
+            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
+            patch.object(scanner, "_provider_fetch_max_workers", return_value=1),
+            patch.object(scanner, "time") as mocked_time,
+        ):
+            mocked_time.time.return_value = SCAN_EPOCH
+            mocked_time.perf_counter.side_effect = (3000.0 + i * 0.01 for i in range(10000))
+            result = scanner.run_scan(
+                api_key="live-has-api-key",
+                sports=[SPORT_KEY],
+                scan_mode="live",
+                regions=["us"],
+                include_providers=["sx_bet", "betdex"],
+                bookmakers=["sx_bet", "betdex"],
+                stake_amount=100.0,
+            )
+
+        mocked_fetch_sports.assert_not_called()
+        mocked_fetch_odds.assert_not_called()
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("scan_mode"), "live")
+        self.assertGreater((result.get("arbitrage") or {}).get("opportunities_count", 0), 0)
+
+    def test_prematch_e2e_pipeline_merges_api_and_provider_events_before_arbitrage(self) -> None:
+        sports_payload = [
+            {
+                "key": SPORT_KEY,
+                "title": "NBA",
+                "active": True,
+                "has_outrights": False,
+            }
+        ]
+        odds_events = [
+            {
+                "id": "prematch-merge-event",
+                "sport_key": SPORT_KEY,
+                "home_team": HOME_TEAM,
+                "away_team": AWAY_TEAM,
+                "commence_time": COMMENCE_TIME,
+                "bookmakers": [
+                    {
+                        "key": "book_a",
+                        "title": "Book A",
+                        "event_id": "api-book-a",
+                        "event_url": "https://example.com/book-a/prematch-merge-event",
+                        "markets": [
+                            {
+                                "key": "h2h",
+                                "outcomes": [
+                                    {"name": HOME_TEAM, "price": 2.15},
+                                    {"name": AWAY_TEAM, "price": 1.82},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+
+        async def _provider_fetcher(
+            sport_key: str,
+            markets: list[str],
+            regions: list[str],
+            bookmakers=None,
+            context=None,
+        ) -> list[dict]:
+            _provider_fetcher.last_stats = {
+                "sport_key": sport_key,
+                "markets": list(markets),
+                "regions": list(regions),
+                "bookmakers": list(bookmakers or []),
+                "context": dict(context or {}),
+            }
+            return [
+                {
+                    "id": "prematch-merge-event",
+                    "sport_key": sport_key,
+                    "home_team": HOME_TEAM,
+                    "away_team": AWAY_TEAM,
+                    "commence_time": COMMENCE_TIME,
+                    "bookmakers": [
+                        {
+                            "key": "sx_bet",
+                            "title": "SX Bet",
+                            "event_id": "sx-book",
+                            "event_url": "https://example.com/sx/prematch-merge-event",
+                            "markets": [
+                                {
+                                    "key": "h2h",
+                                    "outcomes": [
+                                        {"name": HOME_TEAM, "price": 1.80},
+                                        {"name": AWAY_TEAM, "price": 2.25},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+
+        _provider_fetcher.last_stats = {}
+
+        with (
+            patch.dict(scanner.PROVIDER_FETCHERS, {"sx_bet": _provider_fetcher}, clear=False),
+            patch.object(scanner, "fetch_sports", return_value=sports_payload),
+            patch.object(
+                scanner,
+                "fetch_odds_for_sport_multi_market",
+                return_value=(odds_events, []),
+            ) as mocked_fetch_odds,
+            patch.object(scanner, "_persist_provider_snapshots", return_value={}),
+            patch.object(scanner, "_persist_cross_provider_match_report", return_value=""),
+            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
+            patch.object(scanner, "_provider_fetch_max_workers", return_value=1),
+            patch.object(scanner, "time") as mocked_time,
+        ):
+            mocked_time.time.return_value = SCAN_EPOCH
+            mocked_time.perf_counter.side_effect = (4000.0 + i * 0.01 for i in range(10000))
+            result = scanner.run_scan(
+                api_key="dummy-key",
+                sports=[SPORT_KEY],
+                scan_mode="prematch",
+                regions=["us"],
+                include_providers=["sx_bet"],
+                stake_amount=100.0,
+            )
+
+        mocked_fetch_odds.assert_called_once()
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("scan_mode"), "prematch")
+        arbitrage = result.get("arbitrage") or {}
+        self.assertGreater(arbitrage.get("opportunities_count", 0), 0)
+        first = arbitrage["opportunities"][0]
+        books = {
+            item.get("bookmaker")
+            for item in (first.get("best_odds") or [])
+            if isinstance(item, dict)
+        }
+        self.assertEqual(books, {"Book A", "SX Bet"})
+        self.assertEqual(first.get("market"), "h2h")
+        self.assertGreater(first.get("roi_percent", 0), 0.0)
+
+        sx_summary = ((result.get("custom_providers") or {}).get("sx_bet") or {})
+        self.assertEqual(sx_summary.get("events_merged"), 1)
+        sx_stats = ((sx_summary.get("sports") or [{}])[0]).get("stats") or {}
+        self.assertEqual(sx_stats.get("context"), {"scan_mode": "prematch", "live": False})
+
+    def test_prematch_provider_only_selection_reports_api_skip_warning(self) -> None:
+        async def _provider_fetcher(
+            sport_key: str,
+            markets: list[str],
+            regions: list[str],
+            bookmakers=None,
+            context=None,
+        ) -> list[dict]:
+            return [
+                {
+                    "id": "provider-only-event",
+                    "sport_key": sport_key,
+                    "home_team": HOME_TEAM,
+                    "away_team": AWAY_TEAM,
+                    "commence_time": COMMENCE_TIME,
+                    "bookmakers": [
+                        {
+                            "key": "sx_bet",
+                            "title": "SX Bet",
+                            "markets": [
+                                {
+                                    "key": "h2h",
+                                    "outcomes": [
+                                        {"name": HOME_TEAM, "price": 1.82},
+                                        {"name": AWAY_TEAM, "price": 2.24},
+                                    ],
+                                }
+                            ],
+                        },
+                        {
+                            "key": "betdex",
+                            "title": "BetDEX",
+                            "markets": [
+                                {
+                                    "key": "h2h",
+                                    "outcomes": [
+                                        {"name": HOME_TEAM, "price": 2.24},
+                                        {"name": AWAY_TEAM, "price": 1.82},
+                                    ],
+                                }
+                            ],
+                        },
+                    ],
+                }
+            ]
+
+        with (
+            patch.dict(
+                scanner.PROVIDER_FETCHERS,
+                {"sx_bet": _provider_fetcher, "betdex": _provider_fetcher},
+                clear=False,
+            ),
+            patch.object(
+                scanner,
+                "fetch_odds_for_sport_multi_market",
+                side_effect=AssertionError("provider-only selection should skip odds API"),
+            ) as mocked_fetch_odds,
+            patch.object(scanner, "fetch_sports") as mocked_fetch_sports,
+            patch.object(scanner, "_persist_provider_snapshots", return_value={}),
+            patch.object(scanner, "_persist_cross_provider_match_report", return_value=""),
+            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
+            patch.object(scanner, "_provider_fetch_max_workers", return_value=1),
+            patch.object(scanner, "time") as mocked_time,
+        ):
+            mocked_time.time.return_value = SCAN_EPOCH
+            mocked_time.perf_counter.side_effect = (5000.0 + i * 0.01 for i in range(10000))
+            result = scanner.run_scan(
+                api_key="dummy-key",
+                sports=[SPORT_KEY],
+                scan_mode="prematch",
+                regions=["us"],
+                bookmakers=["sx_bet", "betdex"],
+                include_providers=["sx_bet", "betdex"],
+                stake_amount=100.0,
+            )
+
+        mocked_fetch_sports.assert_not_called()
+        mocked_fetch_odds.assert_not_called()
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("api_disabled_reason"), "provider_only_bookmakers_selected")
+        self.assertIn(
+            "Odds API fetch skipped because only custom provider bookmakers were selected.",
+            result.get("warnings") or [],
+        )
