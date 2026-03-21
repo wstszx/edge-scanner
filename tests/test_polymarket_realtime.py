@@ -12,6 +12,7 @@ from providers import polymarket
 def _sample_event(slug: str = "game-1") -> dict:
     return {
         "id": "evt-1",
+        "gameId": 90091303,
         "slug": slug,
         "title": "Team A vs Team B",
         "active": True,
@@ -57,6 +58,9 @@ class _FakeRealtimeManager:
     def wait_for_assets(self, asset_ids, timeout_seconds: float) -> bool:
         return True
 
+    def wait_for_quotes(self, asset_ids, timeout_seconds: float) -> bool:
+        return bool(self.get_quote_map(asset_ids, max_age_seconds=max(timeout_seconds, 0.0)))
+
     def get_depth_map(self, asset_ids, max_age_seconds: float):
         return {
             str(asset_id): self.depth_map[str(asset_id)]
@@ -73,6 +77,13 @@ class _FakeRealtimeManager:
 
     def get_sport_result(self, slug):
         return self.sports_map.get(str(slug))
+
+    def get_sport_results(self, max_age_seconds: float = 0.0):
+        return {
+            str(key): dict(value)
+            for key, value in self.sports_map.items()
+            if isinstance(value, dict)
+        }
 
     def snapshot(self):
         return {
@@ -143,6 +154,16 @@ class PolymarketRealtimeTests(unittest.TestCase):
         self.assertFalse(polymarket._sports_result_is_tradeable({"status": "final"}))
         self.assertFalse(polymarket._sports_result_is_tradeable({"ended": True}))
         self.assertTrue(polymarket._sports_result_is_tradeable({"status": "live"}))
+
+    def test_event_and_market_remain_tradeable_when_accepting_orders_after_end(self) -> None:
+        now_utc = polymarket.dt.datetime.now(polymarket.dt.timezone.utc)
+        event = _sample_event()
+        event["endDate"] = "2026-03-10T00:00:00Z"
+        event["markets"][0]["endDate"] = "2026-03-10T00:00:00Z"
+        event["markets"][0]["acceptingOrders"] = True
+
+        self.assertTrue(polymarket._market_is_tradeable(event["markets"][0], now_utc))
+        self.assertTrue(polymarket._event_is_tradeable(event, now_utc))
 
     def test_realtime_manager_reads_shared_snapshot_when_not_owner(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -249,6 +270,58 @@ class PolymarketRealtimeTests(unittest.TestCase):
         self.assertNotIn("token-a", manager._market_books)
         self.assertIn("token-a", unsubscribed)
 
+    def test_market_subscription_uses_incremental_subscribe_operation(self) -> None:
+        sent_payloads = []
+
+        class _FakeWebSocket:
+            async def send(self, payload):
+                sent_payloads.append(json.loads(payload))
+
+        manager = polymarket.PolymarketRealtimeManager()
+        manager._market_ws = _FakeWebSocket()
+        manager._market_connected = True
+        manager._market_subscription_initialized = True
+
+        asyncio.run(manager._send_market_subscription(["token-a", "token-b"]))
+        asyncio.run(manager._send_market_unsubscribe(["token-a"]))
+
+        self.assertEqual(
+            sent_payloads,
+            [
+                {
+                    "assets_ids": ["token-a", "token-b"],
+                    "operation": "subscribe",
+                    "custom_feature_enabled": True,
+                },
+                {
+                    "assets_ids": ["token-a"],
+                    "operation": "unsubscribe",
+                },
+            ],
+        )
+
+    def test_event_live_state_payload_promotes_live_game_state(self) -> None:
+        payload = polymarket._event_live_state_payload(
+            event={},
+            realtime_state={
+                "gameId": 90091303,
+                "live": True,
+                "score": "2-1",
+                "period": "2H",
+                "eventState": {
+                    "updatedAt": "2026-03-21T14:06:38.623182769Z",
+                    "elapsed": "61",
+                    "live": True,
+                },
+            },
+        )
+
+        self.assertEqual(payload["status"], "live")
+        self.assertTrue(payload["is_live"])
+        self.assertEqual(payload["score"], "2-1")
+        self.assertEqual(payload["period"], "2H")
+        self.assertEqual(payload["elapsed"], "61")
+
 
 class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
     async def test_fetch_events_async_prefers_realtime_quotes_before_rest(self) -> None:
@@ -322,6 +395,205 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats.get("realtime_market_books_missed"), 1)
         self.assertEqual(stats.get("clob_books_fetched"), 1)
         self.assertEqual(stats.get("clob_books_with_quotes"), 2)
+
+    async def test_fetch_events_async_uses_game_id_for_sports_ws_state(self) -> None:
+        manager = _FakeRealtimeManager(
+            sports_map={
+                "90091303": {
+                    "gameId": 90091303,
+                    "live": True,
+                    "score": "2-1",
+                    "period": "2H",
+                    "eventState": {
+                        "updatedAt": "2026-03-21T14:06:38.623182769Z",
+                        "elapsed": "61",
+                        "live": True,
+                    },
+                }
+            }
+        )
+
+        with (
+            patch.object(polymarket, "_websocket_realtime_enabled", return_value=True),
+            patch.object(polymarket, "_market_websocket_enabled", return_value=False),
+            patch.object(polymarket, "_sports_websocket_enabled", return_value=True),
+            patch.object(polymarket, "_get_realtime_manager", return_value=manager),
+            patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={})),
+            patch.object(
+                polymarket,
+                "_load_active_game_events_async",
+                new=AsyncMock(
+                    return_value=(
+                        [_sample_event()],
+                        {"cache": "miss", "pages_fetched": 1, "retries_used": 0},
+                    )
+                ),
+            ),
+            patch.object(
+                polymarket,
+                "_load_clob_quote_map_async",
+                new=AsyncMock(
+                    return_value=(
+                        {
+                            "token-a": {
+                                "decimal_odds": 1.818182,
+                                "stake": 12.0,
+                                "quote_source": "clob_book_best_ask",
+                            },
+                            "token-b": {
+                                "decimal_odds": 1.538462,
+                                "stake": 15.0,
+                                "quote_source": "clob_book_best_ask",
+                            },
+                        },
+                        {
+                            "token_count_requested": 2,
+                            "token_count_considered": 2,
+                            "token_count_truncated": 0,
+                            "books_fetched": 2,
+                            "books_with_quotes": 2,
+                            "book_errors": 0,
+                            "retries_used": 0,
+                        },
+                    )
+                ),
+            ),
+        ):
+            events = await polymarket.fetch_events_async(
+                "basketball_nba",
+                ["h2h"],
+                ["us"],
+                bookmakers=["polymarket"],
+            )
+
+        self.assertEqual(len(events), 1)
+        live_state = events[0]["live_state"]
+        self.assertEqual(live_state["status"], "live")
+        self.assertTrue(live_state["is_live"])
+        self.assertEqual(live_state["score"], "2-1")
+        self.assertEqual(live_state["elapsed"], "61")
+        stats = polymarket.fetch_events_async.last_stats
+        self.assertEqual(stats.get("realtime_sports_state_hits"), 1)
+
+    async def test_fetch_events_async_supplements_missing_live_event_from_sports_ws_game_id(self) -> None:
+        base_event = _sample_event(slug="other-game")
+        base_event["id"] = "evt-base"
+        base_event["gameId"] = 11111111
+
+        live_event = _sample_event(slug="live-game")
+        live_event["id"] = "evt-live"
+        live_event["gameId"] = 90091303
+        live_event["title"] = "Team C vs Team D"
+        live_event["endDate"] = "2026-03-10T00:00:00Z"
+        live_event["markets"] = [
+            {
+                "question": "Team C vs Team D",
+                "outcomes": '["Team C", "Team D"]',
+                "outcomePrices": '["0.45", "0.55"]',
+                "clobTokenIds": '["token-c", "token-d"]',
+                "volumeNum": "100",
+                "endDate": "2026-03-10T00:00:00Z",
+                "active": True,
+                "closed": False,
+                "archived": False,
+                "acceptingOrders": True,
+            }
+        ]
+
+        manager = _FakeRealtimeManager(
+            sports_map={
+                "90091303": {
+                    "gameId": 90091303,
+                    "live": True,
+                    "score": "2-1",
+                    "period": "2H",
+                    "eventState": {
+                        "updatedAt": "2026-03-21T14:06:38.623182769Z",
+                        "elapsed": "61",
+                        "live": True,
+                    },
+                }
+            }
+        )
+
+        with (
+            patch.object(polymarket, "_websocket_realtime_enabled", return_value=True),
+            patch.object(polymarket, "_market_websocket_enabled", return_value=False),
+            patch.object(polymarket, "_sports_websocket_enabled", return_value=True),
+            patch.object(polymarket, "_get_realtime_manager", return_value=manager),
+            patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={})),
+            patch.object(
+                polymarket,
+                "_load_active_game_events_async",
+                new=AsyncMock(
+                    return_value=(
+                        [base_event],
+                        {"cache": "miss", "pages_fetched": 1, "retries_used": 0},
+                    )
+                ),
+            ),
+            patch.object(
+                polymarket,
+                "_load_game_events_by_ids_async",
+                new=AsyncMock(
+                    return_value=(
+                        [live_event],
+                        {
+                            "game_ids_requested": 1,
+                            "lookups": 1,
+                            "events_added": 1,
+                            "retries_used": 0,
+                            "lookup_errors": 0,
+                        },
+                    )
+                ),
+            ),
+            patch.object(
+                polymarket,
+                "_load_clob_quote_map_async",
+                new=AsyncMock(
+                    return_value=(
+                        {
+                            "token-c": {
+                                "decimal_odds": 2.222222,
+                                "stake": 10.0,
+                                "quote_source": "clob_book_best_ask",
+                            },
+                            "token-d": {
+                                "decimal_odds": 1.818182,
+                                "stake": 12.0,
+                                "quote_source": "clob_book_best_ask",
+                            },
+                        },
+                        {
+                            "token_count_requested": 2,
+                            "token_count_considered": 2,
+                            "token_count_truncated": 0,
+                            "books_fetched": 2,
+                            "books_with_quotes": 2,
+                            "book_errors": 0,
+                            "retries_used": 0,
+                        },
+                    )
+                ),
+            ),
+        ):
+            events = await polymarket.fetch_events_async(
+                "basketball_nba",
+                ["h2h"],
+                ["us"],
+                bookmakers=["polymarket"],
+            )
+
+        live_ids = [event["id"] for event in events]
+        self.assertIn("evt-live", live_ids)
+        live_event_out = next(event for event in events if event["id"] == "evt-live")
+        self.assertEqual(live_event_out["live_state"]["status"], "live")
+        stats = polymarket.fetch_events_async.last_stats
+        self.assertEqual(stats.get("realtime_sports_game_ids_observed"), 1)
+        self.assertEqual(stats.get("realtime_sports_event_lookups"), 1)
+        self.assertEqual(stats.get("realtime_sports_events_supplemented"), 1)
+        self.assertEqual(stats.get("realtime_sports_state_hits"), 1)
 
     async def test_fetch_events_async_only_prefetches_match_relevant_clob_tokens(self) -> None:
         event = _sample_event()

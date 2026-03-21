@@ -75,6 +75,7 @@ POLYMARKET_SPORTS_WS_URL = os.getenv(
     "wss://sports-api.polymarket.com/ws",
 ).strip()
 POLYMARKET_WS_WARMUP_MS_RAW = os.getenv("POLYMARKET_WS_WARMUP_MS", "250").strip()
+POLYMARKET_WS_QUOTE_WAIT_SECONDS_RAW = os.getenv("POLYMARKET_WS_QUOTE_WAIT_SECONDS", "4").strip()
 POLYMARKET_WS_BOOK_MAX_AGE_SECONDS_RAW = os.getenv(
     "POLYMARKET_WS_BOOK_MAX_AGE_SECONDS",
     "30",
@@ -255,6 +256,10 @@ def _ws_warmup_seconds() -> float:
 
 def _ws_book_max_age_seconds() -> float:
     return _float_or_default(POLYMARKET_WS_BOOK_MAX_AGE_SECONDS_RAW, 30.0, min_value=0.0)
+
+
+def _ws_quote_wait_seconds() -> float:
+    return _float_or_default(POLYMARKET_WS_QUOTE_WAIT_SECONDS_RAW, 4.0, min_value=0.0)
 
 
 def _ws_connect_timeout_seconds() -> float:
@@ -581,6 +586,33 @@ def _flag_is_false(value: object) -> bool:
     return text in {"0", "false", "no", "n", "off"}
 
 
+def _market_accepting_orders(market: object) -> bool:
+    if not isinstance(market, dict):
+        return False
+    if market.get("acceptingOrders") is None:
+        return False
+    return _flag_is_true(market.get("acceptingOrders"))
+
+
+def _event_has_tradeable_live_markets(event: object) -> bool:
+    if not isinstance(event, dict):
+        return False
+    for market in (event.get("markets") or []):
+        if not isinstance(market, dict):
+            continue
+        if _flag_is_true(market.get("closed")):
+            continue
+        if _flag_is_true(market.get("archived")):
+            continue
+        if _flag_is_true(market.get("ended")):
+            continue
+        if market.get("active") is not None and _flag_is_false(market.get("active")):
+            continue
+        if _market_accepting_orders(market):
+            return True
+    return False
+
+
 def _event_is_tradeable(event: dict, now_utc: dt.datetime) -> bool:
     if not isinstance(event, dict):
         return False
@@ -593,7 +625,7 @@ def _event_is_tradeable(event: dict, now_utc: dt.datetime) -> bool:
     if _flag_is_true(event.get("ended")):
         return False
     end_at = _parse_datetime_utc(event.get("endDate"))
-    if end_at is not None and end_at < now_utc:
+    if end_at is not None and end_at < now_utc and not _event_has_tradeable_live_markets(event):
         return False
     return True
 
@@ -612,7 +644,7 @@ def _market_is_tradeable(market: dict, now_utc: dt.datetime) -> bool:
     if market.get("acceptingOrders") is not None and _flag_is_false(market.get("acceptingOrders")):
         return False
     end_at = _parse_datetime_utc(market.get("endDate"))
-    if end_at is not None and end_at < now_utc:
+    if end_at is not None and end_at < now_utc and not _market_accepting_orders(market):
         return False
     return True
 
@@ -1073,7 +1105,17 @@ def _normalized_clob_token_ids(
 def _sports_result_slug(payload: object) -> str:
     if not isinstance(payload, dict):
         return ""
-    for key in ("slug", "marketSlug", "eventSlug", "gameSlug"):
+    for key in ("gameId", "metadataGameId", "slug", "marketSlug", "eventSlug", "gameSlug"):
+        value = _normalize_text(payload.get(key))
+        if value:
+            return value
+    return ""
+
+
+def _sports_result_game_id(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("gameId", "metadataGameId"):
         value = _normalize_text(payload.get(key))
         if value:
             return value
@@ -1111,15 +1153,73 @@ def _sports_result_is_tradeable(payload: object) -> bool:
     return True
 
 
+def _event_sports_result_keys(event: object) -> List[str]:
+    if not isinstance(event, dict):
+        return []
+    keys: List[str] = []
+    for value in (
+        event.get("gameId"),
+        event.get("metadataGameId"),
+        event.get("slug"),
+    ):
+        token = _normalize_text(value)
+        if token and token not in keys:
+            keys.append(token)
+    return keys
+
+
+def _event_identity(event: object) -> str:
+    if not isinstance(event, dict):
+        return ""
+    for value in (
+        event.get("id"),
+        event.get("gameId"),
+        event.get("metadataGameId"),
+        event.get("slug"),
+        event.get("ticker"),
+    ):
+        token = _normalize_text(value)
+        if token:
+            return token
+    return ""
+
+
+def _merge_events(primary: Sequence[dict], supplemental: Sequence[dict]) -> List[dict]:
+    merged: List[dict] = []
+    seen: set[str] = set()
+    for event in list(primary or []) + list(supplemental or []):
+        if not isinstance(event, dict):
+            continue
+        identity = _event_identity(event)
+        if identity and identity in seen:
+            continue
+        if identity:
+            seen.add(identity)
+        merged.append(event)
+    return merged
+
+
 def _event_live_state_payload(event: object, realtime_state: object = None) -> Optional[dict]:
     payload: Dict[str, object] = {}
     if isinstance(realtime_state, dict):
+        realtime_event_state = realtime_state.get("eventState") if isinstance(realtime_state.get("eventState"), dict) else {}
         status = _normalize_text(
             realtime_state.get("status")
             or realtime_state.get("gameStatus")
             or realtime_state.get("matchStatus")
             or realtime_state.get("state")
+            or realtime_event_state.get("status")
+            or realtime_event_state.get("gameStatus")
+            or realtime_event_state.get("matchStatus")
+            or realtime_event_state.get("state")
         ).lower()
+        live_flag = _flag_is_true(realtime_state.get("live")) or _flag_is_true(realtime_event_state.get("live"))
+        ended_flag = _flag_is_true(realtime_state.get("ended")) or _flag_is_true(realtime_event_state.get("ended"))
+        closed_flag = _flag_is_true(realtime_state.get("closed")) or _flag_is_true(realtime_event_state.get("closed"))
+        if live_flag and status in {"", "inprogress", "in_progress"}:
+            status = "live"
+        elif (ended_flag or closed_flag) and not status:
+            status = "final"
         if status:
             payload["status"] = status
         updated_at = _normalize_text(
@@ -1127,17 +1227,25 @@ def _event_live_state_payload(event: object, realtime_state: object = None) -> O
             or realtime_state.get("updatedAt")
             or realtime_state.get("timestamp")
             or realtime_state.get("ts")
+            or realtime_event_state.get("updated_at")
+            or realtime_event_state.get("updatedAt")
+            or realtime_event_state.get("timestamp")
+            or realtime_event_state.get("ts")
+            or realtime_event_state.get("createdAt")
         )
         if updated_at:
             payload["updated_at"] = updated_at
-        for key in ("score", "homeScore", "awayScore", "period", "clock"):
-            value = realtime_state.get(key)
-            if value not in (None, ""):
-                payload[key] = value
-        if "ended" in realtime_state:
-            payload["ended"] = bool(realtime_state.get("ended"))
-        if "closed" in realtime_state:
-            payload["closed"] = bool(realtime_state.get("closed"))
+        for source in (realtime_state, realtime_event_state):
+            for key in ("score", "homeScore", "awayScore", "period", "clock", "elapsed"):
+                value = source.get(key)
+                if value not in (None, ""):
+                    payload[key] = value
+        if live_flag:
+            payload["is_live"] = True
+        if "ended" in realtime_state or "ended" in realtime_event_state:
+            payload["ended"] = ended_flag
+        if "closed" in realtime_state or "closed" in realtime_event_state:
+            payload["closed"] = closed_flag
     if not payload and isinstance(event, dict):
         status = _normalize_text(
             event.get("status")
@@ -1250,6 +1358,7 @@ class PolymarketRealtimeManager:
         self._market_books: Dict[str, dict] = {}
         self._sports_results: Dict[str, dict] = {}
         self._subscribed_asset_ids: Dict[str, float] = {}
+        self._market_subscription_initialized = False
         self._messages_received = {"market": 0, "sports": 0}
         self._connect_attempts = {"market": 0, "sports": 0}
         self._last_errors = {"market": "", "sports": ""}
@@ -1322,6 +1431,7 @@ class PolymarketRealtimeManager:
             self._sports_ws = None
             self._market_connected = False
             self._sports_connected = False
+            self._market_subscription_initialized = False
             self._owner_active = False
         self._release_owner()
 
@@ -1532,6 +1642,20 @@ class PolymarketRealtimeManager:
             time.sleep(0.05)
         return False
 
+    def wait_for_quotes(self, asset_ids: Sequence[str], timeout_seconds: float) -> bool:
+        if timeout_seconds <= 0:
+            return False
+        deadline = time.time() + float(timeout_seconds)
+        token_ids = [token_id for token_id in (_normalize_text(item) for item in asset_ids or []) if token_id]
+        if not token_ids:
+            return False
+        while time.time() < deadline:
+            snapshot = self.get_quote_map(token_ids, max_age_seconds=_ws_book_max_age_seconds())
+            if snapshot:
+                return True
+            time.sleep(0.05)
+        return False
+
     def get_depth_map(
         self,
         asset_ids: Sequence[str],
@@ -1647,6 +1771,35 @@ class PolymarketRealtimeManager:
         payload = shared_results.get(token)
         return dict(payload) if _sport_result_payload_is_fresh(payload) else None
 
+    def get_sport_results(self, max_age_seconds: float = 0.0) -> Dict[str, dict]:
+        now = time.time()
+        results: Dict[str, dict] = {}
+
+        def _merge_entries(entries: object) -> None:
+            if not isinstance(entries, dict):
+                return
+            for key, payload in entries.items():
+                token = _normalize_text(key)
+                if not token or not isinstance(payload, dict):
+                    continue
+                if not _sport_result_payload_is_fresh(payload):
+                    continue
+                updated_at = _safe_float(payload.get("updated_at")) or 0.0
+                if max_age_seconds > 0 and updated_at > 0 and (now - updated_at) > max_age_seconds:
+                    continue
+                existing = results.get(token)
+                existing_updated_at = _safe_float((existing or {}).get("updated_at")) or 0.0
+                if existing is not None and existing_updated_at >= updated_at:
+                    continue
+                results[token] = dict(payload)
+
+        with self._state_lock:
+            _merge_entries(self._sports_results)
+        shared_snapshot = self._load_shared_snapshot()
+        shared_results = shared_snapshot.get("sports_results") if isinstance(shared_snapshot, dict) else {}
+        _merge_entries(shared_results)
+        return results
+
     def snapshot(self) -> dict:
         with self._state_lock:
             status = self._local_status_payload()
@@ -1734,9 +1887,6 @@ class PolymarketRealtimeManager:
         delay = 1.0
         while not self._stop_requested.is_set():
             try:
-                subscribed = await self._wait_for_market_subscriptions()
-                if not subscribed:
-                    continue
                 with self._state_lock:
                     self._connect_attempts["market"] = int(self._connect_attempts.get("market", 0) or 0) + 1
                 async with connect(
@@ -1750,8 +1900,15 @@ class PolymarketRealtimeManager:
                     with self._state_lock:
                         self._market_ws = websocket
                         self._market_connected = True
+                        self._market_subscription_initialized = False
                         self._last_errors["market"] = ""
-                    await self._send_market_subscription(subscribed)
+                        subscribed = [
+                            asset_id
+                            for asset_id, last_requested_at in self._subscribed_asset_ids.items()
+                            if (time.time() - float(last_requested_at or 0.0)) <= _realtime_subscription_ttl_seconds()
+                        ]
+                    if subscribed:
+                        await self._send_market_initial_subscription(subscribed)
                     heartbeat_task = asyncio.create_task(self._market_heartbeat(websocket))
                     delay = 1.0
                     try:
@@ -1895,16 +2052,8 @@ class PolymarketRealtimeManager:
         unsubscribe_ids = list(dict.fromkeys(_normalize_text(item) for item in unsubscribe_ids if _normalize_text(item)))
         if unsubscribe_ids:
             await self._send_market_unsubscribe(unsubscribe_ids)
-        with self._state_lock:
-            should_disconnect_market = self._market_connected and not self._subscribed_asset_ids
-            websocket = self._market_ws if should_disconnect_market else None
-        if websocket is not None:
-            try:
-                await websocket.close()
-            except Exception:
-                pass
 
-    async def _send_market_subscription(self, asset_ids: Sequence[str]) -> None:
+    async def _send_market_initial_subscription(self, asset_ids: Sequence[str]) -> None:
         if not asset_ids:
             return
         with self._state_lock:
@@ -1919,6 +2068,33 @@ class PolymarketRealtimeManager:
                 if token_id
             ],
             "type": "market",
+            "custom_feature_enabled": True,
+        }
+        if not payload["assets_ids"]:
+            return
+        await websocket.send(json.dumps(payload, separators=(",", ":")))
+        with self._state_lock:
+            self._market_subscription_initialized = True
+
+    async def _send_market_subscription(self, asset_ids: Sequence[str]) -> None:
+        if not asset_ids:
+            return
+        with self._state_lock:
+            websocket = self._market_ws
+            connected = self._market_connected
+            initialized = self._market_subscription_initialized
+        if websocket is None or not connected:
+            return
+        if not initialized:
+            await self._send_market_initial_subscription(asset_ids)
+            return
+        payload = {
+            "assets_ids": [
+                token_id
+                for token_id in (_normalize_text(item) for item in asset_ids)
+                if token_id
+            ],
+            "operation": "subscribe",
             "custom_feature_enabled": True,
         }
         if not payload["assets_ids"]:
@@ -1939,7 +2115,7 @@ class PolymarketRealtimeManager:
                 for token_id in (_normalize_text(item) for item in asset_ids)
                 if token_id
             ],
-            "type": "unsubscribe",
+            "operation": "unsubscribe",
         }
         if not payload["assets_ids"]:
             return
@@ -2874,6 +3050,70 @@ async def _load_active_game_events_async(
         return all_events, meta
 
 
+async def _load_game_events_by_ids_async(
+    client: httpx.AsyncClient,
+    game_ids: Sequence[object],
+    existing_events: Optional[Sequence[dict]],
+    retries: int,
+    backoff_seconds: float,
+) -> Tuple[List[dict], dict]:
+    known_game_ids = {
+        _normalize_text(event.get("gameId"))
+        for event in (existing_events or [])
+        if isinstance(event, dict) and _normalize_text(event.get("gameId"))
+    }
+    unique_game_ids: List[str] = []
+    for item in game_ids or []:
+        token = _normalize_text(item)
+        if not token or token in known_game_ids or token in unique_game_ids:
+            continue
+        unique_game_ids.append(token)
+    if not unique_game_ids:
+        return [], {"game_ids_requested": 0, "lookups": 0, "events_added": 0, "retries_used": 0, "lookup_errors": 0}
+
+    semaphore = asyncio.Semaphore(min(8, len(unique_game_ids)))
+
+    async def _fetch_one(game_id: str) -> Tuple[List[dict], int, int]:
+        async with semaphore:
+            try:
+                payload, retries_used = await _request_json_async(
+                    client,
+                    "events",
+                    {
+                        "game_id": game_id,
+                        "tag_id": POLYMARKET_GAME_TAG_ID or "100639",
+                        "active": "true",
+                        "closed": "false",
+                        "archived": "false",
+                        "limit": 20,
+                    },
+                    retries=retries,
+                    backoff_seconds=backoff_seconds,
+                )
+            except Exception:
+                return [], 0, 1
+            if not isinstance(payload, list):
+                return [], 0, 1
+            return [item for item in payload if isinstance(item, dict)], retries_used, 0
+
+    fetched = await asyncio.gather(*(_fetch_one(game_id) for game_id in unique_game_ids))
+    retries_used = 0
+    lookup_errors = 0
+    supplemental_events: List[dict] = []
+    for events, retries_for_request, request_errors in fetched:
+        retries_used += int(retries_for_request or 0)
+        lookup_errors += int(request_errors or 0)
+        supplemental_events.extend(events)
+    merged = _merge_events([], supplemental_events)
+    return merged, {
+        "game_ids_requested": len(unique_game_ids),
+        "lookups": len(unique_game_ids),
+        "events_added": len(merged),
+        "retries_used": retries_used,
+        "lookup_errors": lookup_errors,
+    }
+
+
 def _set_last_stats(stats: dict) -> None:
     fetch_events.last_stats = stats
     fetch_events_async.last_stats = stats
@@ -2926,6 +3166,10 @@ async def fetch_events_async(
         "realtime_sports_messages_received": 0,
         "realtime_sports_results_cached": 0,
         "realtime_sports_last_message_age_seconds": None,
+        "realtime_sports_game_ids_observed": 0,
+        "realtime_sports_event_lookups": 0,
+        "realtime_sports_events_supplemented": 0,
+        "realtime_sports_event_lookup_errors": 0,
         "realtime_sports_state_hits": 0,
         "realtime_sports_state_filtered_count": 0,
         "realtime_owner_active": False,
@@ -2981,6 +3225,31 @@ async def fetch_events_async(
     stats["payload_cache"] = payload_meta.get("cache", "miss")
     stats["pages_fetched"] += int(payload_meta.get("pages_fetched", 0) or 0)
     stats["retries_used"] += int(payload_meta.get("retries_used", 0) or 0)
+    if realtime_manager is not None and _sports_websocket_enabled():
+        recent_sport_results = realtime_manager.get_sport_results(
+            max_age_seconds=max(120.0, _realtime_owner_stale_seconds())
+        )
+        live_game_ids: List[str] = []
+        for sport_result in recent_sport_results.values():
+            if not _sports_result_is_tradeable(sport_result):
+                continue
+            game_id = _sports_result_game_id(sport_result)
+            if game_id and game_id not in live_game_ids:
+                live_game_ids.append(game_id)
+        stats["realtime_sports_game_ids_observed"] = len(live_game_ids)
+        supplemental_events, supplemental_meta = await _load_game_events_by_ids_async(
+            client=client,
+            game_ids=live_game_ids,
+            existing_events=payload,
+            retries=retries,
+            backoff_seconds=backoff,
+        )
+        stats["realtime_sports_event_lookups"] = int(supplemental_meta.get("lookups", 0) or 0)
+        stats["realtime_sports_events_supplemented"] = int(supplemental_meta.get("events_added", 0) or 0)
+        stats["realtime_sports_event_lookup_errors"] = int(supplemental_meta.get("lookup_errors", 0) or 0)
+        stats["retries_used"] += int(supplemental_meta.get("retries_used", 0) or 0)
+        if supplemental_events:
+            payload = _merge_events(payload, supplemental_events)
 
     events_out: List[dict] = []
     now_utc = dt.datetime.now(dt.timezone.utc)
@@ -3001,14 +3270,21 @@ async def fetch_events_async(
                 stats["events_status_filtered_count"] += 1
                 continue
             realtime_state = None
+            filtered_by_realtime_state = False
             if realtime_manager is not None and _sports_websocket_enabled():
-                realtime_state = realtime_manager.get_sport_result(event.get("slug"))
-                if isinstance(realtime_state, dict):
-                    stats["realtime_sports_state_hits"] += 1
-                    if not _sports_result_is_tradeable(realtime_state):
-                        stats["events_status_filtered_count"] += 1
-                        stats["realtime_sports_state_filtered_count"] += 1
-                        continue
+                for sport_result_key in _event_sports_result_keys(event):
+                    realtime_state = realtime_manager.get_sport_result(sport_result_key)
+                    if isinstance(realtime_state, dict):
+                        stats["realtime_sports_state_hits"] += 1
+                        if not _sports_result_is_tradeable(realtime_state):
+                            stats["events_status_filtered_count"] += 1
+                            stats["realtime_sports_state_filtered_count"] += 1
+                            filtered_by_realtime_state = True
+                            realtime_state = None
+                            break
+                        break
+                if filtered_by_realtime_state:
+                    continue
 
             matchup = _extract_matchup(event)
             if not matchup:
@@ -3035,12 +3311,12 @@ async def fetch_events_async(
             unresolved_token_ids = list(normalized_token_ids)
             if realtime_manager is not None and _market_websocket_enabled():
                 stats["realtime_market_new_subscriptions"] = realtime_manager.subscribe_assets(normalized_token_ids)
-                warmup_seconds = _ws_warmup_seconds()
-                if unresolved_token_ids and warmup_seconds > 0:
+                quote_wait_seconds = max(_ws_warmup_seconds(), _ws_quote_wait_seconds())
+                if unresolved_token_ids and quote_wait_seconds > 0:
                     await asyncio.to_thread(
-                        realtime_manager.wait_for_assets,
+                        realtime_manager.wait_for_quotes,
                         unresolved_token_ids,
-                        warmup_seconds,
+                        quote_wait_seconds,
                     )
                 realtime_quote_map = realtime_manager.get_quote_map(
                     normalized_token_ids,
