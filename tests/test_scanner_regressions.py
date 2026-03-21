@@ -1405,6 +1405,70 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertIn("h2h", market_keys)
         self.assertIn("spreads", market_keys)
 
+    def test_merge_events_merges_soccer_more_markets_event_into_main_event(self) -> None:
+        merged = scanner._merge_events(
+            [],
+            [
+                {
+                    "id": "poly-main",
+                    "sport_key": "soccer_usa_mls",
+                    "home_team": "Columbus Crew",
+                    "away_team": "Orlando City",
+                    "commence_time": "2026-03-10T23:30:00Z",
+                    "bookmakers": [
+                        {
+                            "key": "polymarket",
+                            "title": "Polymarket",
+                            "event_id": "poly-main",
+                            "markets": [
+                                {
+                                    "key": "h2h",
+                                    "outcomes": [
+                                        {"name": "Columbus Crew", "price": 2.1},
+                                        {"name": "Orlando City", "price": 1.82},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "id": "poly-more-markets",
+                    "sport_key": "soccer_usa_mls",
+                    "home_team": "Columbus Crew SC",
+                    "away_team": "Orlando City SC",
+                    "commence_time": "2026-03-10T23:30:00Z",
+                    "bookmakers": [
+                        {
+                            "key": "polymarket",
+                            "title": "Polymarket",
+                            "event_id": "poly-more-markets",
+                            "markets": [
+                                {
+                                    "key": "both_teams_to_score",
+                                    "outcomes": [
+                                        {"name": "Yes", "price": 1.95},
+                                        {"name": "No", "price": 1.9},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        )
+
+        self.assertEqual(len(merged), 1)
+        books = merged[0].get("bookmakers") or []
+        self.assertEqual(len(books), 1)
+        self.assertEqual(books[0].get("key"), "polymarket")
+        market_keys = {
+            str(market.get("key") or "").strip().lower()
+            for market in (books[0].get("markets") or [])
+            if isinstance(market, dict)
+        }
+        self.assertEqual(market_keys, {"h2h", "both_teams_to_score"})
+
     def test_run_scan_all_sports_expands_provider_target_sports(self) -> None:
         sports_payload = [
             {

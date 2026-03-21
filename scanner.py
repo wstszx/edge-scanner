@@ -2083,6 +2083,30 @@ def _merge_bookmakers(target: List[dict], incoming: List[dict]) -> None:
         _merge_bookmaker_markets(existing, book)
 
 
+def _index_event_for_merge(
+    event: dict,
+    index: Dict[Tuple[str, str, str, str], dict],
+    by_team: Dict[Tuple[str, str, str], List[Tuple[int, dict]]],
+    normalized_by_sport: Dict[str, List[Tuple[int, dict, str, str]]],
+) -> None:
+    identity = _event_identity(event)
+    if identity and identity not in index:
+        index[identity] = event
+
+    epoch = _event_time_seconds(event)
+    if epoch is None:
+        return
+
+    team_key = _event_team_key(event)
+    if team_key:
+        by_team.setdefault(team_key, []).append((epoch, event))
+
+    normalized_key = _event_team_key_normalized(event)
+    if normalized_key:
+        sport, home_norm, away_norm = normalized_key
+        normalized_by_sport.setdefault(sport, []).append((epoch, event, home_norm, away_norm))
+
+
 def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dict]:
     index: Dict[Tuple[str, str, str, str], dict] = {}
     by_team: Dict[Tuple[str, str, str], List[Tuple[int, dict]]] = {}
@@ -2094,22 +2118,7 @@ def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dic
     tolerance_seconds = max(0, tolerance_minutes) * 60
     fuzzy_threshold = _purebet_fuzzy_threshold()
     for event in base_events:
-        identity = _event_identity(event)
-        if identity and identity not in index:
-            index[identity] = event
-        team_key = _event_team_key(event)
-        if team_key:
-            epoch = _event_time_seconds(event)
-            if epoch is not None:
-                by_team.setdefault(team_key, []).append((epoch, event))
-        normalized_key = _event_team_key_normalized(event)
-        if normalized_key:
-            sport, home_norm, away_norm = normalized_key
-            epoch = _event_time_seconds(event)
-            if epoch is not None:
-                normalized_by_sport.setdefault(sport, []).append(
-                    (epoch, event, home_norm, away_norm)
-                )
+        _index_event_for_merge(event, index, by_team, normalized_by_sport)
     for extra in extra_events:
         identity = _event_identity(extra)
         if identity and identity in index:
@@ -2178,13 +2187,7 @@ def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dic
                 _merge_bookmakers(base_books, extra_books)
             continue
         base_events.append(extra)
-        if identity:
-            index[identity] = extra
-        team_key = _event_team_key(extra)
-        if team_key:
-            epoch = _event_time_seconds(extra)
-            if epoch is not None:
-                by_team.setdefault(team_key, []).append((epoch, extra))
+        _index_event_for_merge(extra, index, by_team, normalized_by_sport)
     return base_events
 
 
