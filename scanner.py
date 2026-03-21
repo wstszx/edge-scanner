@@ -145,14 +145,18 @@ LIVE_STATE_IN_PLAY_TOKENS = {
 }
 LIVE_STATE_NOT_LIVE_TOKENS = {
     "created",
+    "interrupted",
     "not_started",
     "pending",
+    "paused",
     "pre_play",
     "preplay",
     "scheduled",
+    "suspended",
     "upcoming",
 }
 LIVE_STATE_TERMINAL_TOKENS = {
+    "abandoned",
     "canceled",
     "cancelled",
     "closed",
@@ -162,8 +166,10 @@ LIVE_STATE_TERMINAL_TOKENS = {
     "expired",
     "final",
     "finished",
+    "postponed",
     "resolved",
     "settled",
+    "suspended_final",
 }
 
 COMMON_EXTRA_MARKETS = [
@@ -1937,14 +1943,30 @@ def _normalize_live_state_token(value: object) -> str:
     return re.sub(r"[\s-]+", "_", text)
 
 
-def _live_state_token(state: Optional[dict]) -> str:
+def _live_state_tokens(state: Optional[dict]) -> List[str]:
     if not isinstance(state, dict):
-        return ""
-    for key in ("status", "game_status", "gameState", "state", "in_play_status", "market_status"):
+        return []
+    tokens: List[str] = []
+    seen = set()
+    for key in (
+        "status",
+        "game_status",
+        "gameState",
+        "state",
+        "in_play_status",
+        "market_status",
+        "provider_status",
+    ):
         token = _normalize_live_state_token(state.get(key))
-        if token:
-            return token
-    return ""
+        if token and token not in seen:
+            tokens.append(token)
+            seen.add(token)
+    return tokens
+
+
+def _live_state_token(state: Optional[dict]) -> str:
+    tokens = _live_state_tokens(state)
+    return tokens[0] if tokens else ""
 
 
 def _event_live_state_token(event: dict) -> str:
@@ -1954,14 +1976,19 @@ def _event_live_state_token(event: dict) -> str:
 def _live_state_is_explicitly_live(state: Optional[dict]) -> Optional[bool]:
     if not isinstance(state, dict):
         return None
+    tokens = _live_state_tokens(state)
+    if any(token in LIVE_STATE_NOT_LIVE_TOKENS or token in LIVE_STATE_TERMINAL_TOKENS for token in tokens):
+        return False
+    explicit_true = False
     for key in ("is_live", "live", "is_in_play", "in_play"):
         if key in state:
-            return bool(state.get(key))
-    token = _live_state_token(state)
-    if token in LIVE_STATE_IN_PLAY_TOKENS:
+            if not bool(state.get(key)):
+                return False
+            explicit_true = True
+    if explicit_true:
         return True
-    if token in LIVE_STATE_NOT_LIVE_TOKENS or token in LIVE_STATE_TERMINAL_TOKENS:
-        return False
+    if any(token in LIVE_STATE_IN_PLAY_TOKENS for token in tokens):
+        return True
     return None
 
 
