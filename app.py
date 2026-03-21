@@ -85,6 +85,9 @@ _FX_RATE_CACHE_LOCK = threading.Lock()
 _FX_RATE_CACHE: Optional[dict] = None
 _FX_RATE_CACHE_EXPIRES_AT = 0.0
 
+CONTINUOUS_AUTO_SCAN_BACKOFF_SECONDS = 5.0
+CONTINUOUS_AUTO_SCAN_IDLE_WAIT_SECONDS = 0.1
+
 ARB_CALC_SUPPORTED_CURRENCIES = (
     "USD",
     "EUR",
@@ -215,7 +218,7 @@ ENV_SERVER_AUTO_SCAN_RUN_ON_START = _coerce_bool(
 )
 try:
     ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES = max(
-        1,
+        0,
         int(float(os.getenv("SERVER_AUTO_SCAN_INTERVAL_MINUTES", str(DEFAULT_AUTO_SCAN_MINUTES)).strip())),
     )
 except (TypeError, ValueError):
@@ -444,11 +447,35 @@ def _server_auto_scan_config_summary(config: Optional[dict]) -> str:
     )
     providers_label = ",".join(str(item) for item in include_providers[:6]) or "-"
     scan_mode = _normalize_scan_mode(payload.get("scanMode"))
+    raw_interval_minutes = config.get("interval_minutes")
+    try:
+        interval_minutes = (
+            int(float(raw_interval_minutes))
+            if raw_interval_minutes is not None
+            else int(ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES)
+        )
+    except (TypeError, ValueError):
+        interval_minutes = int(ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES)
+    interval_label = "continuous" if interval_minutes <= 0 else f"{interval_minutes}m"
     return (
         f"enabled={bool(config.get('enabled'))} "
-        f"interval={int(config.get('interval_minutes') or ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES)}m "
+        f"interval={interval_label} "
         f"mode={scan_mode} sports={len(sports)} bookmakers={len(bookmakers)} providers={providers_label}"
     )
+
+
+def _server_auto_scan_interval_seconds(config: Optional[dict]) -> float:
+    raw_value = config.get("interval_minutes") if isinstance(config, dict) else None
+    try:
+        interval_minutes = (
+            float(raw_value)
+            if raw_value is not None
+            else float(ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES)
+        )
+    except (TypeError, ValueError):
+        interval_minutes = float(ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES)
+    interval_minutes = max(0.0, interval_minutes)
+    return interval_minutes * 60.0
 
 
 def _server_auto_scan_config_path() -> Optional[Path]:
@@ -634,7 +661,7 @@ def _normalize_server_auto_scan_config(raw: object) -> Optional[dict]:
         )
     except (TypeError, ValueError):
         interval_minutes = ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES
-    interval_minutes = max(1, interval_minutes)
+    interval_minutes = max(0, interval_minutes)
 
     sharp_book_raw = scan_payload.get("sharpBook")
     if isinstance(sharp_book_raw, str):
@@ -967,10 +994,7 @@ def _server_auto_scan_loop() -> None:
         if config_version != last_config_version:
             last_config_version = config_version
             if current_enabled:
-                interval_seconds = max(
-                    60.0,
-                    float(config.get("interval_minutes") or ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES) * 60.0,
-                )
+                interval_seconds = _server_auto_scan_interval_seconds(config)
                 if not last_enabled:
                     next_run_at = time.time() if ENV_SERVER_AUTO_SCAN_RUN_ON_START else time.time() + interval_seconds
                 elif next_run_at is None:
@@ -989,10 +1013,7 @@ def _server_auto_scan_loop() -> None:
             if _SERVER_AUTO_SCAN_STOP_EVENT.wait(1.0):
                 break
             continue
-        interval_seconds = max(
-            60.0,
-            float(config.get("interval_minutes") or ENV_SERVER_AUTO_SCAN_INTERVAL_MINUTES) * 60.0,
-        )
+        interval_seconds = _server_auto_scan_interval_seconds(config)
         if next_run_at is None:
             next_run_at = time.time() if ENV_SERVER_AUTO_SCAN_RUN_ON_START else time.time() + interval_seconds
         now = time.time()
@@ -1009,21 +1030,25 @@ def _server_auto_scan_loop() -> None:
                 )
             except Exception:
                 logging.exception("Server auto scan crashed")
-                next_run_at = time.time() + interval_seconds
+                backoff_seconds = interval_seconds if interval_seconds > 0 else CONTINUOUS_AUTO_SCAN_BACKOFF_SECONDS
+                next_run_at = time.time() + backoff_seconds
                 continue
             if result.get("success"):
                 logging.info(
                     "Server auto scan completed at %s",
                     result.get("scan_time", ""),
                 )
+                next_run_at = time.time() + interval_seconds if interval_seconds > 0 else time.time()
             else:
                 logging.warning(
                     "Server auto scan did not complete: %s",
                     result.get("error", "unknown error"),
                 )
-            next_run_at = time.time() + interval_seconds
+                backoff_seconds = interval_seconds if interval_seconds > 0 else CONTINUOUS_AUTO_SCAN_BACKOFF_SECONDS
+                next_run_at = time.time() + backoff_seconds
             continue
-        wait_seconds = min(1.0, max(0.1, next_run_at - now))
+        min_wait_seconds = CONTINUOUS_AUTO_SCAN_IDLE_WAIT_SECONDS if interval_seconds <= 0 else 0.1
+        wait_seconds = min(1.0, max(min_wait_seconds, next_run_at - now))
         if _SERVER_AUTO_SCAN_STOP_EVENT.wait(wait_seconds):
             break
 

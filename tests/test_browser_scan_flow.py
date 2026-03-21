@@ -372,7 +372,9 @@ class BrowserScanFlowTests(unittest.TestCase):
                     context.add_init_script(
                         """
                         (() => {
+                          const nativeSetTimeout = window.setTimeout.bind(window);
                           const nativeSetInterval = window.setInterval.bind(window);
+                          window.setTimeout = (callback, ms, ...args) => nativeSetTimeout(callback, Math.min(ms, 50), ...args);
                           window.setInterval = (callback, ms, ...args) => nativeSetInterval(callback, Math.min(ms, 50), ...args);
                         })();
                         """
@@ -385,18 +387,19 @@ class BrowserScanFlowTests(unittest.TestCase):
                     self._configure_selected_provider(page)
                     page.click("#open-advanced")
                     page.check("#auto-scan-toggle")
-                    page.fill("#auto-scan-interval", "1")
+                    page.fill("#auto-scan-interval", "0")
                     page.dispatch_event("#auto-scan-interval", "change")
                     page.click("#close-advanced")
 
-                    self._wait_for(lambda: len(run_scan_calls) >= 1)
+                    self._wait_for(lambda: len(run_scan_calls) >= 2)
                     page.wait_for_selector("#arb-desktop-list .arb-opportunity-card")
 
-                    self.assertGreaterEqual(len(run_scan_calls), 1)
+                    self.assertGreaterEqual(len(run_scan_calls), 2)
                     self.assertEqual(page.locator("#arb-desktop-list .arb-opportunity-card").count(), 1)
                     self.assertIn("Seattle Kraken vs Vancouver Canucks", page.locator("#arb-desktop-list").inner_text())
                     self.assertIn("1", page.locator("#table-count").inner_text())
                     self.assertTrue(any(config.get("enabled") is True for config in persisted_configs))
+                    self.assertTrue(any(config.get("interval_minutes") == 0 for config in persisted_configs))
 
                     browser.close()
             finally:

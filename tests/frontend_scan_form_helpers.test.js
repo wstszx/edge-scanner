@@ -113,6 +113,28 @@ test('buildServerAutoScanConfigPayload derives provider-only config from form st
   });
 });
 
+test('buildServerAutoScanConfigPayload preserves zero interval for continuous auto scan', () => {
+  const payload = helpers.buildServerAutoScanConfigPayload({
+    sports: ['icehockey_nhl'],
+    useAllBookmakers: false,
+    checkedBookmakers: ['sx_bet'],
+    allBookmakers: ['sx_bet', 'betdex'],
+    providerOnlyMode: true,
+    customProviderKeys: ['sx_bet', 'betdex'],
+    intervalMinutes: '0',
+    defaults: {
+      allMarkets: false,
+      sharpBook: 'pinnacle',
+      minEdgePercent: 1,
+      bankroll: 1000,
+      kellyFraction: 0.25,
+      commission: 0,
+    },
+  });
+
+  assert.equal(payload.intervalMinutes, 0);
+});
+
 test('buildRunScanPayload preserves mixed books outside provider-only mode', () => {
   const payload = helpers.buildRunScanPayload({
     apiKey: 'abc',

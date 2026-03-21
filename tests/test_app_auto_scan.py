@@ -103,6 +103,29 @@ class ServerAutoScanAppTests(unittest.TestCase):
         self.assertTrue(body.get("success"))
         self.assertEqual(body.get("config"), expected_config)
 
+    def test_server_auto_scan_config_accepts_zero_interval_for_continuous_mode(self) -> None:
+        payload = {
+            "enabled": True,
+            "intervalMinutes": 0,
+            "payload": {
+                "scanMode": "prematch",
+                "sports": ["icehockey_nhl"],
+                "bookmakers": ["sx_bet"],
+                "includeProviders": ["sx_bet"],
+            },
+        }
+
+        with patch.object(app_module, "_persist_server_auto_scan_config") as mocked_persist:
+            response = self.client.post("/server-auto-scan-config", json=payload)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json() or {}
+        self.assertTrue(body.get("success"))
+        self.assertEqual(body.get("config", {}).get("interval_minutes"), 0)
+        mocked_persist.assert_called_once()
+        persisted_config = mocked_persist.call_args.args[0]
+        self.assertEqual(persisted_config.get("interval_minutes"), 0)
+
     def test_server_auto_scan_config_rejects_non_object_payload(self) -> None:
         response = self.client.post(
             "/server-auto-scan-config",
@@ -213,6 +236,66 @@ class ServerAutoScanAppTests(unittest.TestCase):
             app_module._server_auto_scan_loop()
 
         mocked_execute.assert_not_called()
+        self.assertEqual(fake_event.wait_calls, [1.0])
+
+    def test_server_auto_scan_loop_runs_continuously_when_interval_zero(self) -> None:
+        fake_event = _FakeStopEvent()
+        continuous_config = {
+            "enabled": True,
+            "interval_minutes": 0,
+            "payload": {"sports": ["icehockey_nhl"]},
+        }
+        execute_results = [
+            {"success": True, "scan_time": "2026-03-14T08:00:00Z"},
+            {"success": True, "scan_time": "2026-03-14T08:00:01Z"},
+        ]
+
+        def _fake_execute(*args, **kwargs):
+            result = execute_results.pop(0)
+            if not execute_results:
+                fake_event.set()
+            return result
+
+        with (
+            patch.object(app_module, "_SERVER_AUTO_SCAN_STOP_EVENT", fake_event),
+            patch.object(app_module, "_refresh_server_auto_scan_config_from_disk", side_effect=lambda value: value),
+            patch.object(app_module, "_server_auto_scan_config_mtime", return_value=None),
+            patch.object(app_module, "_get_server_auto_scan_config", return_value=(continuous_config, 1)),
+            patch.object(app_module, "_execute_scan_payload", side_effect=_fake_execute) as mocked_execute,
+            patch.object(app_module, "time") as mocked_time,
+            patch.object(app_module, "ENV_SERVER_AUTO_SCAN_RUN_ON_START", True),
+        ):
+            mocked_time.time.side_effect = [1000.0, 1000.0, 1000.0, 1000.0, 1000.0]
+            app_module._server_auto_scan_loop()
+
+        self.assertEqual(mocked_execute.call_count, 2)
+        self.assertEqual(fake_event.wait_calls, [])
+
+    def test_server_auto_scan_loop_backs_off_after_continuous_failure(self) -> None:
+        fake_event = _FakeStopEvent(wait_results=[True])
+        continuous_config = {
+            "enabled": True,
+            "interval_minutes": 0,
+            "payload": {"sports": ["icehockey_nhl"]},
+        }
+
+        with (
+            patch.object(app_module, "_SERVER_AUTO_SCAN_STOP_EVENT", fake_event),
+            patch.object(app_module, "_refresh_server_auto_scan_config_from_disk", side_effect=lambda value: value),
+            patch.object(app_module, "_server_auto_scan_config_mtime", return_value=None),
+            patch.object(app_module, "_get_server_auto_scan_config", return_value=(continuous_config, 1)),
+            patch.object(
+                app_module,
+                "_execute_scan_payload",
+                return_value={"success": False, "error": "Scan already in progress"},
+            ) as mocked_execute,
+            patch.object(app_module, "time") as mocked_time,
+            patch.object(app_module, "ENV_SERVER_AUTO_SCAN_RUN_ON_START", True),
+        ):
+            mocked_time.time.side_effect = [1000.0, 1000.0, 1000.0, 1000.0]
+            app_module._server_auto_scan_loop()
+
+        mocked_execute.assert_called_once()
         self.assertEqual(fake_event.wait_calls, [1.0])
 
     def test_execute_scan_payload_background_rejects_parallel_scan(self) -> None:

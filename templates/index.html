@@ -211,7 +211,7 @@
                       <div class="panel-title">
                         <span class="field-label" data-i18n="auto_scan_label">Auto Scan</span>
                         <p class="helper" data-i18n="auto_scan_helper">Runs a scan on a timer using your current
-                          filters.</p>
+                          filters. Set interval to 0 for continuous scanning.</p>
                       </div>
                     </div>
                     <div class="panel-body">
@@ -222,8 +222,8 @@
                           <span data-i18n="auto_scan_enable">Enable auto scan</span>
                         </label>
                         <div class="auto-scan-interval">
-                          <span class="auto-scan-label" data-i18n="auto_scan_interval_label">Interval (min)</span>
-                          <input type="number" id="auto-scan-interval" min="1" step="1"
+                          <span class="auto-scan-label" data-i18n="auto_scan_interval_label">Interval (min, 0 = continuous)</span>
+                          <input type="number" id="auto-scan-interval" min="0" step="1"
                             value="{{ default_auto_scan_minutes }}" />
                         </div>
                       </div>
@@ -1421,8 +1421,8 @@
         bookmaker_links_helper: 'Customize open URLs. Supports placeholders like {event_id}, {home_team}, {away_team}. Leave blank to skip.',
         auto_scan_label: 'Auto Scan',
         auto_scan_enable: 'Enable auto scan',
-        auto_scan_interval_label: 'Interval (min)',
-        auto_scan_helper: 'Runs a scan on a timer using your current filters.',
+        auto_scan_interval_label: 'Interval (min, 0 = continuous)',
+        auto_scan_helper: 'Runs a scan on a timer using your current filters. Set interval to 0 for continuous scanning.',
         advanced_settings: 'Advanced settings',
         advanced_hint: 'Less frequently adjusted options live here.',
         advanced_summary: 'Sports {sports} | Books {books}',
@@ -1842,8 +1842,8 @@
         bookmaker_links_helper: '自定义自动打开网址。支持 {event_id}、{home_team}、{away_team} 占位符，留空则不打开该平台。',
         auto_scan_label: '自动扫描',
         auto_scan_enable: '启用自动扫描',
-        auto_scan_interval_label: '扫描间隔（分钟）',
-        auto_scan_helper: '按当前筛选条件定时自动扫描。',
+        auto_scan_interval_label: '扫描间隔（分钟，0 = 连续扫描）',
+        auto_scan_helper: '按当前筛选条件定时自动扫描。将间隔设为 0 表示连续扫描。',
         advanced_settings: '高级设置',
         advanced_hint: '不常调整的选项放在这里。',
         advanced_summary: '项目 {sports} | 平台 {books}',
@@ -3429,11 +3429,25 @@
       bookmakerLinks = next;
     }
 
+    const AUTO_SCAN_CONTINUOUS_DELAY_MS = 100;
+
     function readAutoScanMinutes() {
       if (!autoScanIntervalInput) return 10;
       const value = parseFloat(autoScanIntervalInput.value);
-      if (!Number.isFinite(value) || value <= 0) return 10;
+      if (!Number.isFinite(value) || value < 0) return 10;
       return value;
+    }
+
+    function clearAutoScanTimer() {
+      if (autoScanTimer) {
+        clearTimeout(autoScanTimer);
+        autoScanTimer = null;
+      }
+    }
+
+    function nextAutoScanDelayMs() {
+      const minutes = readAutoScanMinutes();
+      return minutes <= 0 ? AUTO_SCAN_CONTINUOUS_DELAY_MS : minutes * 60 * 1000;
     }
 
     function configuredLiveSupportedProviderKeys() {
@@ -3672,7 +3686,7 @@
       }, delayMs);
     }
 
-    function triggerAutoScan() {
+    async function triggerAutoScan() {
       if (isScanning) return;
       if (!isLiveScanMode() && !providerOnlyMode && !hasEnvKey && !apiKeyInput?.value.trim()) return;
       const sports = Array.from(form?.querySelectorAll('input[name="sports"]:checked') || []).map((el) => el.value);
@@ -3731,21 +3745,33 @@
           bankroll: parseFloat(bankrollInput?.value) || appConfig.defaultBankroll || 1000,
           kellyFraction: parseFloat(kellySelect?.value) || appConfig.defaultKellyFraction || 0.25,
         };
-      runScan(requestPayload);
+      await runScan(requestPayload);
+    }
+
+    function scheduleAutoScan() {
+      clearAutoScanTimer();
+      if (!autoScanToggle || !autoScanToggle.checked) return;
+      autoScanTimer = window.setTimeout(async () => {
+        autoScanTimer = null;
+        try {
+          await triggerAutoScan();
+        } finally {
+          if (autoScanToggle && autoScanToggle.checked) {
+            scheduleAutoScan();
+          }
+        }
+      }, nextAutoScanDelayMs());
     }
 
     function configureAutoScan() {
       if (!autoScanToggle) return;
-      if (autoScanTimer) {
-        clearInterval(autoScanTimer);
-        autoScanTimer = null;
-      }
+      clearAutoScanTimer();
       if (!autoScanToggle.checked) return;
       const minutes = readAutoScanMinutes();
       if (autoScanIntervalInput) {
         autoScanIntervalInput.value = String(minutes);
       }
-      autoScanTimer = setInterval(triggerAutoScan, minutes * 60 * 1000);
+      scheduleAutoScan();
     }
 
     function applyBookmakerLinks(values) {

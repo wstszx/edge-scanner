@@ -33,6 +33,11 @@
     return parsed > 0 ? parsed : fallback;
   }
 
+  function nonNegativeNumber(value, fallback) {
+    const parsed = finiteNumber(value, fallback);
+    return parsed >= 0 ? parsed : fallback;
+  }
+
   function clamp(value, minValue, maxValue) {
     return Math.min(maxValue, Math.max(minValue, value));
   }
@@ -115,7 +120,7 @@
     });
     return {
       enabled: true,
-      intervalMinutes: positiveNumber(options && options.intervalMinutes, 10),
+      intervalMinutes: nonNegativeNumber(options && options.intervalMinutes, 10),
       payload: {
         scanMode: normalizeScanMode(options && options.scanMode),
         sports: uniqueStrings(options && options.sports),
