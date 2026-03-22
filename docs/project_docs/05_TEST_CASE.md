@@ -33,10 +33,10 @@
 | IT-APP-007 | `GET /` | 首页访问 | 返回 `200`，并预热后台 Provider 服务 | `tests/test_app_scan_inputs.py` |
 | IT-APP-008 | `GET /provider-runtime/polymarket` | 查询可用运行时 | 返回 `success=true` 和状态字段 | `tests/test_app_scan_inputs.py` |
 | IT-APP-009 | `GET /provider-runtime/unknown` | 查询未知 Provider | 返回 `404` | `tests/test_app_scan_inputs.py` |
-| IT-APP-010 | `GET /history` | 默认读取历史记录 | 返回 `success`、`records`、`count` | 待补充 |
-| IT-APP-011 | `GET /history/stats` | 读取历史统计 | 返回 `enabled`、`dir`、`modes` | 待补充 |
-| IT-APP-012 | `GET /provider-snapshots/{provider}` | 快照存在/不存在 | 正确返回 `200` 或 `404` | 待补充 |
-| IT-APP-013 | `GET /cross-provider-report` | 报告存在/不存在 | 正确返回 `200` 或 `404` | 待补充 |
+| IT-APP-010 | `GET /history` | 默认读取历史记录 | 返回 `success`、`records`、`count` | `tests/test_app_history_endpoints.py` |
+| IT-APP-011 | `GET /history/stats` | 读取历史统计 | 返回 `enabled`、`dir`、`modes` | `tests/test_app_history_endpoints.py` |
+| IT-APP-012 | `GET /provider-snapshots/{provider}` | 快照存在/不存在 | 正确返回 `200` 或 `404` | `tests/test_app_history_endpoints.py` |
+| IT-APP-013 | `GET /cross-provider-report` | 报告存在/不存在 | 正确返回 `200` 或 `404` | `tests/test_app_history_endpoints.py` |
 | IT-PROV-014 | Provider-only 扫描 | 每个自定义 Provider 单独执行一次实时扫描 | 返回结构化 `stats` 或明确错误 | 手工 + 请求日志 |
 | IT-PROV-015 | 官方文档对照复测 | Provider 异常后对照官方文档重新核验端点和字段 | 形成可复核结论 | 手工 + `09_PROVIDER_VERIFICATION.md` |
 
@@ -45,9 +45,9 @@
 | 用例 ID | 场景 | 预期结果 | 现有映射 |
 |---|---|---|---|
 | BD-001 | `regions=[]` | `/scan` 返回 400：至少选择一个地区 | 已在扫描器逻辑中实现，待补接口测试 |
-| BD-002 | 仅 Provider 扫描且无 API Key | 合法执行，不返回 API key required | 已在扫描器逻辑中实现，待补接口测试 |
-| BD-003 | `kellyFraction < 0` 或 `> 1` | 归一化到 `[0, 1]` 区间 | 已在 `app.py` 中实现，待补接口测试 |
-| BD-004 | `limit` 非法或越界 | `/history` 回退到默认值或最大值 | 已在 `app.py` 中实现，待补接口测试 |
+| BD-002 | 仅 Provider 扫描且无 API Key | 合法执行，不返回 API key required | `tests/test_app_scan_inputs.py` |
+| BD-003 | `kellyFraction < 0` 或 `> 1` | 归一化到 `[0, 1]` 区间 | `tests/test_app_scan_inputs.py` |
+| BD-004 | `limit` 非法或越界 | `/history` 回退到默认值或最大值 | `tests/test_app_history_endpoints.py` |
 | BD-005 | 历史文件超过上限 | 自动裁剪到 `HISTORY_MAX_RECORDS` | `tests/test_history.py` |
 | BD-006 | 扫描结果为空 | 仍返回成功结构和 0 数量 summary | `tests/test_scanner_regressions.py` 覆盖部分场景 |
 
@@ -58,10 +58,10 @@
 | EX-001 | 需要 The Odds API 但未传 API Key | 返回 400：`API key is required` | 已在扫描器逻辑中实现，待补接口测试 |
 | EX-002 | 未启用 API 且未启用任何 Provider | 返回 400：`No enabled providers selected` | 已在扫描器逻辑中实现，待补接口测试 |
 | EX-003 | Provider 预热失败 | 记录 warning，不阻塞首页和扫描接口 | 代码已实现，待补回归测试 |
-| EX-004 | 历史保存失败 | 记录 warning，不阻塞扫描返回 | 代码已实现，待补回归测试 |
-| EX-005 | 通知发送失败 | 记录 warning，不阻塞扫描返回 | 代码已实现，待补回归测试 |
-| EX-006 | 快照文件 JSON 损坏 | `/provider-snapshots/{provider}` 返回 500 | 代码已实现，待补接口测试 |
-| EX-007 | 跨 Provider 报告 JSON 损坏 | `/cross-provider-report` 返回 500 | 代码已实现，待补接口测试 |
+| EX-004 | 历史保存失败 | 记录 warning，不阻塞扫描返回 | `tests/test_app_scan_inputs.py` |
+| EX-005 | 通知发送失败 | 记录 warning，不阻塞扫描返回 | `tests/test_app_scan_inputs.py` |
+| EX-006 | 快照文件 JSON 损坏 | `/provider-snapshots/{provider}` 返回 500 | `tests/test_app_history_endpoints.py` |
+| EX-007 | 跨 Provider 报告 JSON 损坏 | `/cross-provider-report` 返回 500 | `tests/test_app_history_endpoints.py` |
 | EX-008 | Provider 上游服务不可用 | 扫描返回 `partial=true` 或 Provider 局部错误，不误报成功数据 | 需要实时复测 |
 
 ## 5. 测试覆盖率要求

@@ -68,6 +68,7 @@ Structured project documentation lives in `docs/project_docs/` and follows the r
 - `07_TEST_GENERATION_PROMPT.md` - test generation prompt
 - `08_PROJECT_SUMMARY.md` - project summary
 - `09_PROVIDER_VERIFICATION.md` - provider verification workflow and latest findings
+- `10_TEST_PROGRESS.md` - persistent test backlog, execution status, and pending verification items
 
 ## Provider Verification
 

@@ -4,6 +4,16 @@ from unittest.mock import MagicMock, patch
 import app as app_module
 
 
+class _ImmediateThread:
+    def __init__(self, target=None, daemon=None):
+        self._target = target
+        self.daemon = daemon
+
+    def start(self) -> None:
+        if self._target is not None:
+            self._target()
+
+
 class ScanInputValidationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = app_module.app.test_client()
@@ -90,6 +100,25 @@ class ScanInputValidationTests(unittest.TestCase):
         kwargs = mocked_run_scan.call_args.kwargs
         self.assertEqual(kwargs.get("scan_mode"), "live")
 
+    def test_scan_accepts_provider_only_mode_without_api_key(self) -> None:
+        with (
+            patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True),
+            patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan,
+        ):
+            response = self.client.post(
+                "/scan",
+                json={
+                    "bookmakers": ["SX Bet"],
+                    "includeProviders": [],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        kwargs = mocked_run_scan.call_args.kwargs
+        self.assertEqual(kwargs.get("api_key"), [])
+        self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])
+        self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
+
     def test_scan_derives_regions_from_selected_platforms_when_omitted(self) -> None:
         with (
             patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", False),
@@ -105,6 +134,18 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         kwargs = mocked_run_scan.call_args.kwargs
         self.assertEqual(kwargs.get("regions"), ["uk", "eu"])
+
+    def test_scan_clamps_kelly_fraction_to_zero_and_one(self) -> None:
+        with patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan:
+            high_response = self.client.post("/scan", json={"kellyFraction": 5})
+            low_response = self.client.post("/scan", json={"kellyFraction": -3})
+
+        self.assertEqual(high_response.status_code, 200)
+        self.assertEqual(low_response.status_code, 200)
+        high_kwargs = mocked_run_scan.call_args_list[0].kwargs
+        low_kwargs = mocked_run_scan.call_args_list[1].kwargs
+        self.assertEqual(high_kwargs.get("kelly_fraction"), 1.0)
+        self.assertEqual(low_kwargs.get("kelly_fraction"), 0.0)
 
     def test_scan_saves_history_from_nested_result_shape(self) -> None:
         result_payload = {
@@ -130,6 +171,57 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(len(history_payload.get("opportunities") or []), 1)
         self.assertEqual(len(history_payload.get("middles") or []), 1)
         self.assertEqual(len(history_payload.get("plus_ev") or []), 1)
+
+    def test_scan_ignores_history_save_failures(self) -> None:
+        result_payload = {
+            "success": True,
+            "scan_time": "2026-02-22T12:00:00Z",
+            "arbitrage": {"opportunities": [{"event": "A vs B"}]},
+            "middles": {"opportunities": []},
+            "plus_ev": {"opportunities": []},
+        }
+        history_manager = MagicMock()
+        history_manager.save_opportunities.side_effect = RuntimeError("disk full")
+        notifier = MagicMock()
+        notifier.is_configured = False
+
+        with (
+            patch.object(app_module, "run_scan", return_value=result_payload),
+            patch.object(app_module, "get_history_manager", return_value=history_manager),
+            patch.object(app_module, "get_notifier", return_value=notifier),
+        ):
+            response = self.client.post("/scan", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json() or {}
+        self.assertTrue(payload.get("success"))
+        history_manager.save_opportunities.assert_called_once()
+
+    def test_scan_ignores_notification_failures(self) -> None:
+        result_payload = {
+            "success": True,
+            "scan_time": "2026-02-22T12:00:00Z",
+            "arbitrage": {"opportunities": [{"event": "A vs B"}]},
+            "middles": {"opportunities": []},
+            "plus_ev": {"opportunities": []},
+        }
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = True
+        notifier.notify_opportunities.side_effect = RuntimeError("notify failed")
+
+        with (
+            patch.object(app_module, "run_scan", return_value=result_payload),
+            patch.object(app_module, "get_history_manager", return_value=history_manager),
+            patch.object(app_module, "get_notifier", return_value=notifier),
+            patch.object(app_module.threading, "Thread", side_effect=lambda target=None, daemon=None: _ImmediateThread(target=target, daemon=daemon)),
+        ):
+            response = self.client.post("/scan", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json() or {}
+        self.assertTrue(payload.get("success"))
+        notifier.notify_opportunities.assert_called_once()
 
     def test_index_prewarms_background_services(self) -> None:
         with patch.object(app_module, "_start_background_provider_services") as mocked_start:
