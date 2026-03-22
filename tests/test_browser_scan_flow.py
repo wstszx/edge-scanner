@@ -1517,14 +1517,51 @@ class BrowserScanFlowTests(unittest.TestCase):
                     page.click("#open-advanced")
                     self.assertTrue(page.locator("#commission-input").is_disabled())
                     self.assertTrue(page.locator("#pause-auto-scan").evaluate("el => !el.disabled"))
+                    running_state_text = (page.locator("#auto-scan-state-text").text_content() or "").strip()
+                    running_button_text = (page.locator("#pause-auto-scan").text_content() or "").strip()
+                    self.assertEqual(
+                        page.locator("#auto-scan-state-chip").evaluate("el => el.dataset.state"),
+                        "continuous",
+                    )
+                    self.assertTrue(running_state_text)
+                    self.assertEqual(
+                        page.locator("#pause-auto-scan").evaluate("el => el.dataset.state"),
+                        "active-scanning",
+                    )
+                    self.assertTrue(running_button_text)
 
                     page.click("#pause-auto-scan")
                     self.assertFalse(page.locator("#auto-scan-toggle").is_checked())
                     self.assertTrue(page.locator("#pause-auto-scan").evaluate("el => el.disabled"))
+                    page.wait_for_function(
+                        "['pause-pending', 'paused'].includes(document.getElementById('auto-scan-state-chip').dataset.state)"
+                    )
+                    pending_state_text = (page.locator("#auto-scan-state-text").text_content() or "").strip()
+                    pending_button_text = (page.locator("#pause-auto-scan").text_content() or "").strip()
+                    paused_transition_state = page.locator("#auto-scan-state-chip").evaluate("el => el.dataset.state")
+                    self.assertIn(paused_transition_state, {"pause-pending", "paused"})
+                    self.assertTrue(pending_state_text)
+                    self.assertNotEqual(pending_state_text, running_state_text)
+                    paused_button_state = page.locator("#pause-auto-scan").evaluate("el => el.dataset.state")
+                    self.assertIn(paused_button_state, {"pause-pending", "paused"})
+                    self.assertTrue(pending_button_text)
+                    self.assertNotEqual(pending_button_text, running_button_text)
 
                     page.wait_for_function("document.getElementById('scan-btn').disabled === false")
                     page.wait_for_function("document.getElementById('commission-input').disabled === false")
                     self.assertFalse(page.locator("#commission-input").is_disabled())
+                    paused_state_text = (page.locator("#auto-scan-state-text").text_content() or "").strip()
+                    paused_button_text = (page.locator("#pause-auto-scan").text_content() or "").strip()
+                    self.assertEqual(
+                        page.locator("#auto-scan-state-chip").evaluate("el => el.dataset.state"),
+                        "paused",
+                    )
+                    self.assertTrue(paused_state_text)
+                    self.assertEqual(
+                        page.locator("#pause-auto-scan").evaluate("el => el.dataset.state"),
+                        "paused",
+                    )
+                    self.assertTrue(paused_button_text)
 
                     self._wait_for(lambda: any(config.get("enabled") is False for config in persisted_configs))
                     calls_after_pause = len(run_scan_calls)

@@ -229,6 +229,10 @@
                         <button type="button" id="pause-auto-scan" class="secondary-btn"
                           data-i18n="auto_scan_pause">Pause auto scan</button>
                       </div>
+                      <div class="auto-scan-feedback" aria-live="polite">
+                        <span id="auto-scan-state-chip" class="summary-chip auto-scan-state-chip" data-state="paused">Paused</span>
+                        <span id="auto-scan-state-text" class="helper auto-scan-state-text">Turn "Enable auto scan" back on to resume.</span>
+                      </div>
                     </div>
                   </section>
                   <section class="advanced-panel advanced-panel-wide" id="arbitrage-config">
@@ -1486,6 +1490,8 @@
     const autoScanToggle = document.getElementById('auto-scan-toggle');
     const autoScanIntervalInput = document.getElementById('auto-scan-interval');
     const pauseAutoScanBtn = document.getElementById('pause-auto-scan');
+    const autoScanStateChip = document.getElementById('auto-scan-state-chip');
+    const autoScanStateText = document.getElementById('auto-scan-state-text');
     const notifySoundToggle = document.getElementById('notify-sound-toggle');
     const notifyPopupToggle = document.getElementById('notify-popup-toggle');
     const defaultCommissionPercent = commissionInput ? parseFloat(commissionInput.value) || 5 : 5;
@@ -1603,6 +1609,19 @@
         auto_scan_interval_label: 'Interval (min, 0 = continuous)',
         auto_scan_helper: 'Runs a scan on a timer using your current filters. Set interval to 0 for continuous scanning.',
         auto_scan_pause: 'Pause auto scan',
+        auto_scan_pause_after_current_button: 'Pause after current scan',
+        auto_scan_pause_pending_button: 'Pausing...',
+        auto_scan_paused_button: 'Paused',
+        auto_scan_state_running: 'Running',
+        auto_scan_state_continuous: 'Continuous',
+        auto_scan_state_paused: 'Paused',
+        auto_scan_state_pause_pending: 'Pausing...',
+        auto_scan_state_running_hint: 'Next auto scan runs {interval} using the current filters.',
+        auto_scan_state_continuous_hint: 'Continuous mode reruns as soon as each scan finishes.',
+        auto_scan_state_paused_hint: 'Turn "Enable auto scan" back on to resume.',
+        auto_scan_state_pause_pending_hint: 'The current scan is finishing now. Auto scan will stay off afterward.',
+        auto_scan_interval_continuous: 'continuously',
+        auto_scan_interval_every_minutes: 'every {count} min',
         advanced_settings: 'Advanced settings',
         advanced_hint: 'Less frequently adjusted options live here.',
         advanced_summary: 'Sports {sports} | Books {books}',
@@ -2584,6 +2603,19 @@
       provider_prematch_only: '\u4ec5\u8d5b\u524d',
       scan_now_prematch: '\u626b\u63cf\u8d5b\u524d\u5957\u5229',
       scan_now_live: '\u626b\u63cf\u8d5b\u4e2d\u5957\u5229',
+      auto_scan_pause_after_current_button: '\u5f53\u524d\u8f6e\u7ed3\u675f\u540e\u6682\u505c',
+      auto_scan_pause_pending_button: '\u6682\u505c\u4e2d...',
+      auto_scan_paused_button: '\u5df2\u6682\u505c',
+      auto_scan_state_running: '\u8fd0\u884c\u4e2d',
+      auto_scan_state_continuous: '\u8fde\u7eed\u626b\u63cf',
+      auto_scan_state_paused: '\u5df2\u6682\u505c',
+      auto_scan_state_pause_pending: '\u6682\u505c\u4e2d...',
+      auto_scan_state_running_hint: '\u4e0b\u6b21\u81ea\u52a8\u626b\u63cf\u4f1a\u6309 {interval} \u548c\u5f53\u524d\u7b5b\u9009\u6761\u4ef6\u6267\u884c\u3002',
+      auto_scan_state_continuous_hint: '\u8fde\u7eed\u6a21\u5f0f\u4f1a\u5728\u6bcf\u8f6e\u626b\u63cf\u7ed3\u675f\u540e\u7acb\u5373\u91cd\u65b0\u6267\u884c\u3002',
+      auto_scan_state_paused_hint: '\u91cd\u65b0\u52fe\u9009\u201c\u542f\u7528\u81ea\u52a8\u626b\u63cf\u201d\u5373\u53ef\u6062\u590d\u3002',
+      auto_scan_state_pause_pending_hint: '\u5f53\u524d\u8fd9\u4e00\u8f6e\u6b63\u5728\u6536\u5c3e\uff0c\u7ed3\u675f\u540e\u81ea\u52a8\u626b\u63cf\u4f1a\u4fdd\u6301\u5173\u95ed\u3002',
+      auto_scan_interval_continuous: '\u8fde\u7eed\u626b\u63cf',
+      auto_scan_interval_every_minutes: '\u6bcf {count} \u5206\u949f',
       countdown_live: '\u5df2\u5f00\u59cb',
       countdown_minutes: '{count}\u5206\u949f',
       countdown_hours: '{count}\u5c0f\u65f6',
@@ -3105,6 +3137,7 @@
       updateScanModeUi();
       updateAdvancedSummary();
       updateScanButtonText();
+      updateAutoScanPauseButton();
       updateArbSortLabel();
       updateMiddlesSortLabel();
       updatePlusEvSortLabel();
@@ -4147,10 +4180,55 @@
       }
     }
 
+    function formatAutoScanIntervalSummary() {
+      const minutes = readAutoScanMinutes();
+      if (minutes <= 0) return t('auto_scan_interval_continuous');
+      const normalized = Number.isInteger(minutes) ? minutes : Number.parseFloat(minutes.toFixed(1));
+      return t('auto_scan_interval_every_minutes', { count: normalized });
+    }
+
     function updateAutoScanPauseButton() {
-      if (!pauseAutoScanBtn) return;
       const autoScanEnabled = Boolean(autoScanToggle && autoScanToggle.checked);
-      pauseAutoScanBtn.disabled = !autoScanEnabled;
+      if (pauseAutoScanBtn) {
+        let buttonKey = 'auto_scan_pause';
+        let buttonState = 'running';
+        if (autoScanEnabled && isScanning) {
+          buttonKey = 'auto_scan_pause_after_current_button';
+          buttonState = 'active-scanning';
+        } else if (!autoScanEnabled && isScanning) {
+          buttonKey = 'auto_scan_pause_pending_button';
+          buttonState = 'pause-pending';
+        } else if (!autoScanEnabled) {
+          buttonKey = 'auto_scan_paused_button';
+          buttonState = 'paused';
+        }
+        pauseAutoScanBtn.disabled = !autoScanEnabled;
+        pauseAutoScanBtn.dataset.state = buttonState;
+        pauseAutoScanBtn.textContent = t(buttonKey);
+      }
+      if (!autoScanStateChip || !autoScanStateText) return;
+      let state = 'paused';
+      let chipKey = 'auto_scan_state_paused';
+      let hintKey = 'auto_scan_state_paused_hint';
+      if (autoScanEnabled) {
+        if (readAutoScanMinutes() <= 0) {
+          state = 'continuous';
+          chipKey = 'auto_scan_state_continuous';
+          hintKey = 'auto_scan_state_continuous_hint';
+        } else {
+          state = 'running';
+          chipKey = 'auto_scan_state_running';
+          hintKey = 'auto_scan_state_running_hint';
+        }
+      }
+      if (!autoScanEnabled && isScanning) {
+        state = 'pause-pending';
+        chipKey = 'auto_scan_state_pause_pending';
+        hintKey = 'auto_scan_state_pause_pending_hint';
+      }
+      autoScanStateChip.dataset.state = state;
+      autoScanStateChip.textContent = t(chipKey);
+      autoScanStateText.textContent = t(hintKey, { interval: formatAutoScanIntervalSummary() });
     }
 
     function nextAutoScanDelayMs() {
@@ -4893,6 +4971,7 @@
       scanBtn.disabled = nextState;
       updateScanButtonText();
       setScanInputLock(nextState);
+      updateAutoScanPauseButton();
       if (nextState) {
         activeScanContext = buildScanContext(payload || {});
         scanStartedAtMs = Date.now();

@@ -571,6 +571,29 @@ button:focus-visible {
   box-shadow: none;
 }
 
+#pause-auto-scan[data-state="pause-pending"]:disabled,
+#pause-auto-scan[data-state="paused"]:disabled {
+  opacity: 1;
+}
+
+#pause-auto-scan[data-state="active-scanning"] {
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-soft));
+  color: var(--accent-strong);
+}
+
+#pause-auto-scan[data-state="pause-pending"]:disabled {
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface-soft));
+  color: color-mix(in srgb, var(--warning) 88%, var(--text));
+}
+
+#pause-auto-scan[data-state="paused"]:disabled {
+  border-color: color-mix(in srgb, var(--text-muted) 30%, var(--border));
+  background: color-mix(in srgb, var(--surface) 72%, var(--surface-soft));
+  color: var(--text-muted);
+}
+
 .secondary-btn,
 .open-books-btn {
   background: var(--surface-soft);
@@ -766,6 +789,45 @@ body.modal-open .content {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.7rem 1rem;
+}
+
+.auto-scan-feedback {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.auto-scan-state-chip {
+  transition: var(--transition);
+}
+
+.auto-scan-state-chip[data-state="running"] {
+  border-color: color-mix(in srgb, var(--success) 34%, var(--border));
+  background: color-mix(in srgb, var(--success) 11%, var(--surface-soft));
+  color: var(--success);
+}
+
+.auto-scan-state-chip[data-state="continuous"] {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+  background: color-mix(in srgb, var(--accent) 11%, var(--surface-soft));
+  color: var(--accent-strong);
+}
+
+.auto-scan-state-chip[data-state="paused"] {
+  border-color: color-mix(in srgb, var(--text-muted) 24%, var(--border));
+  background: color-mix(in srgb, var(--surface) 74%, var(--surface-soft));
+  color: var(--text-muted);
+}
+
+.auto-scan-state-chip[data-state="pause-pending"] {
+  border-color: color-mix(in srgb, var(--warning) 34%, var(--border));
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface-soft));
+  color: color-mix(in srgb, var(--warning) 88%, var(--text));
+}
+
+.auto-scan-state-text {
+  margin: 0;
 }
 
 .auto-scan-interval {
