@@ -119,7 +119,7 @@
       bookmakers,
     });
     return {
-      enabled: true,
+      enabled: options && options.enabled !== undefined ? options.enabled === true : true,
       intervalMinutes: nonNegativeNumber(options && options.intervalMinutes, 10),
       payload: {
         scanMode: normalizeScanMode(options && options.scanMode),

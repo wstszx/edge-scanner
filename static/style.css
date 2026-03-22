@@ -565,6 +565,12 @@ button:focus-visible {
   cursor: not-allowed;
 }
 
+#pause-auto-scan:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 .secondary-btn,
 .open-books-btn {
   background: var(--surface-soft);

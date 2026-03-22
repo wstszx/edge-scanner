@@ -43,7 +43,7 @@
 | TM-006 | 历史、通知、配置、副作用 | 验证历史写入、裁剪、通知失败不阻塞、默认配置推导 | `python -m pytest -q tests/test_history.py tests/test_notifier.py tests/test_config_markets.py` | `2026-03-22` 已补历史保存失败与通知失败不阻塞回归；相关 app 套件联跑 `42 passed` | 已验证 | 后续若修改历史、通知或默认配置链路，需重跑 |
 | TM-007 | Provider 契约与解析回放 | 验证 provider 分段、契约回放、快照 golden、覆盖范围 | `python -m pytest -q tests/test_provider_arb_pipeline.py tests/test_provider_contract_replay.py tests/test_provider_market_segmentation.py tests/test_provider_snapshot_golden.py tests/test_provider_sport_coverage.py tests/test_provider_verification.py` | `2026-03-22` 已执行，`46 passed` | 已验证 | 后续若修改 provider 解析或快照结构，需重跑 |
 | TM-008 | Provider 实时校验 | 线上验证 provider-only 扫描、结构、数量、结果抽检 | `python provider_verification.py --sport <sport_key>` | `2026-03-22` 已执行 `basketball_nba`，`tests.ran=true`、4 个 provider 全部 `ok`，但出现 3 条 middle negative EV 告警 | 部分验证 | 对告警样本做人工抽检，确认是否为低质量 middle 或排序问题 |
-| TM-009 | 前端 helper 与浏览器流程 | 验证模板 helper、scan form JS、浏览器扫描流 | `node --test tests/frontend_market_line_formatting.test.js tests/frontend_scan_form_helpers.test.js`；`python -m pytest -q tests/test_browser_scan_flow.py tests/test_frontend_scan_form_helpers.py` | `2026-03-22` 已执行，Node `11/11` 通过；Python 浏览器流相关 `11 passed` | 已验证 | 后续若修改模板 helper 或前端扫描流程，需重跑 |
+| TM-009 | 前端 helper 与浏览器流程 | 验证模板 helper、scan form JS、浏览器扫描流 | `node --test tests/frontend_market_line_formatting.test.js tests/frontend_scan_form_helpers.test.js`；`python -m pytest -q tests/test_browser_scan_flow.py tests/test_frontend_scan_form_helpers.py` | `2026-03-22` 已补 Pause Auto Scan 浏览器回归和 helper `enabled=false` 回归；相关套件 `20 passed`，Node `12/12` 通过 | 已验证 | 后续若修改模板 helper、自动扫描交互或前端扫描流程，需重跑 |
 | TM-010 | 稳定性、异常与降级 | 验证长时间扫描稳定性、局部失败、partial 返回与非阻塞副作用 | `python -m pytest -q tests/test_scan_stability.py tests/test_scanner_regressions.py` + 手工异常注入 | `2026-03-22` 已执行 `tests/test_scan_stability.py` 与 `tests/test_scanner_regressions.py`，自动化回归通过；手工异常注入尚未补齐 | 部分验证 | 补做 EX-003 ~ EX-008 对应的异常注入或 mock 回归 |
 | TM-011 | 扫描结果人工抽检 | 抽检顶部套利 / 中间盘 / +EV 结果，确认赛事、盘口、赔率来源、流动性合理 | 结合 `provider_verification_latest.*`、扫描快照、请求日志手工核对 | `2026-03-22` 已有实时扫描结果，但仅完成机器摘要，尚未逐条人工抽检告警样本 | 部分验证 | 先核对 3 条 negative EV middle 的赛事、盘口和流动性 |
 
@@ -73,6 +73,8 @@
 | 2026-03-22 | TM-007 | `python -m pytest -q tests/test_provider_arb_pipeline.py tests/test_provider_contract_replay.py tests/test_provider_market_segmentation.py tests/test_provider_snapshot_golden.py tests/test_provider_sport_coverage.py tests/test_provider_verification.py` | 通过 | `46 passed in 0.95s` |
 | 2026-03-22 | TM-009 / TM-010 | `python -m pytest -q tests/test_browser_scan_flow.py tests/test_frontend_scan_form_helpers.py tests/test_scan_stability.py` | 通过 | `11 passed in 9.79s` |
 | 2026-03-22 | TM-008 | `python provider_verification.py --sport basketball_nba --summary-only` | 部分通过 | `success=true`、`partial=false`、4 个 provider 全部 `ok`；出现 3 条 middle negative EV 告警，需人工抽检 |
+| 2026-03-22 | TM-009 | `python -m pytest -q tests/test_browser_scan_flow.py tests/test_frontend_scan_form_helpers.py tests/test_app_auto_scan.py` | 通过 | `20 passed in 11.47s`；覆盖 Pause Auto Scan 浏览器回归 |
+| 2026-03-22 | TM-009 | `node --test tests/frontend_market_line_formatting.test.js tests/frontend_scan_form_helpers.test.js` | 通过 | `12/12` 通过；补充 server auto scan `enabled=false` helper 回归 |
 
 ## 6. 当前剩余待执行顺序
 

@@ -409,6 +409,87 @@ class BrowserScanFlowTests(unittest.TestCase):
         self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])
         self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
 
+    def test_browser_pause_auto_scan_stops_future_runs_and_restores_editing(self) -> None:
+        persisted_configs: list[dict] = []
+        run_scan_calls: list[dict] = []
+        first_scan_started = threading.Event()
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+
+        def _fake_run_scan(**kwargs):
+            run_scan_calls.append(copy.deepcopy(kwargs))
+            first_scan_started.set()
+            time.sleep(0.2)
+            return _sample_scan_result()
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True))
+            stack.enter_context(
+                patch.object(
+                    app_module,
+                    "_persist_server_auto_scan_config",
+                    side_effect=lambda config: persisted_configs.append(copy.deepcopy(config)),
+                )
+            )
+            stack.enter_context(patch.object(app_module, "_start_background_provider_services"))
+            stack.enter_context(patch.object(app_module, "get_history_manager", return_value=history_manager))
+            stack.enter_context(patch.object(app_module, "get_notifier", return_value=notifier))
+            stack.enter_context(patch.object(app_module, "run_scan", side_effect=_fake_run_scan))
+
+            server = _LiveServer(app_module.app)
+            server.start()
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(headless=True)
+                    context = browser.new_context()
+                    context.add_init_script(
+                        """
+                        (() => {
+                          const nativeSetTimeout = window.setTimeout.bind(window);
+                          const nativeSetInterval = window.setInterval.bind(window);
+                          window.setTimeout = (callback, ms, ...args) => nativeSetTimeout(callback, Math.min(ms, 50), ...args);
+                          window.setInterval = (callback, ms, ...args) => nativeSetInterval(callback, Math.min(ms, 50), ...args);
+                        })();
+                        """
+                    )
+                    page = context.new_page()
+                    page.route("https://fonts.googleapis.com/*", lambda route: route.abort())
+                    page.route("https://fonts.gstatic.com/*", lambda route: route.abort())
+                    page.goto(server.base_url, wait_until="domcontentloaded")
+
+                    self._configure_selected_provider(page)
+                    page.click("#open-advanced")
+                    page.check("#auto-scan-toggle")
+                    page.fill("#auto-scan-interval", "0")
+                    page.dispatch_event("#auto-scan-interval", "change")
+                    page.click("#close-advanced")
+
+                    self._wait_for(lambda: first_scan_started.is_set())
+                    page.wait_for_function("document.getElementById('scan-btn').disabled === true")
+
+                    page.click("#open-advanced")
+                    self.assertTrue(page.locator("#commission-input").is_disabled())
+                    self.assertTrue(page.locator("#pause-auto-scan").evaluate("el => !el.disabled"))
+
+                    page.click("#pause-auto-scan")
+                    self.assertFalse(page.locator("#auto-scan-toggle").is_checked())
+                    self.assertTrue(page.locator("#pause-auto-scan").evaluate("el => el.disabled"))
+
+                    page.wait_for_function("document.getElementById('scan-btn').disabled === false")
+                    page.wait_for_function("document.getElementById('commission-input').disabled === false")
+                    self.assertFalse(page.locator("#commission-input").is_disabled())
+
+                    self._wait_for(lambda: any(config.get("enabled") is False for config in persisted_configs))
+                    calls_after_pause = len(run_scan_calls)
+                    page.wait_for_timeout(250)
+                    self.assertEqual(len(run_scan_calls), calls_after_pause)
+                    self.assertEqual(calls_after_pause, 1)
+
+                    browser.close()
+            finally:
+                server.stop()
+
     def test_browser_calculator_toggle_controls_latest_odds_sync(self) -> None:
         run_scan_calls: list[dict] = []
         history_manager = MagicMock()

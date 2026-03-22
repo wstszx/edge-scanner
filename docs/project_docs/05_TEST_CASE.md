@@ -37,6 +37,7 @@
 | IT-APP-011 | `GET /history/stats` | 读取历史统计 | 返回 `enabled`、`dir`、`modes` | `tests/test_app_history_endpoints.py` |
 | IT-APP-012 | `GET /provider-snapshots/{provider}` | 快照存在/不存在 | 正确返回 `200` 或 `404` | `tests/test_app_history_endpoints.py` |
 | IT-APP-013 | `GET /cross-provider-report` | 报告存在/不存在 | 正确返回 `200` 或 `404` | `tests/test_app_history_endpoints.py` |
+| IT-APP-016 | 前端高级设置 / 自动扫描 | 扫描中点击 Pause Auto Scan | 停止后续自动扫描；当前扫描结束后恢复设置可编辑 | `tests/test_browser_scan_flow.py` |
 | IT-PROV-014 | Provider-only 扫描 | 每个自定义 Provider 单独执行一次实时扫描 | 返回结构化 `stats` 或明确错误 | 手工 + 请求日志 |
 | IT-PROV-015 | 官方文档对照复测 | Provider 异常后对照官方文档重新核验端点和字段 | 形成可复核结论 | 手工 + `09_PROVIDER_VERIFICATION.md` |
 

@@ -68,6 +68,7 @@ test('selectedBookmakers uses curated live defaults when all bookmakers is enabl
 
 test('buildServerAutoScanConfigPayload derives provider-only config from form state', () => {
   const payload = helpers.buildServerAutoScanConfigPayload({
+    enabled: true,
     sports: ['icehockey_nhl'],
     allSports: false,
     allMarkets: true,
@@ -115,6 +116,7 @@ test('buildServerAutoScanConfigPayload derives provider-only config from form st
 
 test('buildServerAutoScanConfigPayload preserves zero interval for continuous auto scan', () => {
   const payload = helpers.buildServerAutoScanConfigPayload({
+    enabled: true,
     sports: ['icehockey_nhl'],
     useAllBookmakers: false,
     checkedBookmakers: ['sx_bet'],
@@ -133,6 +135,29 @@ test('buildServerAutoScanConfigPayload preserves zero interval for continuous au
   });
 
   assert.equal(payload.intervalMinutes, 0);
+});
+
+test('buildServerAutoScanConfigPayload preserves disabled auto scan state', () => {
+  const payload = helpers.buildServerAutoScanConfigPayload({
+    enabled: false,
+    sports: ['icehockey_nhl'],
+    useAllBookmakers: false,
+    checkedBookmakers: ['sx_bet'],
+    allBookmakers: ['sx_bet', 'betdex'],
+    providerOnlyMode: true,
+    customProviderKeys: ['sx_bet', 'betdex'],
+    intervalMinutes: '5',
+    defaults: {
+      allMarkets: false,
+      sharpBook: 'pinnacle',
+      minEdgePercent: 1,
+      bankroll: 1000,
+      kellyFraction: 0.25,
+      commission: 0,
+    },
+  });
+
+  assert.equal(payload.enabled, false);
 });
 
 test('buildRunScanPayload preserves mixed books outside provider-only mode', () => {
