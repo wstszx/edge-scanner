@@ -1961,6 +1961,9 @@ def _normalize_condition_market(
                     ],
                 }
 
+    if ('team total' in market_name or 'player total' in market_name) and over_selection and under_selection and len(parsed_outcomes) == 2:
+        return None
+
     if "totals" in requested_markets and over_selection and under_selection and len(parsed_outcomes) == 2:
         if "total" in market_name:
             over_point = over_selection.get("point")

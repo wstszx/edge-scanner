@@ -162,6 +162,39 @@ class ProviderVerificationTests(unittest.TestCase):
             self.assertTrue(Path(written["latest_json"]).is_file())
             self.assertTrue(Path(written["latest_markdown"]).is_file())
 
+    def test_report_to_markdown_includes_scan_diagnostics(self) -> None:
+        report = {
+            'generated_at': '2026-03-22T00:00:00Z',
+            'sport_key': 'basketball_nba',
+            'regions': ['us', 'eu'],
+            'stake_amount': 100.0,
+            'providers': [],
+            'tests': {'ran': True, 'ok': True, 'returncode': 0},
+            'scan': {
+                'success': True,
+                'partial': False,
+                'arbitrage_count': 0,
+                'middle_count': 0,
+                'plus_ev_count': 0,
+                'scan_diagnostics': {
+                    'reason_code': 'events_filtered_by_time',
+                    'raw_provider_events': 64,
+                    'merged_events_scanned': 0,
+                },
+                'top_arbitrage': [],
+                'top_middles': [],
+                'top_plus_ev': [],
+                'sport_errors': [],
+            },
+        }
+
+        markdown = pv.report_to_markdown(report)
+
+        self.assertIn('## Scan Diagnostics', markdown)
+        self.assertIn('- reason_code: events_filtered_by_time', markdown)
+        self.assertIn('- raw_provider_events: 64', markdown)
+        self.assertIn('- merged_events_scanned: 0', markdown)
+
     def test_build_console_summary_surfaces_provider_and_result_alerts(self) -> None:
         report = {
             "sport_key": "basketball_nba",
@@ -243,6 +276,31 @@ class ProviderVerificationTests(unittest.TestCase):
         }
 
         self.assertFalse(pv.report_has_alerts(report))
+
+    def test_summarize_scan_preserves_scan_diagnostics(self) -> None:
+        result = {
+            'success': True,
+            'partial': False,
+            'scan_diagnostics': {
+                'reason_code': 'no_cross_provider_overlap',
+                'raw_provider_events': 64,
+                'merged_events_scanned': 0,
+            },
+            'arbitrage': {'opportunities_count': 0, 'opportunities': []},
+            'middles': {'opportunities_count': 0, 'opportunities': []},
+            'plus_ev': {'opportunities_count': 0, 'opportunities': []},
+        }
+
+        summary = pv.summarize_scan(result, top_n=1)
+
+        self.assertEqual(
+            summary['scan_diagnostics'],
+            {
+                'reason_code': 'no_cross_provider_overlap',
+                'raw_provider_events': 64,
+                'merged_events_scanned': 0,
+            },
+        )
 
     def test_run_live_scan_passes_live_scan_mode(self) -> None:
         with patch.object(pv, "run_scan", return_value={"success": True}) as mocked_run_scan:

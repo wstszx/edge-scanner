@@ -64,6 +64,33 @@ class BookmakerXyzCacheTests(unittest.TestCase):
         self.assertEqual(totals_market["outcomes"][0]["name"], "Over")
         self.assertEqual(totals_market["outcomes"][0]["point"], 231.0)
 
+    def test_normalize_condition_market_rejects_team_totals_from_base_totals(self) -> None:
+        dictionaries = {
+            'marketNames': {
+                '4-76-76': 'Team Total Points',
+            },
+            'outcomes': {
+                '9001': {'selectionId': 9, 'marketId': 4, 'gamePeriodId': 76, 'gameTypeId': 76, 'pointsId': 120, 'teamPlayerId': None},
+                '9002': {'selectionId': 10, 'marketId': 4, 'gamePeriodId': 76, 'gameTypeId': 76, 'pointsId': 120, 'teamPlayerId': None},
+            },
+            'selections': {
+                '9': 'Over',
+                '10': 'Under',
+            },
+            'teamPlayers': {},
+            'points': {'120': '123.5'},
+        }
+
+        totals_market = bookmaker_xyz._normalize_condition_market(
+            {'outcomes': [{'outcomeId': '9001', 'odds': '1.91'}, {'outcomeId': '9002', 'odds': '1.91'}]},
+            home_team='Home',
+            away_team='Away',
+            requested_markets={'totals'},
+            dictionaries=dictionaries,
+        )
+
+        self.assertIsNone(totals_market)
+
     def test_parse_official_dictionaries_materializes_outcome_proxy(self) -> None:
         module_source = """
 const dictionaries = {

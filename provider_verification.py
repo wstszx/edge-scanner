@@ -306,6 +306,7 @@ def summarize_scan(result: dict[str, Any], top_n: int) -> dict[str, Any]:
     middles = result.get("middles") if isinstance(result.get("middles"), dict) else {}
     plus_ev = result.get("plus_ev") if isinstance(result.get("plus_ev"), dict) else {}
     return {
+        'scan_diagnostics': result.get('scan_diagnostics') or {},
         "success": bool(result.get("success")),
         "partial": bool(result.get("partial")),
         "sport_errors": result.get("sport_errors") or [],
