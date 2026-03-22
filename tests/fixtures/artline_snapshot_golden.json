@@ -1,0 +1,218 @@
+{
+  "source_saved_at": "2026-03-22T00:00:00Z",
+  "pair": {
+    "market": "totals",
+    "events": {
+      "artline": {
+        "id": "370080177701797",
+        "sport_key": "icehockey_nhl",
+        "home_team": "Anaheim Ducks",
+        "away_team": "Buffalo Sabres",
+        "commence_time": "2026-03-23T00:00:00Z",
+        "live_state": {
+          "is_live": false,
+          "status": "scheduled",
+          "period": 0
+        },
+        "bookmakers": [
+          {
+            "key": "artline",
+            "title": "Artline",
+            "event_id": "370080177701797",
+            "event_url": "https://artline.bet/bookmaker/match/prematch/hockey/370080177701797",
+            "live_state": {
+              "is_live": false,
+              "status": "scheduled",
+              "period": 0
+            },
+            "markets": [
+              {
+                "key": "h2h_3_way",
+                "outcomes": [
+                  {
+                    "name": "Anaheim Ducks",
+                    "price": 2.36
+                  },
+                  {
+                    "name": "Draw",
+                    "price": 4.2
+                  },
+                  {
+                    "name": "Buffalo Sabres",
+                    "price": 2.5
+                  }
+                ]
+              },
+              {
+                "key": "totals",
+                "outcomes": [
+                  {
+                    "name": "Over",
+                    "price": 2.1,
+                    "point": 6.5
+                  },
+                  {
+                    "name": "Under",
+                    "price": 1.78,
+                    "point": 6.5
+                  }
+                ]
+              },
+              {
+                "key": "spreads",
+                "outcomes": [
+                  {
+                    "name": "Anaheim Ducks",
+                    "price": 2.36,
+                    "point": -0.5
+                  },
+                  {
+                    "name": "Buffalo Sabres",
+                    "price": 1.59,
+                    "point": 0.5
+                  }
+                ]
+              },
+              {
+                "key": "spreads",
+                "outcomes": [
+                  {
+                    "name": "Anaheim Ducks",
+                    "price": 2.78,
+                    "point": -1.0
+                  },
+                  {
+                    "name": "Buffalo Sabres",
+                    "price": 1.44,
+                    "point": 1.0
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "sx_bet": {
+        "id": "L18099939",
+        "sport_key": "icehockey_nhl",
+        "home_team": "Anaheim Ducks",
+        "away_team": "Buffalo Sabres",
+        "commence_time": "2026-03-23T00:00:00Z",
+        "live_state": {
+          "is_live": false,
+          "status": "scheduled",
+          "provider_status": "active",
+          "market_status": "active",
+          "live_enabled": true
+        },
+        "bookmakers": [
+          {
+            "key": "sx_bet",
+            "title": "SX Bet",
+            "event_id": "L18099939",
+            "event_url": "https://sx.bet/hockey/nhl/game-lines/L18099939",
+            "live_state": {
+              "is_live": false,
+              "status": "scheduled",
+              "provider_status": "active",
+              "market_status": "active",
+              "live_enabled": true
+            },
+            "markets": [
+              {
+                "key": "h2h",
+                "outcomes": [
+                  {
+                    "name": "Anaheim Ducks",
+                    "price": 1.95122,
+                    "stake": 918.248249,
+                    "raw_percentage_odds": "48750000000000000000",
+                    "last_updated": 1774156172446,
+                    "observed_at": 1774157522.7323642,
+                    "quote_source": "rest_snapshot"
+                  },
+                  {
+                    "name": "Buffalo Sabres",
+                    "price": 1.99005,
+                    "stake": 1068.288812,
+                    "raw_percentage_odds": "49750000000000000000",
+                    "last_updated": 1774155683171,
+                    "observed_at": 1774157522.7323642,
+                    "quote_source": "rest_snapshot"
+                  }
+                ]
+              },
+              {
+                "key": "totals",
+                "outcomes": [
+                  {
+                    "name": "Over",
+                    "price": 1.860465,
+                    "point": 6.5,
+                    "stake": 1056.285567,
+                    "raw_percentage_odds": "46250000000000000000",
+                    "last_updated": 1774156022265,
+                    "observed_at": 1774157522.7323642,
+                    "quote_source": "rest_snapshot"
+                  },
+                  {
+                    "name": "Under",
+                    "price": 2.056555,
+                    "point": 6.5,
+                    "stake": 904.244463,
+                    "raw_percentage_odds": "51375000000000000000",
+                    "last_updated": 1774156160820,
+                    "observed_at": 1774157522.7323642,
+                    "quote_source": "rest_snapshot"
+                  }
+                ]
+              },
+              {
+                "key": "spreads",
+                "outcomes": [
+                  {
+                    "name": "Anaheim Ducks",
+                    "price": 2.909091,
+                    "point": -1.5,
+                    "stake": 442.119527,
+                    "raw_percentage_odds": "65625000000000000000",
+                    "last_updated": 1774157384262,
+                    "observed_at": 1774157522.7323642,
+                    "quote_source": "rest_snapshot"
+                  },
+                  {
+                    "name": "Buffalo Sabres",
+                    "price": 1.369863,
+                    "point": 1.5,
+                    "stake": 2801.472869,
+                    "raw_percentage_odds": "27000000000000000000",
+                    "last_updated": 1774156755976,
+                    "observed_at": 1774157522.7323642,
+                    "quote_source": "rest_snapshot"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "expected": {
+      "roi_percent": 3.9,
+      "best_odds": [
+        {
+          "outcome": "Over",
+          "bookmaker_key": "artline",
+          "price": 2.1,
+          "point": 6.5
+        },
+        {
+          "outcome": "Under",
+          "bookmaker_key": "sx_bet",
+          "price": 2.056555,
+          "point": 6.5
+        }
+      ]
+    }
+  }
+}

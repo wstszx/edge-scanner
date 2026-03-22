@@ -13,6 +13,7 @@ from config import DEFAULT_STAKE_AMOUNT
 from scanner import run_scan
 
 DEFAULT_PROVIDERS = [
+    "artline",
     "betdex",
     "bookmaker_xyz",
     "sx_bet",
@@ -20,6 +21,9 @@ DEFAULT_PROVIDERS = [
 ]
 
 DEFAULT_PROVIDER_TESTS = [
+    "tests/test_provider_artline.py",
+    "tests/test_provider_artline_replay.py",
+    "tests/test_provider_artline_snapshot.py",
     "tests/test_provider_market_segmentation.py",
     "tests/test_provider_sport_coverage.py",
     "tests/test_polymarket_realtime.py",
@@ -28,6 +32,10 @@ DEFAULT_PROVIDER_TESTS = [
 ]
 
 OFFICIAL_DOCS: dict[str, list[str]] = {
+    "artline": [
+        "https://artline.bet/",
+        "https://api.artline.bet/api/settings",
+    ],
     "betdex": [
         "https://docs.betdex.com/",
         "https://docs.api.monacoprotocol.xyz/",
@@ -46,6 +54,7 @@ OFFICIAL_DOCS: dict[str, list[str]] = {
 }
 
 PROVIDER_TITLES = {
+    "artline": "Artline",
     "betdex": "BetDEX",
     "bookmaker_xyz": "bookmaker.xyz",
     "sx_bet": "SX Bet",
@@ -144,6 +153,17 @@ def _provider_notes(provider_key: str, summary: dict[str, Any], stake_amount: fl
     empty_feed_note = _provider_empty_feed_note(provider_key, summary)
     if empty_feed_note:
         notes.append(empty_feed_note)
+    sports = summary.get("sports")
+    if isinstance(sports, list):
+        for sport_row in sports:
+            if not isinstance(sport_row, dict):
+                continue
+            stats = sport_row.get("stats")
+            if not isinstance(stats, dict):
+                continue
+            if bool(stats.get("live_feed_empty")):
+                notes.append("Live endpoint was reachable but returned zero events at check time.")
+                break
     if summary.get("events_merged", 0) == 0 and not _provider_error_list(summary):
         notes.append("Returned zero merged events in this scan.")
     if stake_amount <= 0:

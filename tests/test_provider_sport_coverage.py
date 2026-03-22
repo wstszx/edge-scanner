@@ -2,7 +2,7 @@
 
 import unittest
 
-from providers import betdex, bookmaker_xyz, polymarket, sx_bet
+from providers import artline, betdex, bookmaker_xyz, polymarket, sx_bet
 
 
 class ProviderSportCoverageTests(unittest.TestCase):
@@ -11,6 +11,12 @@ class ProviderSportCoverageTests(unittest.TestCase):
         self.assertIn("americanfootball_ncaaf", bookmaker_xyz.SPORT_SLUG_HINTS)
         self.assertIn("americanfootball_ncaaf", betdex.SPORT_SUBCATEGORY_DEFAULTS)
         self.assertIn("americanfootball_ncaaf", polymarket.SPORT_ALIASES)
+
+    def test_artline_has_expected_verified_league_mappings(self) -> None:
+        self.assertIn("basketball_nba", artline.ARTLINE_SPORT_FILTERS)
+        self.assertIn("icehockey_nhl", artline.ARTLINE_SPORT_FILTERS)
+        self.assertIn("soccer_italy_serie_a", artline.ARTLINE_SPORT_FILTERS)
+        self.assertIn("soccer_usa_mls", artline.ARTLINE_SPORT_FILTERS)
 
     def test_bookmaker_xyz_soccer_epl_requires_english_context(self) -> None:
         singapore_game = {

@@ -59,6 +59,38 @@ class ProviderVerificationTests(unittest.TestCase):
             any("Official Azuro feed currently has no leagues matching this sport key." in note for note in statuses[0].notes)
         )
 
+    def test_summarize_provider_statuses_marks_live_feed_empty_as_note(self) -> None:
+        result = {
+            "custom_providers": {
+                "artline": {
+                    "enabled": True,
+                    "events_merged": 0,
+                    "sports": [
+                        {
+                            "sport_key": "icehockey_nhl",
+                            "events_returned": 0,
+                            "stats": {
+                                "games_type": "live",
+                                "live_feed_empty": True,
+                                "payload_games_count": 0,
+                            },
+                        }
+                    ],
+                }
+            }
+        }
+
+        statuses = pv.summarize_provider_statuses(
+            result,
+            provider_keys=["artline"],
+            stake_amount=100.0,
+        )
+
+        self.assertEqual(statuses[0].status, "warning")
+        self.assertTrue(
+            any("Live endpoint was reachable but returned zero events at check time." in note for note in statuses[0].notes)
+        )
+
     def test_summarize_scan_flags_liquidity_limited_arbitrage(self) -> None:
         result = {
             "success": True,

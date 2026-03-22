@@ -4,7 +4,7 @@ import json
 import unittest
 from pathlib import Path
 
-from providers import betdex, bookmaker_xyz, polymarket, sx_bet
+from providers import artline, betdex, bookmaker_xyz, polymarket, sx_bet
 
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "provider_contract_replay.json"
@@ -72,6 +72,18 @@ class ProviderEventUrlTests(unittest.TestCase):
         self.assertEqual(
             sx_bet._event_url("L18016513"),
             "https://sx.bet/event/L18016513",
+        )
+
+    def test_artline_event_url_uses_public_match_route(self) -> None:
+        self.assertEqual(
+            artline._event_url(
+                {
+                    "event_id": "370080177701797",
+                    "sport_key": "icehockey_nhl",
+                    "live_state": {"is_live": False},
+                }
+            ),
+            "https://artline.bet/bookmaker/match/prematch/hockey/370080177701797",
         )
 
     def test_bookmaker_xyz_event_url_uses_chain_sport_country_league_and_game_id(self) -> None:

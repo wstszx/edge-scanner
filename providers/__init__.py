@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Awaitable, Callable, Dict, List, Optional, Sequence
 
+from .artline import PROVIDER_TITLE as ARTLINE_TITLE
+from .artline import fetch_events as fetch_artline_events
+from .artline import fetch_events_async as fetch_artline_events_async
 from .betdex import PROVIDER_TITLE as BETDEX_TITLE
 from .betdex import fetch_events as fetch_betdex_events
 from .betdex import fetch_events_async as fetch_betdex_events_async
@@ -18,6 +21,7 @@ from .sx_bet import fetch_events_async as fetch_sx_bet_events_async
 ProviderFetcher = Callable[..., List[dict] | Awaitable[List[dict]]]
 
 PROVIDER_FETCHERS: Dict[str, ProviderFetcher] = {
+    "artline": fetch_artline_events_async,
     "betdex": fetch_betdex_events_async,
     "bookmaker_xyz": fetch_bookmaker_xyz_events_async,
     "sx_bet": fetch_sx_bet_events_async,
@@ -25,6 +29,7 @@ PROVIDER_FETCHERS: Dict[str, ProviderFetcher] = {
 }
 
 PROVIDER_TITLES: Dict[str, str] = {
+    "artline": ARTLINE_TITLE,
     "betdex": BETDEX_TITLE,
     "bookmaker_xyz": BOOKMAKER_XYZ_TITLE,
     "sx_bet": SX_BET_TITLE,
@@ -32,6 +37,9 @@ PROVIDER_TITLES: Dict[str, str] = {
 }
 
 PROVIDER_ALIASES: Dict[str, str] = {
+    "artline": "artline",
+    "art line": "artline",
+    "artline.bet": "artline",
     "betdex": "betdex",
     "bet dex": "betdex",
     "bet-dex": "betdex",

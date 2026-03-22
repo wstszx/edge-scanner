@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import scanner
-from providers import betdex, bookmaker_xyz, polymarket, sx_bet
+from providers import artline, betdex, bookmaker_xyz, polymarket, sx_bet
 
 
 SPORT_KEY = "basketball_nba"
@@ -142,6 +142,8 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
         provider_key: str,
         counterparty_key: str,
         counterparty_fetcher,
+        *,
+        all_markets: bool = False,
     ) -> dict:
         with (
             patch.dict(
@@ -162,6 +164,7 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
                 bookmakers=[provider_key, counterparty_key],
                 include_providers=[provider_key, counterparty_key],
                 stake_amount=100.0,
+                all_markets=all_markets,
             )
 
     def _assert_arbitrage_result(
@@ -304,6 +307,223 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
                 self.assertEqual(stats.get("events_with_market_count"), 1),
             ),
         )
+
+    def test_artline_pipeline_produces_standardized_h2h_and_arbitrage(self) -> None:
+        payload = {
+            "data": {
+                "basketball": {
+                    "games": [
+                        {
+                            "id": "artline-event-1",
+                            "team_1": {"value": HOME_TEAM},
+                            "team_2": {"value": AWAY_TEAM},
+                            "events": [
+                                {"event_name_value": "0_ml_1", "value": 2.25, "status": 1},
+                                {"event_name_value": "0_ml_2", "value": 1.70, "status": 1},
+                            ],
+                            "period": 0,
+                            "is_live": False,
+                            "start_at_timestamp": int(
+                                dt.datetime(2026, 3, 20, 0, 0, tzinfo=dt.timezone.utc).timestamp()
+                            ),
+                        }
+                    ]
+                }
+            }
+        }
+        counterparty_fetcher = _make_counterparty_fetcher("sx_bet", sx_bet.PROVIDER_TITLE)
+
+        async def _fake_artline_request_json_async(
+            client,
+            method,
+            path,
+            *,
+            params=None,
+            json_payload=None,
+            retries=None,
+            backoff_seconds=None,
+        ):
+            self.assertEqual(method, "POST")
+            self.assertEqual(path, "lines")
+            return payload, 0
+
+        with (
+            patch.object(artline, "get_shared_client", new=_fake_shared_client),
+            patch.object(artline, "_request_json_async", side_effect=_fake_artline_request_json_async),
+        ):
+            events = asyncio.run(
+                artline.fetch_events_async(
+                    SPORT_KEY,
+                    ["h2h", "spreads", "totals"],
+                    ["us"],
+                    bookmakers=[artline.PROVIDER_KEY],
+                )
+            )
+
+            outcomes = _standardized_outcomes(events, artline.PROVIDER_KEY)
+            self.assertEqual(outcomes[HOME_TEAM]["price"], 2.25)
+            self.assertEqual(outcomes[AWAY_TEAM]["price"], 1.7)
+            direct_stats = dict(artline.fetch_events_async.last_stats)
+            self.assertEqual(direct_stats.get("payload_games_count"), 1)
+            self.assertEqual(direct_stats.get("events_with_market_count"), 1)
+
+            result = self._run_provider_only_scan(
+                provider_key=artline.PROVIDER_KEY,
+                counterparty_key="sx_bet",
+                counterparty_fetcher=counterparty_fetcher,
+            )
+
+        self._assert_arbitrage_result(
+            result,
+            provider_key=artline.PROVIDER_KEY,
+            provider_title=artline.PROVIDER_TITLE,
+            counterparty_title=sx_bet.PROVIDER_TITLE,
+            stats_assertion=lambda stats: (
+                self.assertEqual(stats.get("payload_games_count"), 1),
+                self.assertEqual(stats.get("events_with_market_count"), 1),
+            ),
+        )
+
+    def test_artline_pipeline_supports_team_totals_when_all_markets_enabled(self) -> None:
+        lines_payload = {
+            "data": {
+                "basketball": {
+                    "games": [
+                        {
+                            "id": "artline-event-team-totals",
+                            "team_1": {"value": HOME_TEAM},
+                            "team_2": {"value": AWAY_TEAM},
+                            "events": [
+                                {"event_name_value": "0_ml_1", "value": 2.0, "status": 1},
+                                {"event_name_value": "0_ml_2", "value": 1.8, "status": 1},
+                            ],
+                            "period": 0,
+                            "is_live": False,
+                            "start_at_timestamp": int(
+                                dt.datetime(2026, 3, 20, 0, 0, tzinfo=dt.timezone.utc).timestamp()
+                            ),
+                        }
+                    ]
+                }
+            }
+        }
+        detail_payload = {
+            "data": {
+                "events": [
+                    {"event_name_value": "0_ml_1", "value": 2.0, "status": 1},
+                    {"event_name_value": "0_ml_2", "value": 1.8, "status": 1},
+                    {"event_name_value": "0_to-sec_1_110.5", "value": 2.12, "status": 1},
+                    {"event_name_value": "0_tu-sec_1_110.5", "value": 1.75, "status": 1},
+                ]
+            }
+        }
+
+        async def _fake_artline_request_json_async(
+            client,
+            method,
+            path,
+            *,
+            params=None,
+            json_payload=None,
+            retries=None,
+            backoff_seconds=None,
+        ):
+            if method == "POST" and path == "lines":
+                return lines_payload, 0
+            if method == "GET" and path == "lines/game/prematch/basketball/artline-event-team-totals":
+                return detail_payload, 0
+            raise AssertionError((method, path))
+
+        async def _counterparty_fetcher(
+            sport_key: str,
+            markets: list[str],
+            regions: list[str],
+            bookmakers=None,
+            context=None,
+        ):
+            lowered = {
+                str(book).strip().lower()
+                for book in (bookmakers or [])
+                if str(book).strip()
+            }
+            if lowered and "sx_bet" not in lowered and "sx bet" not in lowered:
+                return []
+            _counterparty_fetcher.last_stats = {
+                "sport_key": sport_key,
+                "markets": list(markets),
+                "context": dict(context or {}),
+            }
+            return [
+                {
+                    "id": "sx-team-total-event",
+                    "sport_key": sport_key,
+                    "home_team": HOME_TEAM,
+                    "away_team": AWAY_TEAM,
+                    "commence_time": COMMENCE_TIME,
+                    "bookmakers": [
+                        {
+                            "key": "sx_bet",
+                            "title": "SX Bet",
+                            "event_id": "sx-team-total-event",
+                            "event_url": "https://example.com/sx-bet/team-totals",
+                            "markets": [
+                                {
+                                    "key": "team_totals",
+                                    "outcomes": [
+                                        {"name": "Over", "price": 1.7, "point": 110.5, "description": HOME_TEAM},
+                                        {"name": "Under", "price": 2.15, "point": 110.5, "description": HOME_TEAM},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+
+        _counterparty_fetcher.last_stats = {}
+
+        with (
+            patch.object(artline, "get_shared_client", new=_fake_shared_client),
+            patch.object(artline, "_request_json_async", side_effect=_fake_artline_request_json_async),
+        ):
+            events = asyncio.run(
+                artline.fetch_events_async(
+                    SPORT_KEY,
+                    ["h2h", "team_totals"],
+                    ["us"],
+                    bookmakers=[artline.PROVIDER_KEY],
+                )
+            )
+            bookmakers = events[0].get("bookmakers") or []
+            team_total_markets = [
+                market for market in (bookmakers[0].get("markets") or []) if market.get("key") == "team_totals"
+            ]
+            self.assertTrue(team_total_markets)
+
+            result = self._run_provider_only_scan(
+                provider_key=artline.PROVIDER_KEY,
+                counterparty_key="sx_bet",
+                counterparty_fetcher=_counterparty_fetcher,
+                all_markets=True,
+            )
+
+        self.assertTrue(result.get("success"))
+        arbitrage = result.get("arbitrage") or {}
+        self.assertGreater(arbitrage.get("opportunities_count", 0), 0)
+        matching = [
+            item
+            for item in (arbitrage.get("opportunities") or [])
+            if item.get("market") == "team_totals"
+        ]
+        self.assertTrue(matching)
+        best = max(matching, key=lambda item: item.get("roi_percent", 0))
+        self.assertGreater(best.get("roi_percent", 0), 0)
+        books_used = {
+            str(item.get("bookmaker"))
+            for item in (best.get("best_odds") or [])
+            if isinstance(item, dict)
+        }
+        self.assertEqual(books_used, {"Artline", "SX Bet"})
 
     def test_betdex_pipeline_produces_standardized_h2h_and_arbitrage(self) -> None:
         async def _fake_betdex_request(
