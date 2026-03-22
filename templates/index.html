@@ -932,6 +932,7 @@
               diagnostics.</div>
             <div id="scan-diagnostics-content" class="hidden">
               <div id="scan-diagnostics-summary" class="provider-match-summary"></div>
+              <div id="scan-diagnostics-likely" class="scan-diagnostics-likely hidden"></div>
               <p id="scan-diagnostics-message" class="scan-diagnostics-message"></p>
               <div class="table-scroll">
                 <table id="scan-diagnostics-table">
@@ -959,6 +960,7 @@
             </div>
             <p class="helper" data-i18n="provider_data_helper">Inspect per-provider raw snapshots and expand nested
               fields.</p>
+            <div id="provider-data-review-summary" class="provider-match-summary"></div>
             <div id="provider-data-empty" class="empty" data-i18n="provider_data_empty">Run a scan to load provider
               data.</div>
             <div id="provider-data-list" class="provider-data-list"></div>
@@ -979,6 +981,10 @@
             <div id="provider-match-content" class="hidden">
               <div id="provider-match-summary" class="provider-match-summary"></div>
               <div class="provider-filter-bar">
+                <label class="provider-filter-field">
+                  <span data-i18n="provider_match_provider_filter">Provider Focus</span>
+                  <select id="provider-match-provider-filter"></select>
+                </label>
                 <label class="provider-filter-field">
                   <span data-i18n="provider_match_pair_filter">Provider Pair</span>
                   <select id="provider-match-pair-filter"></select>
@@ -1034,6 +1040,7 @@
                 </div>
                 <div id="provider-compare-empty" class="empty" data-i18n="provider_compare_empty">Select a near-miss row to load the raw event comparison.</div>
                 <div id="provider-compare-content" class="hidden">
+                  <div id="provider-compare-diagnosis" class="provider-compare-diagnosis"></div>
                   <div id="provider-compare-diff" class="provider-compare-diff"></div>
                   <div id="provider-compare-guidance" class="provider-compare-guidance"></div>
                   <div class="provider-compare-grid">
@@ -1059,6 +1066,75 @@
         </section>
 
         <section id="history-panel" class="hidden">
+          <section class="card results-card">
+            <div class="card-head">
+              <h3 data-i18n="history_scan_summary_title">Scan Summaries</h3>
+              <div class="table-meta">
+                <span id="history-summary-count">0 scans</span>
+              </div>
+            </div>
+            <p class="helper" data-i18n="history_scan_summary_helper">Review whether each scan looked like fetch, matching, or true no-arbitrage conditions.</p>
+            <div class="provider-filter-bar">
+              <label class="provider-filter-field">
+                <span data-i18n="history_scan_summary_filter_likely">Likely Conclusion</span>
+                <select id="history-summary-likely-filter"></select>
+              </label>
+              <label class="provider-filter-field">
+                <span data-i18n="history_scan_summary_filter_mode">Scan Mode</span>
+                <select id="history-summary-mode-filter"></select>
+              </label>
+              <label class="provider-filter-field">
+                <span data-i18n="history_scan_summary_filter_time">Time Range</span>
+                <select id="history-summary-time-filter"></select>
+              </label>
+              <label class="provider-filter-field">
+                <span data-i18n="history_scan_summary_filter_provider">Provider</span>
+                <select id="history-summary-provider-filter"></select>
+              </label>
+            </div>
+            <div class="table-scroll">
+              <table id="history-summary-table">
+                <thead>
+                  <tr>
+                    <th data-i18n="table_time">Scan Time</th>
+                    <th data-i18n="table_mode">Mode</th>
+                    <th data-i18n="history_scan_summary_col_likely">Likely</th>
+                    <th data-i18n="history_scan_summary_col_results">Results</th>
+                    <th data-i18n="history_scan_summary_col_evidence">Evidence</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div id="history-summary-empty" class="empty hidden" data-i18n="history_scan_summary_empty">No scan summaries recorded yet.</div>
+          </section>
+          <section class="card results-card">
+            <div class="card-head">
+              <h3 data-i18n="history_provider_lens_title">Provider History Lens</h3>
+              <div class="table-meta">
+                <span id="history-provider-count">0 providers</span>
+              </div>
+            </div>
+            <p class="helper" data-i18n="history_provider_lens_helper">Aggregate scan summaries by provider to separate recurring fetch problems from recurring match misses.</p>
+            <div id="history-provider-watchlist-summary" class="provider-match-summary"></div>
+            <div id="history-provider-watchlist" class="history-provider-watchlist hidden"></div>
+            <div class="table-scroll">
+              <table id="history-provider-table">
+                <thead>
+                  <tr>
+                    <th data-i18n="history_provider_col_provider">Provider</th>
+                    <th data-i18n="history_provider_col_signal">Signal</th>
+                    <th data-i18n="history_provider_col_coverage">Coverage</th>
+                    <th data-i18n="history_provider_col_merge">Merge</th>
+                    <th data-i18n="history_provider_col_recent">Recent Trend</th>
+                    <th data-i18n="history_provider_col_last_seen">Last Seen</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div id="history-provider-empty" class="empty hidden" data-i18n="history_provider_empty">No provider history available yet.</div>
+          </section>
           <section class="card results-card">
             <div class="card-head">
               <h3 data-i18n="history_log_open">History Log</h3>
@@ -1318,15 +1394,18 @@
     const scanDiagnosticsEmpty = document.getElementById('scan-diagnostics-empty');
     const scanDiagnosticsContent = document.getElementById('scan-diagnostics-content');
     const scanDiagnosticsSummary = document.getElementById('scan-diagnostics-summary');
+    const scanDiagnosticsLikely = document.getElementById('scan-diagnostics-likely');
     const scanDiagnosticsMessage = document.getElementById('scan-diagnostics-message');
     const scanDiagnosticsTableBody = document.querySelector('#scan-diagnostics-table tbody');
     const providerDataCount = document.getElementById('provider-data-count');
     const providerDataEmpty = document.getElementById('provider-data-empty');
+    const providerDataReviewSummary = document.getElementById('provider-data-review-summary');
     const providerDataList = document.getElementById('provider-data-list');
     const providerMatchCount = document.getElementById('provider-match-count');
     const providerMatchEmpty = document.getElementById('provider-match-empty');
     const providerMatchContent = document.getElementById('provider-match-content');
     const providerMatchSummary = document.getElementById('provider-match-summary');
+    const providerMatchProviderFilter = document.getElementById('provider-match-provider-filter');
     const providerMatchPairFilter = document.getElementById('provider-match-pair-filter');
     const providerMatchReasonFilter = document.getElementById('provider-match-reason-filter');
     const providerMatchTableBody = document.querySelector('#provider-match-table tbody');
@@ -1335,6 +1414,7 @@
     const providerCompareStatus = document.getElementById('provider-compare-status');
     const providerCompareEmpty = document.getElementById('provider-compare-empty');
     const providerCompareContent = document.getElementById('provider-compare-content');
+    const providerCompareDiagnosis = document.getElementById('provider-compare-diagnosis');
     const providerCompareDiff = document.getElementById('provider-compare-diff');
     const providerCompareGuidance = document.getElementById('provider-compare-guidance');
     const providerCompareSourceSummary = document.getElementById('provider-compare-source-summary');
@@ -1459,13 +1539,18 @@
     const providerSnapshotCache = {};
     const providerSnapshotLoading = new Set();
     const providerSnapshotPromises = new Map();
+    const providerSnapshotAutoLoadAttempts = new Set();
     const providerJsonChildLimit = 200;
+    let providerSnapshotContextKey = '';
+    let providerPrimaryReviewFocusKey = '';
     let crossProviderReportCache = null;
     let crossProviderReportLoading = false;
+    let providerMatchProviderFilterValue = 'all';
     let providerMatchPairFilterValue = 'all';
     let providerMatchReasonFilterValue = 'all';
     let renderedNearMissEntries = [];
     let selectedNearMissKey = '';
+    let providerMatchPendingAutoSelect = false;
 
     const TRANSLATIONS = {
       en: {
@@ -1572,9 +1657,51 @@
         provider_matched: 'Matched',
         provider_new: 'New',
         provider_fuzzy: 'Fuzzy',
+        provider_review_summary_label: 'Top review',
+        provider_review_summary_flagged: '{count} flagged',
+        provider_review_summary_fetched: 'Fetched {count}',
+        provider_review_summary_merge_hits: 'Merge hits {count}',
+        provider_review_summary_errors: 'Sport errors {count}',
+        provider_review_summary_focus_note: 'The highlighted card below is the fastest place to verify whether this is a fetch problem or a matching problem.',
+        provider_review_summary_none_chip: 'No provider red flags',
+        provider_review_summary_none_note: 'No provider is currently flagged by fetch or matching diagnostics. If the Likely Conclusion card above also looks clean, this scan is more likely a true no-arbitrage window.',
+        provider_review_primary_chip: 'Priority review',
+        provider_review_guidance_title: 'Suggested checks',
+        provider_review_focus_report: 'Focus Match Report',
+        provider_review_suggestion_fetch_errors: 'Start with the sport error rows, then reload the snapshot to confirm whether this provider returned partial data or failed outright.',
+        provider_review_suggestion_filters: 'Check the current sport and time filters before assuming this provider truly had no usable markets.',
+        provider_review_suggestion_compare: 'Use the Cross-Provider Match Report below to compare this provider against the closest event candidates.',
+        provider_review_suggestion_aliases: 'If the teams look close but not identical, extend team alias normalization or provider-specific name mapping.',
+        provider_review_suggestion_tolerance: 'If kickoff times are close but keep missing, review EVENT_TIME_TOLERANCE_MINUTES and CROSS_PROVIDER_MATCH_TOLERANCE_MINUTES.',
+        provider_review_suggestion_snapshot_missing: 'No snapshot was saved for this provider. Check snapshot persistence before changing matching rules.',
+        provider_review_error_chip: 'Fetch Issues',
+        provider_review_unmatched_chip: 'Needs Match Review',
+        provider_review_error_banner: 'This provider hit one or more fetch errors. Its snapshot is surfaced automatically for diagnosis.',
+        provider_review_unmatched_banner: 'This provider fetched events but did not merge into shared matches. Its snapshot is surfaced automatically to inspect time or team-name mismatches.',
         scan_diagnostics_title: 'Scan Diagnostics',
         scan_diagnostics_helper: 'Shows whether the scan lost coverage at fetch, matching, or final arbitrage generation.',
         scan_diagnostics_empty: 'Run a scan to load diagnostics.',
+        scan_diag_likely_label: 'Likely Conclusion',
+        scan_diag_likely_fetch_title: 'Likely Fetch / Coverage Issue',
+        scan_diag_likely_fetch_body: 'Check provider errors, source coverage, and time filters before trusting a "no arbitrage" result.',
+        scan_diag_likely_matching_title: 'Likely Matching Issue',
+        scan_diag_likely_matching_body: 'Providers returned events, but shared games were not built cleanly. Check kickoff tolerance, team aliases, and market standardization.',
+        scan_diag_likely_no_arb_title: 'Likely No Arbitrage Right Now',
+        scan_diag_likely_no_arb_body: 'Shared games were built and the arbitrage engine ran, but current prices did not produce a tradable edge.',
+        scan_diag_likely_mixed_title: 'Scan Is Inconclusive',
+        scan_diag_likely_mixed_body: 'Some evidence points to valid matching, but provider errors or missing coverage make this scan incomplete.',
+        scan_diag_likely_found_title: 'Arbitrage Confirmed',
+        scan_diag_likely_found_body: 'The matching pipeline is working for this scan and at least one arbitrage opportunity was produced.',
+        scan_diag_likely_unknown_title: 'Need More Scan Data',
+        scan_diag_likely_unknown_body: 'This scan did not produce enough signal to distinguish source, matching, and pricing issues yet.',
+        scan_diag_likely_evidence_raw: 'Raw events: {count}',
+        scan_diag_likely_evidence_provider_events: 'Providers with events: {count}/{total}',
+        scan_diag_likely_evidence_overlap: 'Shared clusters: {count}',
+        scan_diag_likely_evidence_merge_hits: 'Merge hits: {count}',
+        scan_diag_likely_evidence_errors: 'Provider errors: {count}',
+        scan_diag_likely_evidence_filtered: 'Time-filtered: {count}',
+        scan_diag_likely_evidence_single: 'Single-provider clusters: {count}',
+        scan_diag_likely_evidence_top_reason: 'Top near miss: {reason} x{count}',
         scan_diag_raw_events: 'Raw provider events: {count}',
         scan_diag_merged_events: 'Merged events: {count}',
         scan_diag_overlap_clusters: 'Overlap clusters: {count}',
@@ -1609,10 +1736,13 @@
         provider_match_total_clusters: 'Clusters',
         provider_match_raw_records: 'Raw records',
         provider_match_tolerance: 'Tolerance {minutes}m',
+        provider_match_provider_filter: 'Provider Focus',
+        provider_match_provider_all: 'All providers',
         provider_match_pair_filter: 'Provider Pair',
         provider_match_pair_all: 'All provider pairs',
         provider_match_reason_filter: 'Near-Miss Reason',
         provider_match_reason_all: 'All near-miss reasons',
+        provider_match_filter_provider_chip: 'Provider {provider}',
         provider_match_filter_pair_chip: 'Pair {pair}',
         provider_match_filter_reason_chip: 'Reason {reason}',
         provider_match_col_sport: 'Sport',
@@ -1629,7 +1759,7 @@
         provider_match_col_reason: 'Reason',
         provider_match_single_title: 'Single-Provider Near Misses',
         provider_match_no_overlaps: 'No overlap clusters found in this scan.',
-        provider_match_no_overlaps_filtered: 'No overlap clusters match the current provider-pair filter.',
+        provider_match_no_overlaps_filtered: 'No overlap clusters match the current filters.',
         provider_match_no_single: 'No single-provider near misses to show.',
         provider_match_no_single_filtered: 'No near misses match the current filters.',
         provider_compare_title: 'Near-Miss Event Compare',
@@ -1654,6 +1784,28 @@
         provider_compare_start: 'Start',
         provider_compare_markets: 'Markets',
         provider_compare_reason: 'Reason',
+        provider_compare_diagnosis_title: 'Primary Diagnosis',
+        provider_compare_supporting_title: 'Supporting signals',
+        provider_compare_diag_snapshot_title: 'Likely Snapshot Persistence Issue',
+        provider_compare_diag_snapshot_body: 'One side of this compare is missing from the saved snapshot, so fix raw-event persistence before changing match rules.',
+        provider_compare_diag_coverage_title: 'Likely Coverage Gap',
+        provider_compare_diag_coverage_body: 'Other providers do not appear to have the same event in this sport window, so this looks more like source coverage than merging logic.',
+        provider_compare_diag_time_title: 'Likely Kickoff-Window Mismatch',
+        provider_compare_diag_time_body: 'Team pairing looks viable, but kickoff times drift outside the effective merge window. Check report and merge tolerances first.',
+        provider_compare_diag_name_title: 'Likely Team-Name Normalization Issue',
+        provider_compare_diag_name_body: 'The event looks close, but team strings do not normalize cleanly enough yet. Extend aliases or provider-specific name mapping.',
+        provider_compare_diag_market_title: 'Likely Market Standardization Issue',
+        provider_compare_diag_market_body: 'The raw events line up better than their market payloads do, so inspect market normalization and provider segmentation.',
+        provider_compare_diag_same_game_title: 'Likely Same Game Split By Metadata',
+        provider_compare_diag_same_game_body: 'Similarity is high and the gap is still reasonable, so this is likely the same game separated by metadata differences rather than pricing.',
+        provider_compare_diag_mixed_title: 'Likely Mixed Matching Signals',
+        provider_compare_diag_mixed_body: 'Multiple mismatch types show up at once here, so review the supporting signals before adjusting only one rule.',
+        provider_compare_signal_snapshot: 'Snapshot gap',
+        provider_compare_signal_coverage: 'Coverage gap',
+        provider_compare_signal_time: 'Kickoff window',
+        provider_compare_signal_name: 'Team names',
+        provider_compare_signal_market: 'Market payload',
+        provider_compare_signal_same_game: 'Same-game candidate',
         provider_compare_similarity_chip: 'Similarity {value}',
         provider_compare_delta_chip: 'Delta {value}',
         provider_compare_reason_chip: 'Reason {reason}',
@@ -1690,6 +1842,76 @@
 
 
         tab_history: 'History',
+        history_scan_summary_title: 'Scan Summaries',
+        history_scan_summary_helper: 'Review whether each scan looked like fetch, matching, or true no-arbitrage conditions.',
+        history_scan_summary_empty: 'No scan summaries recorded yet.',
+        history_scan_summary_empty_filtered: 'No scan summaries match the current filters.',
+        history_scan_summary_count: '{count} scans',
+        history_scan_summary_count_filtered: '{shown}/{total} scans',
+        history_scan_summary_col_likely: 'Likely',
+        history_scan_summary_col_results: 'Results',
+        history_scan_summary_col_evidence: 'Evidence',
+        history_scan_summary_filter_likely: 'Likely Conclusion',
+        history_scan_summary_filter_mode: 'Scan Mode',
+        history_scan_summary_filter_time: 'Time Range',
+        history_scan_summary_filter_provider: 'Provider',
+        history_scan_summary_filter_all_likely: 'All conclusions',
+        history_scan_summary_filter_all_modes: 'All scan modes',
+        history_scan_summary_filter_all_time: 'All time',
+        history_scan_summary_filter_time_24h: 'Last 24h',
+        history_scan_summary_filter_time_7d: 'Last 7d',
+        history_scan_summary_filter_time_30d: 'Last 30d',
+        history_scan_summary_filter_all_providers: 'All providers',
+        history_scan_summary_results: 'Arb {arb} · Middle {middle} · +EV {ev}',
+        history_scan_summary_partial: 'Partial',
+        history_scan_summary_complete: 'Complete',
+        history_provider_lens_title: 'Provider History Lens',
+        history_provider_lens_helper: 'Aggregate scan summaries by provider to separate recurring fetch problems from recurring match misses.',
+        history_provider_empty: 'No provider history available yet.',
+        history_provider_empty_filtered: 'No provider history matches the current filters.',
+        history_provider_count: '{count} providers',
+        history_provider_count_filtered: '{shown}/{total} providers',
+        history_provider_col_provider: 'Provider',
+        history_provider_col_signal: 'Signal',
+        history_provider_col_coverage: 'Coverage',
+        history_provider_col_merge: 'Merge',
+        history_provider_col_recent: 'Recent Trend',
+        history_provider_col_last_seen: 'Last Seen',
+        history_provider_signal_fetch_title: 'Likely Fetch Risk',
+        history_provider_signal_fetch_body: 'This provider most often shows up in scans with provider-side errors or missing source coverage.',
+        history_provider_signal_matching_title: 'Likely Matching Risk',
+        history_provider_signal_matching_body: 'This provider often returns events but fails to merge into shared matches in the selected window.',
+        history_provider_signal_mixed_title: 'Mixed Signals',
+        history_provider_signal_mixed_body: 'This provider has both usable matches and suspicious failures across the selected scans.',
+        history_provider_signal_healthy_title: 'Healthy Coverage',
+        history_provider_signal_healthy_body: 'This provider usually fetches and merges cleanly in the selected scan window.',
+        history_provider_signal_low_sample_title: 'Low Sample',
+        history_provider_signal_low_sample_body: 'There is not enough recent provider history to draw a strong conclusion yet.',
+        history_provider_metric_scans: 'Scans {count}',
+        history_provider_metric_enabled: 'Enabled {count}',
+        history_provider_metric_with_events: 'With events {count}',
+        history_provider_metric_fetch_issues: 'Fetch issues {count}',
+        history_provider_metric_match_review: 'Needs review {count}',
+        history_provider_metric_match_hits_scan: 'Match-hit scans {count}',
+        history_provider_metric_raw_events: 'Raw {count}',
+        history_provider_metric_merge_hits: 'Merge hits {count}',
+        history_provider_metric_fuzzy: 'Fuzzy {count}',
+        history_provider_trend_fetch_short: 'Fetch',
+        history_provider_trend_matching_short: 'Review',
+        history_provider_trend_healthy_short: 'Healthy',
+        history_provider_trend_idle_short: 'No events',
+        history_provider_trend_fetch_full: 'Fetch issue',
+        history_provider_trend_matching_full: 'Needs match review',
+        history_provider_trend_healthy_full: 'Merged cleanly',
+        history_provider_trend_idle_full: 'No events returned',
+        history_provider_trend_summary: 'Fetch {fetch} · Review {matching} · Healthy {healthy} · No events {idle}',
+        history_provider_watchlist_empty: 'No providers stand out as suspicious in the current filters.',
+        history_provider_watchlist_top_chip: 'Watchlist {count}',
+        history_provider_watchlist_fetch_chip: 'Fetch-led {count}',
+        history_provider_watchlist_matching_chip: 'Match-led {count}',
+        history_provider_watchlist_mixed_chip: 'Mixed {count}',
+        history_provider_watchlist_rank: 'Watch #{rank}',
+        history_provider_watchlist_last_seen: 'Last seen {time}',
         history_log_open: 'History Log',
         refresh_btn: 'Refresh',
         empty_history: 'No history recorded yet. Enable history tracking and run a scan.',
@@ -2389,9 +2611,51 @@
       provider_matched: '\u5339\u914d',
       provider_new: '\u65b0\u589e',
       provider_fuzzy: '\u6a21\u7cca',
+      provider_review_summary_label: '\u9996\u8981\u6392\u67e5',
+      provider_review_summary_flagged: '\u5171 {count} \u4e2a\u5e73\u53f0\u5f85\u67e5',
+      provider_review_summary_fetched: '\u5df2\u6293\u53d6 {count}',
+      provider_review_summary_merge_hits: '\u5408\u5e76\u547d\u4e2d {count}',
+      provider_review_summary_errors: '\u9879\u76ee\u9519\u8bef {count}',
+      provider_review_summary_focus_note: '\u4e0b\u65b9\u9ad8\u4eae\u7684\u5361\u7247\u662f\u6700\u5feb\u5224\u65ad\u8fd9\u662f\u6293\u53d6\u95ee\u9898\u8fd8\u662f\u5339\u914d\u95ee\u9898\u7684\u5165\u53e3\u3002',
+      provider_review_summary_none_chip: '\u6682\u672a\u53d1\u73b0\u5e73\u53f0\u5f02\u5e38',
+      provider_review_summary_none_note: '\u76ee\u524d\u6ca1\u6709 provider \u88ab\u6293\u53d6/\u5339\u914d\u8bca\u65ad\u6807\u4e3a\u5f85\u67e5\u3002\u5982\u679c\u4e0a\u65b9\u7684\u201c\u503e\u5411\u7ed3\u8bba\u201d\u4e5f\u663e\u793a\u5339\u914d\u901a\u7545\uff0c\u90a3\u4e48\u8fd9\u6b21\u66f4\u50cf\u662f\u771f\u6b63\u6ca1\u6709\u5957\u5229\u7a97\u53e3\u3002',
+      provider_review_primary_chip: '\u4f18\u5148\u68c0\u67e5',
+      provider_review_guidance_title: '\u5efa\u8bae\u5148\u67e5',
+      provider_review_focus_report: '\u5b9a\u4f4d\u5339\u914d\u62a5\u544a',
+      provider_review_suggestion_fetch_errors: '\u5148\u770b\u4e0b\u9762\u7684\u9879\u76ee\u62a5\u9519\u884c\uff0c\u518d\u91cd\u65b0\u52a0\u8f7d snapshot\uff0c\u786e\u8ba4\u662f\u8fd4\u56de\u4e86\u4e0d\u5b8c\u6574\u6570\u636e\uff0c\u8fd8\u662f\u6293\u53d6\u76f4\u63a5\u5931\u8d25\u3002',
+      provider_review_suggestion_filters: '\u5148\u68c0\u67e5\u5f53\u524d\u7684 sport \u548c\u65f6\u95f4\u8fc7\u6ee4\uff0c\u518d\u5224\u65ad\u8fd9\u4e2a provider \u662f\u5426\u771f\u7684\u6ca1\u6709\u53ef\u7528\u76d8\u53e3\u3002',
+      provider_review_suggestion_compare: '\u5411\u4e0b\u770b Cross-Provider Match Report\uff0c\u628a\u8fd9\u4e2a provider \u548c\u6700\u63a5\u8fd1\u7684\u5019\u9009\u4e8b\u4ef6\u5bf9\u7167\u8d77\u6765\u3002',
+      provider_review_suggestion_aliases: '\u5982\u679c\u961f\u540d\u5f88\u50cf\u4f46\u4e0d\u5b8c\u5168\u4e00\u6837\uff0c\u4f18\u5148\u8865 team alias \u5f52\u4e00\u5316\u6216 provider \u540d\u79f0\u6620\u5c04\u3002',
+      provider_review_suggestion_tolerance: '\u5982\u679c\u5f00\u8d5b\u65f6\u95f4\u603b\u662f\u5dee\u4e00\u70b9\uff0c\u4f18\u5148\u68c0\u67e5 EVENT_TIME_TOLERANCE_MINUTES \u548c CROSS_PROVIDER_MATCH_TOLERANCE_MINUTES\u3002',
+      provider_review_suggestion_snapshot_missing: '\u8fd9\u4e2a provider \u6ca1\u6709\u4fdd\u5b58 snapshot\uff0c\u5e94\u5148\u68c0\u67e5 snapshot persistence\uff0c\u518d\u8003\u8651\u8c03\u6574 matching \u89c4\u5219\u3002',
+      provider_review_error_chip: '\u6293\u53d6\u5f02\u5e38',
+      provider_review_unmatched_chip: '\u5f85\u67e5\u5339\u914d',
+      provider_review_error_banner: '\u8fd9\u4e2a\u5e73\u53f0\u5728\u4e00\u4e2a\u6216\u591a\u4e2a\u9879\u76ee\u4e0a\u6293\u53d6\u62a5\u9519\uff0c\u5df2\u81ea\u52a8\u5c55\u793a\u5feb\u7167\u65b9\u4fbf\u6392\u67e5\u3002',
+      provider_review_unmatched_banner: '\u8fd9\u4e2a\u5e73\u53f0\u867d\u7136\u6293\u5230\u4e86\u8d5b\u4e8b\uff0c\u4f46\u6ca1\u6709\u5e76\u5165\u4efb\u4f55\u5171\u4eab\u5339\u914d\uff0c\u5df2\u81ea\u52a8\u5c55\u793a\u5feb\u7167\u65b9\u4fbf\u68c0\u67e5\u65f6\u95f4/\u961f\u540d\u5dee\u5f02\u3002',
       scan_diagnostics_title: '\u626b\u63cf\u8bca\u65ad',
       scan_diagnostics_helper: '\u7528\u6765\u5224\u65ad\u95ee\u9898\u51fa\u5728\u6570\u636e\u6293\u53d6\u3001\u8d5b\u4e8b\u5339\u914d\uff0c\u8fd8\u662f\u6700\u7ec8\u5957\u5229\u751f\u6210\u9636\u6bb5\u3002',
       scan_diagnostics_empty: '\u8bf7\u5148\u8fd0\u884c\u4e00\u6b21\u626b\u63cf\u4ee5\u52a0\u8f7d\u8bca\u65ad\u4fe1\u606f\u3002',
+      scan_diag_likely_label: '\u503e\u5411\u7ed3\u8bba',
+      scan_diag_likely_fetch_title: '\u66f4\u50cf\u6293\u53d6\u6216\u8986\u76d6\u95ee\u9898',
+      scan_diag_likely_fetch_body: '\u5728\u628a\u201c\u6ca1\u6709\u5957\u5229\u201d\u5f53\u6210\u53ef\u4fe1\u7ed3\u8bba\u4e4b\u524d\uff0c\u5148\u68c0\u67e5 provider \u62a5\u9519\u3001\u6570\u636e\u8986\u76d6\u548c\u65f6\u95f4\u8fc7\u6ee4\u6761\u4ef6\u3002',
+      scan_diag_likely_matching_title: '\u66f4\u50cf\u8d5b\u4e8b\u5339\u914d\u95ee\u9898',
+      scan_diag_likely_matching_body: '\u5404\u5e73\u53f0\u5df2\u7ecf\u8fd4\u56de\u4e86\u8d5b\u4e8b\uff0c\u4f46\u5171\u4eab\u6bd4\u8d5b\u6784\u5efa\u4e0d\u591f\u987a\u7545\u3002\u4f18\u5148\u68c0\u67e5\u5f00\u8d5b\u65f6\u95f4\u5bb9\u5dee\u3001\u961f\u540d\u522b\u540d\u5f52\u4e00\u5316\u548c\u76d8\u53e3\u6807\u51c6\u5316\u3002',
+      scan_diag_likely_no_arb_title: '\u66f4\u50cf\u5f53\u524d\u786e\u5b9e\u6ca1\u6709\u5957\u5229',
+      scan_diag_likely_no_arb_body: '\u5171\u4eab\u6bd4\u8d5b\u5df2\u7ecf\u6784\u5efa\u51fa\u6765\uff0c\u5957\u5229\u8ba1\u7b97\u4e5f\u5df2\u8dd1\u5b8c\uff0c\u53ea\u662f\u5f53\u524d\u4ef7\u683c\u6ca1\u6709\u5f62\u6210\u53ef\u4e0b\u624b\u7684\u7a7a\u95f4\u3002',
+      scan_diag_likely_mixed_title: '\u672c\u6b21\u626b\u63cf\u7ed3\u8bba\u6682\u4e0d\u53ef\u9760',
+      scan_diag_likely_mixed_body: '\u76ee\u524d\u65e2\u6709\u4e00\u4e9b\u6709\u6548\u5339\u914d\u4fe1\u53f7\uff0c\u4e5f\u5b58\u5728 provider \u9519\u8bef\u6216\u8986\u76d6\u7f3a\u53e3\uff0c\u6240\u4ee5\u8fd9\u6b21\u7ed3\u679c\u4ecd\u7136\u504f\u4fdd\u5b88\u3002',
+      scan_diag_likely_found_title: '\u5df2\u786e\u8ba4\u5b58\u5728\u5957\u5229',
+      scan_diag_likely_found_body: '\u8fd9\u6b21\u626b\u63cf\u7684\u5339\u914d\u94fe\u8def\u5de5\u4f5c\u6b63\u5e38\uff0c\u5e76\u4e14\u5df2\u7ecf\u4ea7\u751f\u4e86\u81f3\u5c11\u4e00\u4e2a\u5957\u5229\u673a\u4f1a\u3002',
+      scan_diag_likely_unknown_title: '\u8fd8\u9700\u8981\u66f4\u591a\u626b\u63cf\u4fe1\u53f7',
+      scan_diag_likely_unknown_body: '\u8fd9\u6b21\u626b\u63cf\u8fd8\u6ca1\u6709\u8db3\u591f\u8bc1\u636e\u533a\u5206\u6e90\u6570\u636e\u95ee\u9898\u3001\u5339\u914d\u95ee\u9898\u8fd8\u662f\u4ef7\u683c\u95ee\u9898\u3002',
+      scan_diag_likely_evidence_raw: '\u539f\u59cb\u4e8b\u4ef6\uff1a{count}',
+      scan_diag_likely_evidence_provider_events: '\u6709\u8fd4\u56de\u4e8b\u4ef6\u7684 provider\uff1a{count}/{total}',
+      scan_diag_likely_evidence_overlap: '\u5171\u4eab\u5339\u914d\u7c07\uff1a{count}',
+      scan_diag_likely_evidence_merge_hits: '\u5408\u5e76\u547d\u4e2d\uff1a{count}',
+      scan_diag_likely_evidence_errors: 'Provider \u9519\u8bef\uff1a{count}',
+      scan_diag_likely_evidence_filtered: '\u65f6\u95f4\u8fc7\u6ee4\u6389\uff1a{count}',
+      scan_diag_likely_evidence_single: '\u5355 provider \u7c07\uff1a{count}',
+      scan_diag_likely_evidence_top_reason: '\u6700\u591a\u7684 near-miss\uff1a{reason} x{count}',
       scan_diag_raw_events: '\u539f\u59cb provider \u4e8b\u4ef6\uff1a{count}',
       scan_diag_merged_events: '\u5408\u5e76\u540e\u4e8b\u4ef6\uff1a{count}',
       scan_diag_overlap_clusters: '\u91cd\u53e0\u5339\u914d\u7c07\uff1a{count}',
@@ -2426,10 +2690,83 @@
       provider_match_total_clusters: '\u603b\u7c07\u6570',
       provider_match_raw_records: '\u539f\u59cb\u8bb0\u5f55',
       provider_match_tolerance: '\u5bb9\u5dee {minutes}\u5206\u949f',
+      provider_match_provider_filter: '\u805a\u7126\u5e73\u53f0',
+      provider_match_provider_all: '\u6240\u6709\u5e73\u53f0',
       provider_match_pair_filter: '\u5e73\u53f0\u7ec4\u5408',
       provider_match_pair_all: '\u6240\u6709\u5e73\u53f0\u7ec4\u5408',
       provider_match_reason_filter: '\u8fd1\u4f3c\u672a\u5339\u914d\u539f\u56e0',
       provider_match_reason_all: '\u6240\u6709\u672a\u5339\u914d\u539f\u56e0',
+      provider_match_filter_provider_chip: '\u5e73\u53f0 {provider}',
+      history_scan_summary_title: '\u626b\u63cf\u7ed3\u8bba\u5386\u53f2',
+      history_scan_summary_helper: '\u56de\u770b\u6bcf\u6b21\u626b\u63cf\u66f4\u50cf\u662f\u6293\u53d6\u95ee\u9898\u3001\u5339\u914d\u95ee\u9898\uff0c\u8fd8\u662f\u771f\u6b63\u6ca1\u6709\u5957\u5229\u3002',
+      history_scan_summary_empty: '\u6682\u65e0\u626b\u63cf\u7ed3\u8bba\u5386\u53f2\u3002',
+      history_scan_summary_empty_filtered: '\u5f53\u524d\u7b5b\u9009\u6761\u4ef6\u4e0b\u6ca1\u6709\u626b\u63cf\u7ed3\u8bba\u3002',
+      history_scan_summary_count: '{count} \u6b21\u626b\u63cf',
+      history_scan_summary_count_filtered: '{shown}/{total} \u6b21\u626b\u63cf',
+      history_scan_summary_col_likely: '\u503e\u5411\u7ed3\u8bba',
+      history_scan_summary_col_results: '\u7ed3\u679c',
+      history_scan_summary_col_evidence: '\u4f9d\u636e',
+      history_scan_summary_filter_likely: '\u503e\u5411\u7ed3\u8bba',
+      history_scan_summary_filter_mode: '\u626b\u63cf\u6a21\u5f0f',
+      history_scan_summary_filter_time: '\u65f6\u95f4\u8303\u56f4',
+      history_scan_summary_filter_provider: '\u5e73\u53f0',
+      history_scan_summary_filter_all_likely: '\u6240\u6709\u7ed3\u8bba',
+      history_scan_summary_filter_all_modes: '\u6240\u6709\u626b\u63cf\u6a21\u5f0f',
+      history_scan_summary_filter_all_time: '\u5168\u90e8\u65f6\u95f4',
+      history_scan_summary_filter_time_24h: '\u6700\u8fd124\u5c0f\u65f6',
+      history_scan_summary_filter_time_7d: '\u6700\u8fd17\u5929',
+      history_scan_summary_filter_time_30d: '\u6700\u8fd130\u5929',
+      history_scan_summary_filter_all_providers: '\u6240\u6709\u5e73\u53f0',
+      history_scan_summary_results: '\u5957\u5229 {arb} \u00b7 \u4e2d\u95f4\u76d8 {middle} \u00b7 +EV {ev}',
+      history_scan_summary_partial: '\u90e8\u5206\u5931\u8d25',
+      history_scan_summary_complete: '\u5b8c\u6574',
+      history_provider_lens_title: '\u5e73\u53f0\u5386\u53f2\u900f\u89c6',
+      history_provider_lens_helper: '\u6309\u5e73\u53f0\u805a\u5408\u626b\u63cf\u7ed3\u8bba\uff0c\u533a\u5206\u662f\u54ea\u4e9b\u5e73\u53f0\u7ecf\u5e38\u6293\u53d6\u5f02\u5e38\uff0c\u8fd8\u662f\u7ecf\u5e38\u5339\u914d\u4e0d\u4e0a\u3002',
+      history_provider_empty: '\u6682\u65e0\u53ef\u7528\u7684\u5e73\u53f0\u5386\u53f2\u8bca\u65ad\u3002',
+      history_provider_empty_filtered: '\u5f53\u524d\u7b5b\u9009\u6761\u4ef6\u4e0b\u6ca1\u6709\u5e73\u53f0\u5386\u53f2\u8bca\u65ad\u3002',
+      history_provider_count: '{count} \u4e2a\u5e73\u53f0',
+      history_provider_count_filtered: '{shown}/{total} \u4e2a\u5e73\u53f0',
+      history_provider_col_provider: '\u5e73\u53f0',
+      history_provider_col_signal: '\u4fe1\u53f7',
+      history_provider_col_coverage: '\u8986\u76d6',
+      history_provider_col_merge: '\u5408\u5e76',
+      history_provider_col_recent: '\u8fd1\u671f\u8d8b\u52bf',
+      history_provider_col_last_seen: '\u6700\u540e\u51fa\u73b0',
+      history_provider_signal_fetch_title: '\u66f4\u50cf\u6293\u53d6\u98ce\u9669',
+      history_provider_signal_fetch_body: '\u8fd9\u4e2a\u5e73\u53f0\u66f4\u5e38\u51fa\u73b0\u5728 provider \u62a5\u9519\u6216\u6e90\u6570\u636e\u8986\u76d6\u4e0d\u8db3\u7684\u626b\u63cf\u91cc\u3002',
+      history_provider_signal_matching_title: '\u66f4\u50cf\u5339\u914d\u98ce\u9669',
+      history_provider_signal_matching_body: '\u8fd9\u4e2a\u5e73\u53f0\u7ecf\u5e38\u80fd\u8fd4\u56de\u8d5b\u4e8b\uff0c\u4f46\u5728\u5f53\u524d\u7a97\u53e3\u5185\u4e0d\u5bb9\u6613\u5e76\u5165\u5171\u4eab\u5339\u914d\u3002',
+      history_provider_signal_mixed_title: '\u4fe1\u53f7\u6df7\u5408',
+      history_provider_signal_mixed_body: '\u8fd9\u4e2a\u5e73\u53f0\u65e2\u6709\u53ef\u7528\u5339\u914d\uff0c\u4e5f\u6709\u4e00\u4e9b\u53ef\u7591\u5931\u8d25\uff0c\u8fd8\u9700\u8981\u7ed3\u5408\u65f6\u95f4\u7a97\u53e3\u7ee7\u7eed\u89c2\u5bdf\u3002',
+      history_provider_signal_healthy_title: '\u8986\u76d6\u76f8\u5bf9\u5065\u5eb7',
+      history_provider_signal_healthy_body: '\u8fd9\u4e2a\u5e73\u53f0\u5728\u5f53\u524d\u626b\u63cf\u7a97\u53e3\u5185\u901a\u5e38\u6293\u53d6\u548c\u5408\u5e76\u90fd\u6bd4\u8f83\u987a\u3002',
+      history_provider_signal_low_sample_title: '\u6837\u672c\u504f\u5c11',
+      history_provider_signal_low_sample_body: '\u76ee\u524d\u8fd9\u4e2a\u5e73\u53f0\u7684\u5386\u53f2\u6837\u672c\u8fd8\u4e0d\u8db3\u4ee5\u4e0b\u7a33\u5b9a\u7ed3\u8bba\u3002',
+      history_provider_metric_scans: '\u626b\u63cf {count}',
+      history_provider_metric_enabled: '\u542f\u7528 {count}',
+      history_provider_metric_with_events: '\u6709\u4e8b\u4ef6 {count}',
+      history_provider_metric_fetch_issues: '\u6293\u53d6\u5f02\u5e38 {count}',
+      history_provider_metric_match_review: '\u5f85\u67e5\u5339\u914d {count}',
+      history_provider_metric_match_hits_scan: '\u547d\u4e2d\u626b\u63cf {count}',
+      history_provider_metric_raw_events: '\u539f\u59cb {count}',
+      history_provider_metric_merge_hits: '\u5408\u5e76\u547d\u4e2d {count}',
+      history_provider_metric_fuzzy: '\u6a21\u7cca {count}',
+      history_provider_trend_fetch_short: '\u6293\u53d6',
+      history_provider_trend_matching_short: '\u5339\u914d',
+      history_provider_trend_healthy_short: '\u6b63\u5e38',
+      history_provider_trend_idle_short: '\u65e0\u4e8b\u4ef6',
+      history_provider_trend_fetch_full: '\u6293\u53d6\u5f02\u5e38',
+      history_provider_trend_matching_full: '\u5f85\u67e5\u5339\u914d',
+      history_provider_trend_healthy_full: '\u5df2\u6b63\u5e38\u5408\u5e76',
+      history_provider_trend_idle_full: '\u672c\u8f6e\u672a\u8fd4\u56de\u4e8b\u4ef6',
+      history_provider_trend_summary: '\u6293\u53d6 {fetch} \u00b7 \u5339\u914d {matching} \u00b7 \u6b63\u5e38 {healthy} \u00b7 \u65e0\u4e8b\u4ef6 {idle}',
+      history_provider_watchlist_empty: '\u5f53\u524d\u7b5b\u9009\u6761\u4ef6\u4e0b\u6682\u65f6\u6ca1\u6709\u7279\u522b\u53ef\u7591\u7684\u5e73\u53f0\u3002',
+      history_provider_watchlist_top_chip: '\u95ee\u9898\u699c {count}',
+      history_provider_watchlist_fetch_chip: '\u6293\u53d6\u4e3b\u5bfc {count}',
+      history_provider_watchlist_matching_chip: '\u5339\u914d\u4e3b\u5bfc {count}',
+      history_provider_watchlist_mixed_chip: '\u6df7\u5408 {count}',
+      history_provider_watchlist_rank: '\u5173\u6ce8 #{rank}',
+      history_provider_watchlist_last_seen: '\u6700\u540e\u51fa\u73b0 {time}',
       provider_match_filter_pair_chip: '\u7ec4\u5408 {pair}',
       provider_match_filter_reason_chip: '\u539f\u56e0 {reason}',
       provider_match_col_sport: '\u9879\u76ee',
@@ -2446,7 +2783,7 @@
       provider_match_col_reason: '\u539f\u56e0',
       provider_match_single_title: '\u5355\u5e73\u53f0\u8fd1\u4f3c\u672a\u5339\u914d',
       provider_match_no_overlaps: '\u672c\u6b21\u626b\u63cf\u6ca1\u6709\u53d1\u73b0\u8de8\u5e73\u53f0\u91cd\u53e0\u7c07\u3002',
-      provider_match_no_overlaps_filtered: '\u5f53\u524d\u5e73\u53f0\u7ec4\u5408\u7b5b\u9009\u4e0b\u6ca1\u6709\u91cd\u53e0\u7c07\u3002',
+      provider_match_no_overlaps_filtered: '\u5f53\u524d\u7b5b\u9009\u4e0b\u6ca1\u6709\u91cd\u53e0\u7c07\u3002',
       provider_match_no_single: '\u6682\u65e0\u5355\u5e73\u53f0\u8fd1\u4f3c\u672a\u5339\u914d\u6837\u672c\u3002',
       provider_match_no_single_filtered: '\u5f53\u524d\u7b5b\u9009\u4e0b\u6ca1\u6709\u8fd1\u4f3c\u672a\u5339\u914d\u6837\u672c\u3002',
       provider_compare_title: '\u8fd1\u4f3c\u672a\u5339\u914d\u5bf9\u7167',
@@ -2471,6 +2808,28 @@
       provider_compare_start: '\u5f00\u8d5b\u65f6\u95f4',
       provider_compare_markets: '\u76d8\u53e3',
       provider_compare_reason: '\u539f\u56e0',
+      provider_compare_diagnosis_title: '\u4e3b\u8981\u8bca\u65ad',
+      provider_compare_supporting_title: '\u652f\u6491\u4fe1\u53f7',
+      provider_compare_diag_snapshot_title: '\u66f4\u50cf snapshot \u4fdd\u5b58\u95ee\u9898',
+      provider_compare_diag_snapshot_body: '\u5bf9\u7167\u91cc\u5176\u4e2d\u4e00\u8fb9\u6ca1\u6709\u4fdd\u5b58\u5230 snapshot\uff0c\u5148\u4fee raw event \u6301\u4e45\u5316\uff0c\u518d\u8003\u8651\u8c03\u6574 matching \u89c4\u5219\u3002',
+      provider_compare_diag_coverage_title: '\u66f4\u50cf coverage \u7f3a\u53e3',
+      provider_compare_diag_coverage_body: '\u5176\u4ed6 provider \u5728\u8fd9\u4e2a sport \u7a97\u53e3\u91cc\u6ca1\u6709\u540c\u4e00\u573a\u6bd4\u8d5b\uff0c\u6240\u4ee5\u66f4\u50cf\u662f\u6570\u636e\u8986\u76d6\u95ee\u9898\uff0c\u4e0d\u662f\u5408\u5e76\u89c4\u5219\u672c\u8eab\u3002',
+      provider_compare_diag_time_title: '\u66f4\u50cf\u5f00\u8d5b\u65f6\u95f4\u7a97\u53e3\u4e0d\u5339\u914d',
+      provider_compare_diag_time_body: '\u5bf9\u9635\u770b\u8d77\u6765\u5f88\u53ef\u80fd\u662f\u540c\u4e00\u573a\uff0c\u4f46\u5f00\u8d5b\u65f6\u95f4\u843d\u5728\u5408\u5e76\u7a97\u53e3\u5916\uff0c\u5e94\u5148\u68c0\u67e5 report \u548c merge \u7684 tolerance\u3002',
+      provider_compare_diag_name_title: '\u66f4\u50cf\u961f\u540d\u5f52\u4e00\u5316\u95ee\u9898',
+      provider_compare_diag_name_body: '\u8fd9\u573a\u6bd4\u8d5b\u770b\u8d77\u6765\u5f88\u63a5\u8fd1\uff0c\u4f46 team \u5b57\u7b26\u4e32\u8fd8\u6ca1\u6709\u88ab\u5f52\u4e00\u5230\u8db3\u591f\u7a33\u5b9a\u3002\u4f18\u5148\u8865 alias \u6216 provider \u540d\u79f0\u6620\u5c04\u3002',
+      provider_compare_diag_market_title: '\u66f4\u50cf market \u6807\u51c6\u5316\u95ee\u9898',
+      provider_compare_diag_market_body: '\u4e24\u8fb9 raw event \u6bd4\u672c\u4f53\u5bf9\u5f97\u66f4\u4e0a\uff0c\u4f46 market payload \u5dee\u5f02\u66f4\u660e\u663e\uff0c\u9700\u8981\u68c0\u67e5 market \u5f52\u4e00\u5316\u548c provider segmentation\u3002',
+      provider_compare_diag_same_game_title: '\u66f4\u50cf\u540c\u4e00\u573a\u6bd4\u8d5b\u88ab metadata \u62c6\u5f00',
+      provider_compare_diag_same_game_body: '\u76f8\u4f3c\u5ea6\u5f88\u9ad8\uff0c\u65f6\u95f4\u5dee\u4e5f\u4ecd\u5728\u53ef\u63a5\u53d7\u8303\u56f4\uff0c\u66f4\u50cf\u662f metadata \u5dee\u5f02\u5bfc\u81f4\u540c\u573a\u6bd4\u8d5b\u88ab\u62c6\u5f00\uff0c\u4e0d\u662f\u4ef7\u683c\u95ee\u9898\u3002',
+      provider_compare_diag_mixed_title: '\u66f4\u50cf\u591a\u79cd matching \u4fe1\u53f7\u6df7\u5728\u4e00\u8d77',
+      provider_compare_diag_mixed_body: '\u8fd9\u6761 near-miss \u540c\u65f6\u51fa\u73b0\u4e86\u591a\u79cd\u5dee\u5f02\uff0c\u6240\u4ee5\u5148\u770b\u4e0b\u65b9\u7684\u652f\u6491\u4fe1\u53f7\uff0c\u4e0d\u8981\u53ea\u8c03\u4e00\u6761\u89c4\u5219\u3002',
+      provider_compare_signal_snapshot: 'snapshot \u7f3a\u53e3',
+      provider_compare_signal_coverage: 'coverage \u7f3a\u53e3',
+      provider_compare_signal_time: '\u5f00\u8d5b\u65f6\u95f4\u7a97\u53e3',
+      provider_compare_signal_name: '\u961f\u540d',
+      provider_compare_signal_market: 'market payload',
+      provider_compare_signal_same_game: '\u540c\u573a candidate',
       provider_compare_similarity_chip: '\u76f8\u4f3c\u5ea6 {value}',
       provider_compare_delta_chip: '\u65f6\u95f4\u5dee {value}',
       provider_compare_reason_chip: '\u539f\u56e0 {reason}',
@@ -3470,9 +3829,16 @@
 
     if (providerDataList) {
       providerDataList.addEventListener('click', (event) => {
-        const button = event.target instanceof Element
-          ? event.target.closest('button.provider-load-btn')
-          : null;
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target) return;
+        const focusButton = target.closest('button.provider-focus-report-btn');
+        if (focusButton) {
+          const providerKey = focusButton.dataset.providerReviewFocus;
+          if (!providerKey) return;
+          focusProviderMatchReport(providerKey);
+          return;
+        }
+        const button = target.closest('button.provider-load-btn');
         if (!button) return;
         const providerKey = button.dataset.providerKey;
         if (!providerKey) return;
@@ -3480,9 +3846,34 @@
       });
     }
 
+    if (providerDataReviewSummary) {
+      providerDataReviewSummary.addEventListener('click', (event) => {
+        const button = event.target instanceof Element
+          ? event.target.closest('button[data-provider-review-focus]')
+          : null;
+        if (!button) return;
+        const providerKey = button.dataset.providerReviewFocus;
+        if (!providerKey) return;
+        focusProviderMatchReport(providerKey);
+      });
+    }
+
     if (refreshProviderMatchBtn) {
       refreshProviderMatchBtn.addEventListener('click', () => {
         loadCrossProviderReport(true);
+      });
+    }
+
+    if (providerMatchProviderFilter) {
+      providerMatchProviderFilter.addEventListener('change', () => {
+        providerMatchProviderFilterValue = providerMatchProviderFilter.value || 'all';
+        providerMatchPendingAutoSelect = providerMatchProviderFilterValue !== 'all';
+        if (providerMatchPendingAutoSelect) {
+          showNearMissCompareLoading();
+        }
+        if (crossProviderReportCache) {
+          renderCrossProviderReport(crossProviderReportCache);
+        }
       });
     }
 
@@ -4559,6 +4950,32 @@
       showStatus(t(key, params), type, key, params);
     }
 
+    function providerSnapshotStateKey(payload = lastScanData) {
+      if (!payload || typeof payload !== 'object') return '';
+      const scanMode = String(payload.scan_mode || '');
+      const scanTime = String(payload.scan_time || '');
+      const snapshotPaths = payload.provider_snapshot_paths && typeof payload.provider_snapshot_paths === 'object'
+        ? Object.entries(payload.provider_snapshot_paths)
+          .sort((left, right) => String(left[0] || '').localeCompare(String(right[0] || '')))
+          .map(([key, value]) => `${key}:${value}`)
+          .join('|')
+        : '';
+      return `${scanMode}::${scanTime}::${snapshotPaths}`;
+    }
+
+    function syncProviderSnapshotState(payload = lastScanData) {
+      const nextKey = providerSnapshotStateKey(payload);
+      if (nextKey === providerSnapshotContextKey) return;
+      providerSnapshotContextKey = nextKey;
+      providerPrimaryReviewFocusKey = '';
+      Object.keys(providerSnapshotCache).forEach((key) => {
+        delete providerSnapshotCache[key];
+      });
+      providerSnapshotLoading.clear();
+      providerSnapshotPromises.clear();
+      providerSnapshotAutoLoadAttempts.clear();
+    }
+
     function renderScanData(payload, options = {}) {
       const payloadMode = resolvePayloadScanMode(payload, options.mode);
       const shouldUpdateModeCache = Boolean(payload) || Boolean(options.clearMode);
@@ -4567,6 +4984,7 @@
           ? captureArbSelectionSnapshot()
           : arbSelectionSnapshotByMode[payloadMode];
       lastScanData = payload;
+      syncProviderSnapshotState(payload);
       if (shouldUpdateModeCache) {
         arbitrageDataByMode[payloadMode] = payload;
       }
@@ -4688,11 +5106,148 @@
       });
     }
 
+    function dominantNearMissReason(report = crossProviderReportCache) {
+      const counts = report?.summary?.single_provider_reason_counts;
+      if (!counts || typeof counts !== 'object') return null;
+      const ranked = Object.entries(counts)
+        .map(([code, count]) => ({ code: String(code || '').trim(), count: Number(count || 0) }))
+        .filter((item) => item.code && item.count > 0)
+        .sort((left, right) => right.count - left.count || left.code.localeCompare(right.code));
+      return ranked[0] || null;
+    }
+
+    function likelyScanDiagnosis(diagnostics, report = crossProviderReportCache) {
+      const reasonCode = String(diagnostics?.reason_code || 'no_arbitrage_after_merge');
+      const reportSummary = report?.summary && typeof report.summary === 'object' ? report.summary : {};
+      const rawProviderEvents = Object.prototype.hasOwnProperty.call(reportSummary, 'total_raw_records')
+        ? Number(reportSummary.total_raw_records || 0)
+        : Number(diagnostics?.raw_provider_events || 0);
+      const overlapClusters = Object.prototype.hasOwnProperty.call(reportSummary, 'overlap_clusters')
+        ? Number(reportSummary.overlap_clusters || 0)
+        : Number(diagnostics?.overlap_clusters || 0);
+      const mergeHits = Number(diagnostics?.total_merge_hits || 0);
+      const mergedEventsScanned = Number(diagnostics?.merged_events_scanned || 0);
+      const sportErrorCount = Number(diagnostics?.sport_error_count || 0);
+      const staleFiltered = Number(diagnostics?.stale_filter_drop_total || 0);
+      const providersWithEvents = Number(diagnostics?.providers_with_events || 0);
+      const enabledProviderCount = Number(diagnostics?.enabled_provider_count || 0);
+      const singleProviderClusters = Object.prototype.hasOwnProperty.call(reportSummary, 'total_match_clusters')
+        ? Math.max(0, Number(reportSummary.total_match_clusters || 0) - overlapClusters)
+        : Number(diagnostics?.single_provider_clusters || 0);
+      const nearMissReason = dominantNearMissReason(report);
+      const matchingReasons = new Set([
+        'same_pair_time_mismatch',
+        'name_variation_within_time',
+        'similar_pair_time_mismatch',
+        'possible_name_mismatch',
+      ]);
+      const coverageReasons = new Set([
+        'no_other_provider_candidates',
+        'no_close_candidate',
+      ]);
+
+      let kind = 'unknown';
+      if (reasonCode === 'arbitrage_found') {
+        kind = 'found';
+      } else if (['fetch_errors', 'no_source_events', 'events_filtered_by_time'].includes(reasonCode)) {
+        kind = 'fetch';
+      } else if (reasonCode === 'partial_errors') {
+        kind = 'mixed';
+      } else if (['no_cross_provider_overlap', 'low_merge_overlap'].includes(reasonCode)) {
+        if (nearMissReason && coverageReasons.has(nearMissReason.code)) {
+          kind = 'fetch';
+        } else {
+          kind = 'matching';
+        }
+      } else if (reasonCode === 'matched_but_no_arbitrage') {
+        kind = 'no_arb';
+      } else if (reasonCode === 'no_arbitrage_after_merge') {
+        if (overlapClusters > 0 || mergeHits > 0 || mergedEventsScanned > 0) {
+          kind = 'no_arb';
+        } else if (nearMissReason && matchingReasons.has(nearMissReason.code)) {
+          kind = 'matching';
+        } else if (nearMissReason && coverageReasons.has(nearMissReason.code)) {
+          kind = 'fetch';
+        } else if (rawProviderEvents > 0 && singleProviderClusters > 0) {
+          kind = 'matching';
+        } else if (sportErrorCount > 0) {
+          kind = 'mixed';
+        }
+      }
+
+      const evidence = [];
+      if (rawProviderEvents > 0) {
+        evidence.push(t('scan_diag_likely_evidence_raw', { count: rawProviderEvents }));
+      }
+      if (enabledProviderCount > 0) {
+        evidence.push(t('scan_diag_likely_evidence_provider_events', {
+          count: providersWithEvents,
+          total: enabledProviderCount,
+        }));
+      }
+      if (overlapClusters > 0) {
+        evidence.push(t('scan_diag_likely_evidence_overlap', { count: overlapClusters }));
+      }
+      if (mergeHits > 0) {
+        evidence.push(t('scan_diag_likely_evidence_merge_hits', { count: mergeHits }));
+      }
+      if (sportErrorCount > 0) {
+        evidence.push(t('scan_diag_likely_evidence_errors', { count: sportErrorCount }));
+      }
+      if (staleFiltered > 0) {
+        evidence.push(t('scan_diag_likely_evidence_filtered', { count: staleFiltered }));
+      }
+      if (singleProviderClusters > 0) {
+        evidence.push(t('scan_diag_likely_evidence_single', { count: singleProviderClusters }));
+      }
+      if (nearMissReason) {
+        evidence.push(t('scan_diag_likely_evidence_top_reason', {
+          reason: providerMatchReasonLabel(nearMissReason.code),
+          count: nearMissReason.count,
+        }));
+      }
+
+      return {
+        kind,
+        titleKey: `scan_diag_likely_${kind}_title`,
+        bodyKey: `scan_diag_likely_${kind}_body`,
+        evidence,
+      };
+    }
+
+    function renderLikelyScanDiagnosis(diagnostics) {
+      if (!scanDiagnosticsLikely) return;
+      if (!diagnostics || typeof diagnostics !== 'object') {
+        scanDiagnosticsLikely.innerHTML = '';
+        scanDiagnosticsLikely.className = 'scan-diagnostics-likely hidden';
+        return;
+      }
+
+      const likely = likelyScanDiagnosis(diagnostics);
+      const toneClass = likely.kind === 'found'
+        ? 'is-ready'
+        : (likely.kind === 'fetch' ? 'is-error' : (likely.kind === 'matching' || likely.kind === 'mixed' ? 'is-warning' : ''));
+      const evidenceHtml = likely.evidence.length
+        ? `<div class="provider-match-summary">${likely.evidence.map((item) => `<span class="provider-chip">${escapeHtml(item)}</span>`).join('')}</div>`
+        : '';
+      scanDiagnosticsLikely.className = `scan-diagnostics-likely ${toneClass}`.trim();
+      scanDiagnosticsLikely.innerHTML = `
+        <div class="scan-diagnostics-likely-head">
+          <span class="provider-chip ${toneClass}">${escapeHtml(t('scan_diag_likely_label'))}</span>
+          <strong>${escapeHtml(t(likely.titleKey))}</strong>
+        </div>
+        <p>${escapeHtml(t(likely.bodyKey))}</p>
+        ${evidenceHtml}
+      `;
+      scanDiagnosticsLikely.classList.remove('hidden');
+    }
+
     function renderScanDiagnostics() {
       if (
         !scanDiagnosticsEmpty ||
         !scanDiagnosticsContent ||
         !scanDiagnosticsSummary ||
+        !scanDiagnosticsLikely ||
         !scanDiagnosticsMessage ||
         !scanDiagnosticsTableBody
       ) {
@@ -4702,6 +5257,7 @@
       const diagnostics = getScanDiagnostics();
       if (!lastScanData || !diagnostics || typeof diagnostics !== 'object') {
         scanDiagnosticsSummary.innerHTML = '';
+        renderLikelyScanDiagnosis(null);
         scanDiagnosticsMessage.textContent = '';
         scanDiagnosticsTableBody.innerHTML = '';
         scanDiagnosticsContent.classList.add('hidden');
@@ -4726,6 +5282,7 @@
         <span class="provider-chip">${t('scan_diag_middle', { count: middleCount })}</span>
         <span class="provider-chip">${t('scan_diag_plus_ev', { count: plusEvCount })}</span>
       `;
+      renderLikelyScanDiagnosis(diagnostics);
       scanDiagnosticsMessage.textContent = scanDiagnosticMessage(diagnostics);
 
       if (breakdown.length) {
@@ -4762,6 +5319,164 @@
       return providerSummary.enabled ? 'provider_status_idle' : 'provider_status_idle';
     }
 
+    function providerReviewMeta(providerSummary) {
+      const sports = Array.isArray(providerSummary?.sports) ? providerSummary.sports : [];
+      let errorCount = 0;
+      let matchedCount = 0;
+      let eventsReturned = 0;
+      let mergeStatsSeen = false;
+      sports.forEach((entry) => {
+        if (!entry || typeof entry !== 'object') return;
+        if (entry.error) {
+          errorCount += 1;
+        }
+        eventsReturned += Number(entry.events_returned || 0);
+        const mergeStats = entry.merge_stats && typeof entry.merge_stats === 'object'
+          ? entry.merge_stats
+          : null;
+        if (!mergeStats) return;
+        mergeStatsSeen = true;
+        matchedCount += Number(mergeStats.matched_existing || 0);
+      });
+      const baseMeta = {
+        kind: 'healthy',
+        priority: 0,
+        needsReview: false,
+        chipKey: '',
+        bannerKey: '',
+        tone: '',
+        errorCount,
+        matchedCount,
+        eventsReturned,
+        mergeStatsSeen,
+        sortValue: Number(providerSummary?.events_merged || 0),
+      };
+      if (errorCount > 0) {
+        return {
+          ...baseMeta,
+          kind: 'error',
+          priority: 2,
+          needsReview: true,
+          chipKey: 'provider_review_error_chip',
+          bannerKey: 'provider_review_error_banner',
+          tone: 'error',
+          sortValue: errorCount * 1000 + eventsReturned,
+        };
+      }
+      if (mergeStatsSeen && eventsReturned > 0 && matchedCount === 0) {
+        return {
+          ...baseMeta,
+          kind: 'unmatched',
+          priority: 1,
+          needsReview: true,
+          chipKey: 'provider_review_unmatched_chip',
+          bannerKey: 'provider_review_unmatched_banner',
+          tone: 'warning',
+          sortValue: eventsReturned,
+        };
+      }
+      return baseMeta;
+    }
+
+    function providerReviewSuggestions(reviewMeta, snapshotExists = true) {
+      if (!reviewMeta?.needsReview) return [];
+      const suggestionKeys = [];
+      if (reviewMeta.kind === 'error') {
+        suggestionKeys.push('provider_review_suggestion_fetch_errors');
+        suggestionKeys.push('provider_review_suggestion_filters');
+      } else if (reviewMeta.kind === 'unmatched') {
+        suggestionKeys.push('provider_review_suggestion_compare');
+        suggestionKeys.push('provider_review_suggestion_aliases');
+        suggestionKeys.push('provider_review_suggestion_tolerance');
+      }
+      if (!snapshotExists) {
+        suggestionKeys.push('provider_review_suggestion_snapshot_missing');
+      }
+      return [...new Set(suggestionKeys)];
+    }
+
+    function primaryProviderReviewEntry(orderedSummaries = []) {
+      return orderedSummaries.find((entry) => entry?.reviewMeta?.needsReview) || null;
+    }
+
+    function primaryProviderReviewCard() {
+      if (!providerDataList) return null;
+      return Array.from(providerDataList.querySelectorAll('details[data-provider-key]'))
+        .find((card) => card.classList.contains('is-primary-review')) || null;
+    }
+
+    function maybeFocusPrimaryProviderReviewCard(force = false) {
+      if (!providersPanel || providersPanel.classList.contains('hidden')) return;
+      const card = primaryProviderReviewCard();
+      if (!card) return;
+      const providerKey = String(card.dataset.providerKey || '').trim();
+      if (!providerKey) return;
+      if (!force && providerPrimaryReviewFocusKey === providerKey) return;
+      providerPrimaryReviewFocusKey = providerKey;
+      window.requestAnimationFrame(() => {
+        try {
+          card.scrollIntoView({
+            behavior: force ? 'smooth' : 'auto',
+            block: 'center',
+            inline: 'nearest',
+          });
+        } catch (error) {
+          card.scrollIntoView();
+        }
+      });
+    }
+
+    function renderProviderDataReviewSummary(orderedSummaries, snapshotPaths = {}) {
+      if (!providerDataReviewSummary) return;
+      const flaggedEntries = orderedSummaries.filter((entry) => entry?.reviewMeta?.needsReview);
+      const primaryEntry = primaryProviderReviewEntry(orderedSummaries);
+      if (!primaryEntry) {
+        providerDataReviewSummary.innerHTML = `
+          <span class="provider-chip is-ready">${escapeHtml(t('provider_review_summary_none_chip'))}</span>
+          <span class="provider-review-summary-note">${escapeHtml(t('provider_review_summary_none_note'))}</span>
+        `;
+        return;
+      }
+
+      const summary = primaryEntry.summary && typeof primaryEntry.summary === 'object' ? primaryEntry.summary : {};
+      const reviewMeta = primaryEntry.reviewMeta && typeof primaryEntry.reviewMeta === 'object'
+        ? primaryEntry.reviewMeta
+        : providerReviewMeta(summary);
+      const providerKey = String(summary.key || '').trim();
+      const providerName = String(summary.name || providerKey || '-');
+      const snapshotExists = Boolean(providerKey && snapshotPaths && snapshotPaths[providerKey]);
+      const toneClass = reviewMeta.tone === 'error' ? 'is-error' : 'is-warning';
+      const chips = [
+        `<span class="provider-chip ${toneClass}">${escapeHtml(t('provider_review_summary_label'))}</span>`,
+        `<span class="provider-chip ${toneClass}">${escapeHtml(providerName)}</span>`,
+        `<span class="provider-chip ${toneClass}">${escapeHtml(t(reviewMeta.chipKey))}</span>`,
+        flaggedEntries.length > 1
+          ? `<span class="provider-chip">${escapeHtml(t('provider_review_summary_flagged', { count: flaggedEntries.length }))}</span>`
+          : '',
+        reviewMeta.eventsReturned > 0
+          ? `<span class="provider-chip">${escapeHtml(t('provider_review_summary_fetched', { count: reviewMeta.eventsReturned }))}</span>`
+          : '',
+        reviewMeta.kind === 'unmatched'
+          ? `<span class="provider-chip is-warning">${escapeHtml(t('provider_review_summary_merge_hits', { count: reviewMeta.matchedCount }))}</span>`
+          : '',
+        reviewMeta.errorCount > 0
+          ? `<span class="provider-chip is-error">${escapeHtml(t('provider_review_summary_errors', { count: reviewMeta.errorCount }))}</span>`
+          : '',
+        !snapshotExists
+          ? `<span class="provider-chip">${escapeHtml(t('provider_snapshot_missing'))}</span>`
+          : '',
+      ].filter(Boolean);
+      const focusButton = providerKey
+        ? `<button type="button" class="secondary-btn provider-review-link-btn" data-provider-review-focus="${escapeHtml(providerKey)}">${escapeHtml(t('provider_review_focus_report'))}</button>`
+        : '';
+
+      providerDataReviewSummary.innerHTML = `
+        ${chips.join('')}
+        ${focusButton}
+        <span class="provider-review-summary-note">${escapeHtml(t('provider_review_summary_focus_note'))}</span>
+      `;
+    }
+
     function renderProviderData() {
       if (!providerDataList || !providerDataEmpty || !providerDataCount) return;
       const summaries = getProviderSummaries();
@@ -4769,17 +5484,38 @@
 
       if (!lastScanData || !summaries.length) {
         providerDataList.innerHTML = '';
+        if (providerDataReviewSummary) {
+          providerDataReviewSummary.innerHTML = '';
+        }
         providerDataEmpty.textContent = t('provider_data_empty');
         providerDataEmpty.classList.remove('hidden');
+        providerPrimaryReviewFocusKey = '';
         return;
       }
 
       const snapshotPaths = (lastScanData && typeof lastScanData.provider_snapshot_paths === 'object')
         ? lastScanData.provider_snapshot_paths
         : {};
+      const orderedSummaries = summaries
+        .map((summary) => ({ summary, reviewMeta: providerReviewMeta(summary) }))
+        .sort((left, right) => {
+          if (left.reviewMeta.priority !== right.reviewMeta.priority) {
+            return right.reviewMeta.priority - left.reviewMeta.priority;
+          }
+          if (left.reviewMeta.sortValue !== right.reviewMeta.sortValue) {
+            return right.reviewMeta.sortValue - left.reviewMeta.sortValue;
+          }
+          const leftEvents = Number(left.summary?.events_merged || 0);
+          const rightEvents = Number(right.summary?.events_merged || 0);
+          if (leftEvents !== rightEvents) return rightEvents - leftEvents;
+          return String(left.summary?.name || left.summary?.key || '')
+            .localeCompare(String(right.summary?.name || right.summary?.key || ''));
+        });
+      const primaryReview = primaryProviderReviewEntry(orderedSummaries);
 
       providerDataEmpty.classList.add('hidden');
-      providerDataList.innerHTML = summaries.map((summary) => {
+      renderProviderDataReviewSummary(orderedSummaries, snapshotPaths);
+      providerDataList.innerHTML = orderedSummaries.map(({ summary, reviewMeta }) => {
         const key = String(summary.key || '');
         const name = String(summary.name || key || '-');
         const eventsMerged = Number(summary.events_merged || 0);
@@ -4791,6 +5527,44 @@
           : (statusKey === 'provider_status_ready' ? 'provider-chip is-ready' : 'provider-chip');
         const snapshotExists = Boolean(snapshotPaths && snapshotPaths[key]);
         const loadLabel = providerSnapshotCache[key] ? t('provider_reload_snapshot') : t('provider_load_snapshot');
+        const reviewClass = reviewMeta.tone === 'error' ? 'is-error' : 'is-warning';
+        const isPrimaryReview = Boolean(primaryReview && String(primaryReview.summary?.key || '') === key);
+        const reviewChip = reviewMeta.needsReview
+          ? `<span class="provider-chip ${reviewClass}">${escapeHtml(t(reviewMeta.chipKey))}</span>`
+          : '';
+        const primaryChip = isPrimaryReview
+          ? `<span class="provider-chip ${reviewClass}">${escapeHtml(t('provider_review_primary_chip'))}</span>`
+          : '';
+        const reviewBanner = reviewMeta.needsReview
+          ? `<p class="provider-diagnostic-banner ${reviewClass}">${escapeHtml(t(reviewMeta.bannerKey))}</p>`
+          : '';
+        const reviewSummaryChips = reviewMeta.needsReview
+          ? [
+            reviewMeta.eventsReturned > 0
+              ? `<span class="provider-chip">${escapeHtml(t('provider_review_summary_fetched', { count: reviewMeta.eventsReturned }))}</span>`
+              : '',
+            reviewMeta.kind === 'unmatched'
+              ? `<span class="provider-chip is-warning">${escapeHtml(t('provider_review_summary_merge_hits', { count: reviewMeta.matchedCount }))}</span>`
+              : '',
+            reviewMeta.errorCount > 0
+              ? `<span class="provider-chip is-error">${escapeHtml(t('provider_review_summary_errors', { count: reviewMeta.errorCount }))}</span>`
+              : '',
+          ].filter(Boolean).join('')
+          : '';
+        const reviewGuidanceItems = providerReviewSuggestions(reviewMeta, snapshotExists)
+          .map((suggestionKey) => `<li>${escapeHtml(t(suggestionKey))}</li>`)
+          .join('');
+        const reviewGuidance = reviewGuidanceItems
+          ? `
+            <div class="provider-review-guidance">
+              <p class="provider-review-guidance-title">${escapeHtml(t('provider_review_guidance_title'))}</p>
+              <ul class="provider-review-guidance-list">${reviewGuidanceItems}</ul>
+            </div>
+          `
+          : '';
+        const reviewReportButton = reviewMeta.needsReview
+          ? `<button type="button" class="secondary-btn provider-focus-report-btn" data-provider-review-focus="${escapeHtml(key)}">${escapeHtml(t('provider_review_focus_report'))}</button>`
+          : '';
         const sportRows = sports.length
           ? sports.map((entry) => {
             const sportKey = String(entry?.sport_key || t('unknown'));
@@ -4835,7 +5609,7 @@
           : `<div class="provider-sport-row"><span class="muted">${t('no_data')}</span></div>`;
         const snapshotHint = snapshotExists ? '' : `<p class="muted provider-hint">${t('provider_snapshot_missing')}</p>`;
         return `
-          <details class="provider-card" data-provider-key="${escapeHtml(key)}">
+          <details class="provider-card${reviewMeta.needsReview ? ` is-review ${reviewClass}` : ''}${isPrimaryReview ? ' is-primary-review' : ''}" data-provider-key="${escapeHtml(key)}"${reviewMeta.needsReview ? ' open' : ''}>
             <summary>
               <div class="provider-summary-title">
                 <strong>${escapeHtml(name)}</strong>
@@ -4845,13 +5619,19 @@
                 <span class="provider-chip">${t('provider_events')}: ${eventsMerged}</span>
                 <span class="provider-chip">${t('provider_sports')}: ${sports.length}</span>
                 <span class="provider-chip">${t('provider_errors')}: ${errorCount}</span>
+                ${reviewChip}
+                ${primaryChip}
                 <span class="${statusClass}">${t(statusKey)}</span>
               </div>
             </summary>
             <div class="provider-card-body">
+              ${reviewBanner}
+              ${reviewSummaryChips ? `<div class="provider-match-summary">${reviewSummaryChips}</div>` : ''}
+              ${reviewGuidance}
               <div class="provider-sports-grid">${sportRows}</div>
               ${snapshotHint}
               <div class="provider-actions">
+                ${reviewReportButton}
                 <button type="button" class="secondary-btn provider-load-btn" data-provider-key="${escapeHtml(key)}"
                   ${snapshotExists ? '' : 'disabled'}>${loadLabel}</button>
                 <span class="provider-load-status muted" data-provider-status="${escapeHtml(key)}"></span>
@@ -4866,6 +5646,42 @@
         const key = String(summary.key || '');
         if (!key || !providerSnapshotCache[key]) return;
         mountProviderSnapshotTree(key, providerSnapshotCache[key]);
+      });
+
+      maybeAutoLoadProviderSnapshots();
+      maybeFocusPrimaryProviderReviewCard(false);
+    }
+
+    function providerSnapshotAutoLoadCandidates(payload = lastScanData) {
+      if (!payload || typeof payload !== 'object') return [];
+      const snapshotPaths = payload.provider_snapshot_paths && typeof payload.provider_snapshot_paths === 'object'
+        ? payload.provider_snapshot_paths
+        : {};
+      const candidates = [];
+      getProviderSummaries(payload).forEach((summary) => {
+        const key = String(summary?.key || '').trim();
+        if (!key || !snapshotPaths[key]) return;
+        if (providerReviewMeta(summary).needsReview) {
+          candidates.push(key);
+        }
+      });
+      return [...new Set(candidates)];
+    }
+
+    function maybeAutoLoadProviderSnapshots(payload = lastScanData) {
+      if (!providersPanel || providersPanel.classList.contains('hidden')) return;
+      providerSnapshotAutoLoadCandidates(payload).forEach((providerKey) => {
+        if (
+          !providerKey
+          || providerSnapshotAutoLoadAttempts.has(providerKey)
+          || providerSnapshotCache[providerKey]
+          || providerSnapshotLoading.has(providerKey)
+          || providerSnapshotPromises.has(providerKey)
+        ) {
+          return;
+        }
+        providerSnapshotAutoLoadAttempts.add(providerKey);
+        void loadProviderSnapshot(providerKey);
       });
     }
 
@@ -5044,8 +5860,12 @@
       return raw.replace(/\s+/g, ' ');
     }
 
+    function normalizeProviderKey(value) {
+      return String(value || '').trim();
+    }
+
     function providerDisplayName(providerKey) {
-      const normalized = String(providerKey || '').trim();
+      const normalized = normalizeProviderKey(providerKey);
       if (!normalized) return t('unknown');
       const provider = lastScanData?.custom_providers?.[normalized];
       const name = provider && typeof provider === 'object' ? provider.name : '';
@@ -5065,6 +5885,13 @@
       return normalized.split('__').map((item) => String(item || '').trim()).filter(Boolean);
     }
 
+    function pairMatchesProviderFocus(pairKey, providerKey) {
+      const normalizedProvider = normalizeProviderKey(providerKey);
+      if (!normalizedProvider || normalizedProvider === 'all') return true;
+      const providers = splitProviderPairKey(pairKey);
+      return providers.includes(normalizedProvider);
+    }
+
     function providerPairLabel(pairKey) {
       if (!pairKey || pairKey === 'all') return t('provider_match_pair_all');
       const [left, right] = splitProviderPairKey(pairKey);
@@ -5072,7 +5899,38 @@
       return `${providerDisplayName(left)} <-> ${providerDisplayName(right)}`;
     }
 
-    function reportProviderPairKeys(report) {
+    function reportProviderKeys(report, pairKey = 'all') {
+      const providers = new Set();
+      const summary = report?.summary && typeof report.summary === 'object' ? report.summary : {};
+      const providersConsidered = Array.isArray(summary?.providers_considered) ? summary.providers_considered : [];
+      providersConsidered.forEach((providerKey) => {
+        const normalized = normalizeProviderKey(providerKey);
+        if (normalized) providers.add(normalized);
+      });
+
+      const clusters = Array.isArray(report?.clusters) ? report.clusters : [];
+      clusters.forEach((cluster) => {
+        if (!clusterMatchesProviderPairFilter(cluster, pairKey)) return;
+        const entries = Array.isArray(cluster?.providers) ? cluster.providers : [];
+        entries.forEach((providerKey) => {
+          const normalized = normalizeProviderKey(providerKey);
+          if (normalized) providers.add(normalized);
+        });
+      });
+
+      const singles = Array.isArray(report?.single_provider_samples) ? report.single_provider_samples : [];
+      singles.forEach((entry) => {
+        if (!nearMissMatchesProviderPairFilter(entry, pairKey)) return;
+        [entry?.provider, entry?.closest_candidate?.provider].forEach((providerKey) => {
+          const normalized = normalizeProviderKey(providerKey);
+          if (normalized) providers.add(normalized);
+        });
+      });
+
+      return Array.from(providers).sort((left, right) => providerDisplayName(left).localeCompare(providerDisplayName(right)));
+    }
+
+    function reportProviderPairKeys(report, providerKey = 'all') {
       const pairKeys = new Set();
       const summary = report?.summary && typeof report.summary === 'object' ? report.summary : {};
       const pairOverlapClusters = summary?.pair_overlap_clusters && typeof summary.pair_overlap_clusters === 'object'
@@ -5080,13 +5938,13 @@
         : {};
       Object.keys(pairOverlapClusters).forEach((pairKey) => {
         const normalized = normalizeProviderPairKey(...String(pairKey || '').split('__'));
-        if (normalized) pairKeys.add(normalized);
+        if (normalized && pairMatchesProviderFocus(normalized, providerKey)) pairKeys.add(normalized);
       });
 
       const singles = Array.isArray(report?.single_provider_samples) ? report.single_provider_samples : [];
       singles.forEach((entry) => {
         const normalized = normalizeProviderPairKey(entry?.provider, entry?.closest_candidate?.provider);
-        if (normalized) pairKeys.add(normalized);
+        if (normalized && pairMatchesProviderFocus(normalized, providerKey)) pairKeys.add(normalized);
       });
 
       if (!pairKeys.size) {
@@ -5094,7 +5952,7 @@
         for (let idx = 0; idx < providers.length; idx += 1) {
           for (let inner = idx + 1; inner < providers.length; inner += 1) {
             const normalized = normalizeProviderPairKey(providers[idx], providers[inner]);
-            if (normalized) pairKeys.add(normalized);
+            if (normalized && pairMatchesProviderFocus(normalized, providerKey)) pairKeys.add(normalized);
           }
         }
       }
@@ -5102,22 +5960,26 @@
       return Array.from(pairKeys).sort((left, right) => providerPairLabel(left).localeCompare(providerPairLabel(right)));
     }
 
-    function reportNearMissReasons(report) {
+    function reportNearMissReasons(report, providerKey = 'all') {
       const summary = report?.summary && typeof report.summary === 'object' ? report.summary : {};
       const reasonCounts = summary?.single_provider_reason_counts && typeof summary.single_provider_reason_counts === 'object'
         ? summary.single_provider_reason_counts
         : {};
       const seen = new Set();
       const ordered = [];
-      Object.keys(reasonCounts).forEach((reasonCode) => {
-        const normalized = String(reasonCode || '').trim();
-        if (!normalized || seen.has(normalized)) return;
-        seen.add(normalized);
-        ordered.push(normalized);
-      });
+      const shouldUseSummary = !providerKey || providerKey === 'all';
+      if (shouldUseSummary) {
+        Object.keys(reasonCounts).forEach((reasonCode) => {
+          const normalized = String(reasonCode || '').trim();
+          if (!normalized || seen.has(normalized)) return;
+          seen.add(normalized);
+          ordered.push(normalized);
+        });
+      }
       if (!ordered.length) {
         const singles = Array.isArray(report?.single_provider_samples) ? report.single_provider_samples : [];
         singles.forEach((entry) => {
+          if (!nearMissMatchesProviderFilter(entry, providerKey)) return;
           const normalized = String(entry?.reason_code || '').trim();
           if (!normalized || seen.has(normalized)) return;
           seen.add(normalized);
@@ -5128,11 +5990,22 @@
     }
 
     function renderProviderMatchFilters(report) {
+      const providerSelect = providerMatchProviderFilter;
       const pairSelect = providerMatchPairFilter;
       const reasonSelect = providerMatchReasonFilter;
-      if (!pairSelect || !reasonSelect) return;
+      if (!providerSelect || !pairSelect || !reasonSelect) return;
 
-      const pairOptions = ['all', ...reportProviderPairKeys(report)];
+      const providerOptions = ['all', ...reportProviderKeys(report)];
+      if (!providerOptions.includes(providerMatchProviderFilterValue)) {
+        providerMatchProviderFilterValue = 'all';
+      }
+      providerSelect.innerHTML = providerOptions.map((value) => `
+        <option value="${escapeHtml(value)}">${escapeHtml(value === 'all' ? t('provider_match_provider_all') : providerDisplayName(value))}</option>
+      `).join('');
+      providerSelect.value = providerMatchProviderFilterValue;
+      providerSelect.disabled = providerOptions.length <= 1;
+
+      const pairOptions = ['all', ...reportProviderPairKeys(report, providerMatchProviderFilterValue)];
       if (!pairOptions.includes(providerMatchPairFilterValue)) {
         providerMatchPairFilterValue = 'all';
       }
@@ -5142,7 +6015,7 @@
       pairSelect.value = providerMatchPairFilterValue;
       pairSelect.disabled = pairOptions.length <= 1;
 
-      const reasonCodes = ['all', ...reportNearMissReasons(report)];
+      const reasonCodes = ['all', ...reportNearMissReasons(report, providerMatchProviderFilterValue, providerMatchPairFilterValue)];
       if (!reasonCodes.includes(providerMatchReasonFilterValue)) {
         providerMatchReasonFilterValue = 'all';
       }
@@ -5161,11 +6034,26 @@
       return providers.includes(left) && providers.includes(right);
     }
 
+    function clusterMatchesProviderFilter(cluster, providerKey) {
+      const normalizedProvider = normalizeProviderKey(providerKey);
+      if (!normalizedProvider || normalizedProvider === 'all') return true;
+      const providers = Array.isArray(cluster?.providers) ? cluster.providers.map((item) => String(item || '').trim()) : [];
+      return providers.includes(normalizedProvider);
+    }
+
     function nearMissMatchesProviderPairFilter(entry, pairKey) {
       if (!pairKey || pairKey === 'all') return true;
       const nearestProvider = entry?.closest_candidate?.provider;
       if (!nearestProvider) return false;
       return normalizeProviderPairKey(entry?.provider, nearestProvider) === pairKey;
+    }
+
+    function nearMissMatchesProviderFilter(entry, providerKey) {
+      const normalizedProvider = normalizeProviderKey(providerKey);
+      if (!normalizedProvider || normalizedProvider === 'all') return true;
+      const sourceProvider = normalizeProviderKey(entry?.provider);
+      const candidateProvider = normalizeProviderKey(entry?.closest_candidate?.provider);
+      return sourceProvider === normalizedProvider || candidateProvider === normalizedProvider;
     }
 
     function nearMissMatchesReasonFilter(entry, reasonCode) {
@@ -5321,6 +6209,108 @@
         sourceMarkets,
         candidateMarkets,
       };
+    }
+
+    function providerCompareDiagnosisToneClass(kind) {
+      if (kind === 'snapshot' || kind === 'coverage') return 'is-error';
+      if (kind === 'same_game') return 'is-ready';
+      return 'is-warning';
+    }
+
+    function buildProviderCompareDiagnosis(entry, diffInfo, sourceEvent, candidateEvent) {
+      const rows = Array.isArray(diffInfo?.rows) ? diffInfo.rows : [];
+      const rowByKey = Object.fromEntries(rows.map((row) => [row.key, row]));
+      const reportToleranceMinutes = Number(crossProviderReportCache?.summary?.tolerance_minutes || 0);
+      const delta = Number(diffInfo?.delta);
+      const similarity = Number(diffInfo?.similarity);
+      const reasonCode = String(entry?.reason_code || '').trim();
+      const sourceMissing = !(sourceEvent && typeof sourceEvent === 'object');
+      const candidateMissing = !(candidateEvent && typeof candidateEvent === 'object');
+      const snapshotIssue = sourceMissing || candidateMissing;
+      const coverageIssue = reasonCode === 'no_other_provider_candidates';
+      const timeIssue = (
+        reasonCode === 'same_pair_time_mismatch'
+        || (rowByKey.start && rowByKey.start.status === 'different' && Number.isFinite(delta))
+      );
+      const nameIssue = (
+        ['name_variation_within_time', 'possible_name_mismatch', 'similar_pair_time_mismatch'].includes(reasonCode)
+        || ['variant', 'different'].includes(rowByKey.home_team?.status)
+        || ['variant', 'different'].includes(rowByKey.away_team?.status)
+      );
+      const marketIssue = ['variant', 'different', 'missing'].includes(rowByKey.markets?.status);
+      const sameGameIssue = (
+        Number.isFinite(similarity)
+        && similarity >= 95
+        && (!Number.isFinite(delta) || delta <= Math.max(30, reportToleranceMinutes + 30))
+      );
+
+      const supportingKinds = [];
+      const pushSignal = (kind) => {
+        if (!kind || supportingKinds.includes(kind)) return;
+        supportingKinds.push(kind);
+      };
+      if (snapshotIssue) pushSignal('snapshot');
+      if (coverageIssue) pushSignal('coverage');
+      if (timeIssue) pushSignal('time');
+      if (nameIssue) pushSignal('name');
+      if (marketIssue) pushSignal('market');
+      if (sameGameIssue) pushSignal('same_game');
+
+      let primaryKind = 'mixed';
+      if (snapshotIssue) {
+        primaryKind = 'snapshot';
+      } else if (coverageIssue) {
+        primaryKind = 'coverage';
+      } else if (reasonCode === 'same_pair_time_mismatch') {
+        primaryKind = 'time';
+      } else if (['name_variation_within_time', 'possible_name_mismatch', 'similar_pair_time_mismatch'].includes(reasonCode)) {
+        primaryKind = 'name';
+      } else if (timeIssue && !nameIssue && !marketIssue) {
+        primaryKind = 'time';
+      } else if (nameIssue && !timeIssue && !marketIssue) {
+        primaryKind = 'name';
+      } else if (marketIssue && !timeIssue && !nameIssue) {
+        primaryKind = 'market';
+      } else if (sameGameIssue && supportingKinds.length <= 1) {
+        primaryKind = 'same_game';
+      } else if (timeIssue && sameGameIssue && !nameIssue && !marketIssue) {
+        primaryKind = 'time';
+      } else if (supportingKinds.length === 1) {
+        primaryKind = supportingKinds[0];
+      }
+
+      const orderedSupporting = supportingKinds.filter((kind) => kind !== primaryKind);
+      return {
+        primaryKind,
+        primaryToneClass: providerCompareDiagnosisToneClass(primaryKind),
+        supportingKinds: orderedSupporting,
+      };
+    }
+
+    function renderProviderCompareDiagnosis(entry, diffInfo, sourceEvent, candidateEvent) {
+      if (!providerCompareDiagnosis) return;
+      const diagnosis = buildProviderCompareDiagnosis(entry, diffInfo, sourceEvent, candidateEvent);
+      const supportingChips = diagnosis.supportingKinds.map((kind) => (
+        `<span class="provider-chip ${providerCompareDiagnosisToneClass(kind)}">${escapeHtml(t(`provider_compare_signal_${kind}`))}</span>`
+      )).join('');
+      providerCompareDiagnosis.innerHTML = `
+        <div class="provider-compare-diagnosis-card ${diagnosis.primaryToneClass}">
+          <div class="provider-compare-diagnosis-head">
+            <span class="provider-chip ${diagnosis.primaryToneClass}">${escapeHtml(t('provider_compare_diagnosis_title'))}</span>
+            <div class="provider-match-summary">
+              <span class="provider-chip ${diagnosis.primaryToneClass}">${escapeHtml(t(`provider_compare_signal_${diagnosis.primaryKind}`))}</span>
+            </div>
+          </div>
+          <strong>${escapeHtml(t(`provider_compare_diag_${diagnosis.primaryKind}_title`))}</strong>
+          <p>${escapeHtml(t(`provider_compare_diag_${diagnosis.primaryKind}_body`))}</p>
+          ${supportingChips ? `
+            <div class="provider-compare-diagnosis-support">
+              <span class="provider-compare-diagnosis-label">${escapeHtml(t('provider_compare_supporting_title'))}</span>
+              <div class="provider-match-summary">${supportingChips}</div>
+            </div>
+          ` : ''}
+        </div>
+      `;
     }
 
     function renderProviderCompareDiff(entry, diffInfo) {
@@ -5511,6 +6501,7 @@
       providerCompareEmpty.textContent = t(messageKey, params);
       providerCompareEmpty.classList.remove('hidden');
       providerCompareContent.classList.add('hidden');
+      if (providerCompareDiagnosis) providerCompareDiagnosis.innerHTML = '';
       if (providerCompareDiff) providerCompareDiff.innerHTML = '';
       if (providerCompareGuidance) providerCompareGuidance.innerHTML = '';
       if (providerCompareSourceSummary) providerCompareSourceSummary.innerHTML = '';
@@ -5519,18 +6510,46 @@
       if (providerCompareCandidateJson) providerCompareCandidateJson.innerHTML = '';
     }
 
-    async function selectNearMissCompare(entry) {
-      const key = nearMissEntryKey(entry);
-      if (!key) return;
-      selectedNearMissKey = key;
-      if (crossProviderReportCache) {
-        renderCrossProviderReport(crossProviderReportCache);
-      }
+    function showNearMissCompareLoading() {
       if (!providerCompareEmpty || !providerCompareContent || !providerCompareStatus) return;
       providerCompareStatus.textContent = t('provider_compare_loading');
       providerCompareEmpty.textContent = t('provider_compare_loading');
       providerCompareEmpty.classList.remove('hidden');
       providerCompareContent.classList.add('hidden');
+    }
+
+    function nearMissCompareScrollTarget() {
+      return providerCompareContent?.closest('.provider-compare-panel')
+        || providerCompareEmpty?.closest('.provider-compare-panel')
+        || providerCompareContent
+        || providerCompareEmpty
+        || null;
+    }
+
+    function scrollNearMissComparePanel() {
+      const target = nearMissCompareScrollTarget();
+      if (!target) return;
+      window.requestAnimationFrame(() => {
+        try {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+        } catch (error) {
+          target.scrollIntoView();
+        }
+      });
+    }
+
+    async function selectNearMissCompare(entry, options = {}) {
+      const key = nearMissEntryKey(entry);
+      if (!key) return;
+      const {
+        scrollToCompare = false,
+      } = options || {};
+      selectedNearMissKey = key;
+      if (crossProviderReportCache) {
+        renderCrossProviderReport(crossProviderReportCache);
+      }
+      if (!providerCompareEmpty || !providerCompareContent || !providerCompareStatus) return;
+      showNearMissCompareLoading();
       try {
         const sourceProvider = entry?.provider;
         const candidateProvider = entry?.closest_candidate?.provider;
@@ -5543,6 +6562,7 @@
         const sourceEvent = providerEventById(sourceSnapshot, entry?.event_id);
         const candidateEvent = providerEventById(candidateSnapshot, entry?.closest_candidate?.event_id);
         const diffInfo = buildProviderCompareRows(entry, sourceEvent, candidateEvent);
+        renderProviderCompareDiagnosis(entry, diffInfo, sourceEvent, candidateEvent);
         renderProviderCompareDiff(entry, diffInfo);
         renderProviderCompareGuidance(entry, diffInfo, sourceEvent, candidateEvent);
         renderProviderCompareSummary(
@@ -5565,6 +6585,9 @@
         providerCompareStatus.textContent = `${providerDisplayName(entry?.provider)} vs ${providerDisplayName(entry?.closest_candidate?.provider)}`;
         providerCompareEmpty.classList.add('hidden');
         providerCompareContent.classList.remove('hidden');
+        if (scrollToCompare) {
+          scrollNearMissComparePanel();
+        }
       } catch (error) {
         if (selectedNearMissKey !== key) return;
         const message = error instanceof Error ? error.message : String(error || t('unknown_error'));
@@ -5590,6 +6613,55 @@
       return `${numeric.toFixed(numeric % 1 === 0 ? 0 : 1)}m`;
     }
 
+    function providerMatchScrollTarget() {
+      return refreshProviderMatchBtn?.closest('.provider-match-card')
+        || providerMatchContent
+        || providerMatchEmpty
+        || null;
+    }
+
+    function scrollProviderMatchSection() {
+      const target = providerMatchScrollTarget();
+      if (!target) return;
+      window.requestAnimationFrame(() => {
+        try {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+        } catch (error) {
+          target.scrollIntoView();
+        }
+      });
+    }
+
+    function maybeAutoSelectFirstNearMiss(entries = renderedNearMissEntries) {
+      if (!providerMatchPendingAutoSelect) return;
+      providerMatchPendingAutoSelect = false;
+      const firstEntry = Array.isArray(entries) ? entries[0] : null;
+      if (!firstEntry) {
+        renderNearMissCompareEmpty();
+        return;
+      }
+      void selectNearMissCompare(firstEntry, { scrollToCompare: true });
+    }
+
+    function focusProviderMatchReport(providerKey) {
+      const normalized = normalizeProviderKey(providerKey);
+      providerMatchProviderFilterValue = normalized || 'all';
+      providerMatchPairFilterValue = 'all';
+      providerMatchReasonFilterValue = 'all';
+      providerMatchPendingAutoSelect = Boolean(normalized);
+      if (providerMatchPendingAutoSelect) {
+        showNearMissCompareLoading();
+      }
+      if (activeTab !== 'providers') {
+        setActiveTab('providers');
+      } else if (crossProviderReportCache) {
+        renderCrossProviderReport(crossProviderReportCache);
+      } else {
+        loadCrossProviderReport(false);
+      }
+      scrollProviderMatchSection();
+    }
+
     function renderCrossProviderReport(report, errorMessage = '') {
       if (
         !providerMatchCount ||
@@ -5608,6 +6680,12 @@
         providerMatchCount.textContent = t('provider_match_count', { count: 0 });
         providerSingleCount.textContent = t('provider_match_single_count', { count: 0 });
         providerMatchSummary.innerHTML = '';
+        if (providerMatchProviderFilter) {
+          providerMatchProviderFilterValue = 'all';
+          providerMatchProviderFilter.innerHTML = `<option value="all">${escapeHtml(t('provider_match_provider_all'))}</option>`;
+          providerMatchProviderFilter.value = 'all';
+          providerMatchProviderFilter.disabled = true;
+        }
         if (providerMatchPairFilter) {
           providerMatchPairFilterValue = 'all';
           providerMatchPairFilter.innerHTML = `<option value="all">${escapeHtml(t('provider_match_pair_all'))}</option>`;
@@ -5635,14 +6713,19 @@
       const clusters = Array.isArray(report.clusters) ? report.clusters : [];
       const singles = Array.isArray(report.single_provider_samples) ? report.single_provider_samples : [];
       renderProviderMatchFilters(report);
-      const filteredClusters = clusters.filter((cluster) => clusterMatchesProviderPairFilter(cluster, providerMatchPairFilterValue));
+      const filteredClusters = clusters.filter((cluster) => (
+        clusterMatchesProviderFilter(cluster, providerMatchProviderFilterValue)
+        && clusterMatchesProviderPairFilter(cluster, providerMatchPairFilterValue)
+      ));
       const filteredSingles = singles.filter((entry) => (
-        nearMissMatchesProviderPairFilter(entry, providerMatchPairFilterValue)
+        nearMissMatchesProviderFilter(entry, providerMatchProviderFilterValue)
+        && nearMissMatchesProviderPairFilter(entry, providerMatchPairFilterValue)
         && nearMissMatchesReasonFilter(entry, providerMatchReasonFilterValue)
       ));
       renderedNearMissEntries = filteredSingles.slice();
+      const shouldAutoSelectNearMiss = providerMatchPendingAutoSelect && filteredSingles.length > 0;
       const selectedStillVisible = renderedNearMissEntries.some((entry) => nearMissEntryKey(entry) === selectedNearMissKey);
-      if (!selectedStillVisible) {
+      if (!selectedStillVisible && !shouldAutoSelectNearMiss) {
         selectedNearMissKey = '';
         renderNearMissCompareEmpty();
       }
@@ -5650,17 +6733,23 @@
       const totalClusters = Number(summary.total_match_clusters ?? 0);
       const totalRawRecords = Number(summary.total_raw_records ?? 0);
       const toleranceMinutes = Number(summary.tolerance_minutes ?? 0);
+      const hasProviderFilter = providerMatchProviderFilterValue !== 'all';
       const hasPairFilter = providerMatchPairFilterValue !== 'all';
       const hasReasonFilter = providerMatchReasonFilterValue !== 'all';
 
-      providerMatchCount.textContent = hasPairFilter
+      providerMatchCount.textContent = (hasProviderFilter || hasPairFilter || hasReasonFilter)
         ? t('provider_match_count_filtered', { shown: filteredClusters.length, total: clusters.length })
         : t('provider_match_count', { count: clusters.length });
-      providerSingleCount.textContent = (hasPairFilter || hasReasonFilter)
+      providerSingleCount.textContent = (hasProviderFilter || hasPairFilter || hasReasonFilter)
         ? t('provider_match_single_count_filtered', { shown: filteredSingles.length, total: singles.length })
         : t('provider_match_single_count', { count: singles.length });
 
       const filterChips = [];
+      if (hasProviderFilter) {
+        filterChips.push(
+          `<span class="provider-chip">${t('provider_match_filter_provider_chip', { provider: escapeHtml(providerDisplayName(providerMatchProviderFilterValue)) })}</span>`
+        );
+      }
       if (hasPairFilter) {
         filterChips.push(
           `<span class="provider-chip">${t('provider_match_filter_pair_chip', { pair: escapeHtml(providerPairLabel(providerMatchPairFilterValue)) })}</span>`
@@ -5708,7 +6797,7 @@
       } else {
         providerMatchTableBody.innerHTML = `
           <tr>
-            <td colspan="6">${escapeHtml(t(hasPairFilter ? 'provider_match_no_overlaps_filtered' : 'provider_match_no_overlaps'))}</td>
+            <td colspan="6">${escapeHtml(t((hasProviderFilter || hasPairFilter || hasReasonFilter) ? 'provider_match_no_overlaps_filtered' : 'provider_match_no_overlaps'))}</td>
           </tr>
         `;
       }
@@ -5753,13 +6842,14 @@
       } else {
         providerSingleTableBody.innerHTML = `
           <tr>
-            <td colspan="11">${escapeHtml(t((hasPairFilter || hasReasonFilter) ? 'provider_match_no_single_filtered' : 'provider_match_no_single'))}</td>
+            <td colspan="11">${escapeHtml(t((hasProviderFilter || hasPairFilter || hasReasonFilter) ? 'provider_match_no_single_filtered' : 'provider_match_no_single'))}</td>
           </tr>
         `;
       }
 
       providerMatchEmpty.classList.add('hidden');
       providerMatchContent.classList.remove('hidden');
+      maybeAutoSelectFirstNearMiss(filteredSingles);
     }
 
     async function loadCrossProviderReport(forceReload = false) {
@@ -5791,6 +6881,7 @@
         }
         crossProviderReportCache = payload.report;
         renderCrossProviderReport(crossProviderReportCache);
+        renderScanDiagnostics();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error || t('unknown_error'));
         if (crossProviderReportCache) {
@@ -8341,6 +9432,7 @@
       } else if (normalizedTab === 'providers') {
         renderScanDiagnostics();
         renderProviderData();
+        maybeFocusPrimaryProviderReviewCard(true);
         if (crossProviderReportCache) {
           renderCrossProviderReport(crossProviderReportCache);
         } else {
@@ -8869,71 +9961,768 @@
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       const historyPanel = document.getElementById('history-panel');
+      const historySummaryTable = document.getElementById('history-summary-table');
+      const historySummaryTableBody = document.querySelector('#history-summary-table tbody');
+      const historySummaryEmpty = document.getElementById('history-summary-empty');
+      const historySummaryCount = document.getElementById('history-summary-count');
+      const historyProviderTable = document.getElementById('history-provider-table');
+      const historyProviderTableBody = document.querySelector('#history-provider-table tbody');
+      const historyProviderEmpty = document.getElementById('history-provider-empty');
+      const historyProviderCount = document.getElementById('history-provider-count');
+      const historyProviderWatchlistSummary = document.getElementById('history-provider-watchlist-summary');
+      const historyProviderWatchlist = document.getElementById('history-provider-watchlist');
+      const historySummaryLikelyFilter = document.getElementById('history-summary-likely-filter');
+      const historySummaryModeFilter = document.getElementById('history-summary-mode-filter');
+      const historySummaryTimeFilter = document.getElementById('history-summary-time-filter');
+      const historySummaryProviderFilter = document.getElementById('history-summary-provider-filter');
       const refreshHistoryBtn = document.getElementById('refresh-history-btn');
+      const historyTable = document.getElementById('history-table');
       const historyTableBody = document.querySelector('#history-table tbody');
       const historyEmpty = document.getElementById('history-empty');
       const historyTableCount = document.getElementById('history-table-count');
+      let historySummaryRecordsCache = [];
+      let historySummaryLikelyFilterValue = 'all';
+      let historySummaryModeFilterValue = 'all';
+      let historySummaryTimeFilterValue = 'all';
+      let historySummaryProviderFilterValue = 'all';
+
+      function formatHistoryScanTime(value) {
+        const raw = String(value || '').trim();
+        return raw ? raw.replace('T', ' ').slice(0, 19) : '';
+      }
+
+      function parseHistoryScanTimestamp(value) {
+        const parsed = Date.parse(String(value || '').trim());
+        return Number.isFinite(parsed) ? parsed : null;
+      }
+
+      function normalizeHistorySummaryProviderValue(value) {
+        return String(value || '').trim().toLowerCase();
+      }
+
+      function historySummaryProviders(diagnostics) {
+        const providerBreakdown = Array.isArray(diagnostics?.provider_breakdown)
+          ? diagnostics.provider_breakdown
+          : [];
+        return providerBreakdown
+          .map((entry) => {
+            const key = normalizeHistorySummaryProviderValue(entry?.provider_key || entry?.provider_name);
+            const name = String(entry?.provider_name || entry?.provider_key || '').trim();
+            if (!key || !name) return null;
+            return { key, name };
+          })
+          .filter(Boolean);
+      }
+
+      function historySummaryTimeOptions() {
+        return [
+          { value: 'all', label: t('history_scan_summary_filter_all_time') },
+          { value: '24h', label: t('history_scan_summary_filter_time_24h') },
+          { value: '7d', label: t('history_scan_summary_filter_time_7d') },
+          { value: '30d', label: t('history_scan_summary_filter_time_30d') },
+        ];
+      }
+
+      function historySummaryTimeCutoff(rangeValue, referenceTimestamp) {
+        const hoursByRange = {
+          '24h': 24,
+          '7d': 24 * 7,
+          '30d': 24 * 30,
+        };
+        const hours = hoursByRange[String(rangeValue || '').trim().toLowerCase()];
+        if (!hours || !Number.isFinite(referenceTimestamp)) {
+          return null;
+        }
+        return referenceTimestamp - (hours * 60 * 60 * 1000);
+      }
+
+      function historyScanModeLabel(value) {
+        return String(value || '').trim().toLowerCase() === 'live'
+          ? t('scan_mode_live_short')
+          : t('scan_mode_prematch_short');
+      }
+
+      function historyLikelyToneClass(kind) {
+        if (kind === 'found') return 'is-ready';
+        if (kind === 'fetch') return 'is-error';
+        if (kind === 'matching' || kind === 'mixed') return 'is-warning';
+        return '';
+      }
+
+      function historyLikelyFilterKinds() {
+        return ['fetch', 'matching', 'no_arb', 'mixed', 'found', 'unknown'];
+      }
+
+      function historyLikelyLabel(kind) {
+        return t(`scan_diag_likely_${kind}_title`);
+      }
+
+      function historyProviderToneClass(kind) {
+        if (kind === 'healthy') return 'is-ready';
+        if (kind === 'fetch') return 'is-error';
+        if (kind === 'matching' || kind === 'mixed') return 'is-warning';
+        return '';
+      }
+
+      function historyProviderInsight(aggregate) {
+        const scansWithErrors = Number(aggregate?.scansWithErrors || 0);
+        const scansNeedingReview = Number(aggregate?.scansNeedingReview || 0);
+        const scansWithMatchHits = Number(aggregate?.scansWithMatchHits || 0);
+        let kind = 'low_sample';
+        if (scansWithErrors > 0 && scansWithErrors >= scansWithMatchHits && scansWithErrors >= scansNeedingReview) {
+          kind = 'fetch';
+        } else if (scansNeedingReview > 0 && scansNeedingReview >= scansWithMatchHits) {
+          kind = 'matching';
+        } else if (scansWithErrors > 0 || scansNeedingReview > 0) {
+          kind = 'mixed';
+        } else if (scansWithMatchHits > 0) {
+          kind = 'healthy';
+        }
+        return {
+          kind,
+          titleKey: `history_provider_signal_${kind}_title`,
+          bodyKey: `history_provider_signal_${kind}_body`,
+        };
+      }
+
+      function historyProviderSuspicionScore(aggregate, insight) {
+        const scansSeen = Number(aggregate?.scansSeen || 0);
+        const fetchRate = historyProviderTrendRate(aggregate?.trendCounts?.fetch, scansSeen);
+        const matchingRate = historyProviderTrendRate(aggregate?.trendCounts?.matching, scansSeen);
+        const healthyRate = historyProviderTrendRate(aggregate?.trendCounts?.healthy, scansSeen);
+        const baseScore = (fetchRate * 2.6) + (matchingRate * 1.8) - (healthyRate * 0.8);
+        const signalBonus = insight?.kind === 'fetch'
+          ? 26
+          : insight?.kind === 'matching'
+            ? 18
+            : insight?.kind === 'mixed'
+              ? 12
+              : 0;
+        const countBonus = (Number(aggregate?.scansWithErrors || 0) * 6)
+          + (Number(aggregate?.scansNeedingReview || 0) * 4)
+          + Math.min(scansSeen, 6);
+        return baseScore + signalBonus + countBonus;
+      }
+
+      function buildHistoryProviderWatchlistEntries(filteredProviders) {
+        return filteredProviders
+          .map((aggregate) => ({ aggregate, insight: historyProviderInsight(aggregate) }))
+          .filter(({ insight }) => ['fetch', 'matching', 'mixed'].includes(insight.kind))
+          .sort((left, right) => (
+            historyProviderSuspicionScore(right.aggregate, right.insight) - historyProviderSuspicionScore(left.aggregate, left.insight)
+            || Number(right.aggregate?.scansWithErrors || 0) - Number(left.aggregate?.scansWithErrors || 0)
+            || Number(right.aggregate?.scansNeedingReview || 0) - Number(left.aggregate?.scansNeedingReview || 0)
+            || String(left.aggregate?.name || left.aggregate?.key || '').localeCompare(String(right.aggregate?.name || right.aggregate?.key || ''))
+          ))
+          .slice(0, 3);
+      }
+
+      function historyProviderTrendState(entry) {
+        const rawEvents = Number(entry?.raw_events || 0);
+        const matchedExisting = Number(entry?.matched_existing || 0);
+        const errorCount = Number(entry?.error_count || 0);
+        if (errorCount > 0) return 'fetch';
+        if (matchedExisting > 0) return 'healthy';
+        if (rawEvents > 0) return 'matching';
+        return 'idle';
+      }
+
+      function historyProviderTrendToneClass(state) {
+        if (state === 'healthy') return 'is-ready';
+        if (state === 'fetch') return 'is-error';
+        if (state === 'matching') return 'is-warning';
+        return 'is-muted';
+      }
+
+      function historyProviderTrendShortLabel(state) {
+        return t(`history_provider_trend_${state}_short`);
+      }
+
+      function historyProviderTrendFullLabel(state) {
+        return t(`history_provider_trend_${state}_full`);
+      }
+
+      function historyProviderTrendRate(count, total) {
+        const numericTotal = Number(total || 0);
+        if (!(numericTotal > 0)) return 0;
+        return (Number(count || 0) / numericTotal) * 100;
+      }
+
+      function formatHistoryRatePercent(value) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric) || numeric <= 0) return '0%';
+        if (numeric >= 99.95) return '100%';
+        return `${numeric.toFixed(numeric >= 10 ? 0 : 1)}%`;
+      }
+
+      function buildHistoryProviderAggregates(preparedRecords, providerKeyFilter = 'all') {
+        const normalizedProviderFilter = normalizeHistorySummaryProviderValue(providerKeyFilter);
+        const providerMap = new Map();
+        preparedRecords.forEach(({ record, diagnostics, scanTimestamp }) => {
+          const providerBreakdown = Array.isArray(diagnostics?.provider_breakdown)
+            ? diagnostics.provider_breakdown
+            : [];
+          providerBreakdown.forEach((entry) => {
+            const key = normalizeHistorySummaryProviderValue(entry?.provider_key || entry?.provider_name);
+            const name = String(entry?.provider_name || entry?.provider_key || '').trim();
+            if (!key || !name) return;
+            if (normalizedProviderFilter !== 'all' && key !== normalizedProviderFilter) return;
+            let aggregate = providerMap.get(key);
+            if (!aggregate) {
+              aggregate = {
+                key,
+                name,
+                scansSeen: 0,
+                enabledScans: 0,
+                scansWithEvents: 0,
+                scansWithErrors: 0,
+                scansWithMatchHits: 0,
+                scansNeedingReview: 0,
+                totalRawEvents: 0,
+                totalMergeHits: 0,
+                totalFuzzyMatches: 0,
+                trendCounts: { fetch: 0, matching: 0, healthy: 0, idle: 0 },
+                recentStates: [],
+                lastSeenTimestamp: null,
+                lastSeenValue: '',
+              };
+              providerMap.set(key, aggregate);
+            }
+            const enabled = Boolean(entry?.enabled);
+            const rawEvents = Number(entry?.raw_events || 0);
+            const matchedExisting = Number(entry?.matched_existing || 0);
+            const fuzzyMatches = Number(entry?.matched_fuzzy || 0);
+            const errorCount = Number(entry?.error_count || 0);
+            const state = historyProviderTrendState(entry);
+            aggregate.scansSeen += 1;
+            if (enabled) aggregate.enabledScans += 1;
+            if (rawEvents > 0) aggregate.scansWithEvents += 1;
+            if (errorCount > 0) aggregate.scansWithErrors += 1;
+            if (matchedExisting > 0) aggregate.scansWithMatchHits += 1;
+            if (rawEvents > 0 && matchedExisting === 0 && errorCount === 0) {
+              aggregate.scansNeedingReview += 1;
+            }
+            aggregate.totalRawEvents += rawEvents;
+            aggregate.totalMergeHits += matchedExisting;
+            aggregate.totalFuzzyMatches += fuzzyMatches;
+            aggregate.trendCounts[state] = Number(aggregate.trendCounts[state] || 0) + 1;
+            aggregate.recentStates.push({
+              state,
+              scanTimestamp,
+              scanTime: String(record?.scan_time || ''),
+              scanMode: String(record?.scan_mode || ''),
+              rawEvents,
+              matchedExisting,
+              errorCount,
+            });
+            if (Number.isFinite(scanTimestamp) && (!Number.isFinite(aggregate.lastSeenTimestamp) || scanTimestamp > aggregate.lastSeenTimestamp)) {
+              aggregate.lastSeenTimestamp = scanTimestamp;
+              aggregate.lastSeenValue = String(record?.scan_time || '');
+            }
+          });
+        });
+        providerMap.forEach((aggregate) => {
+          aggregate.recentStates.sort((left, right) => (
+            (Number(right.scanTimestamp) || 0) - (Number(left.scanTimestamp) || 0)
+          ));
+        });
+        return Array.from(providerMap.values()).sort((left, right) => (
+          Number(right.scansWithErrors || 0) - Number(left.scansWithErrors || 0)
+          || Number(right.scansNeedingReview || 0) - Number(left.scansNeedingReview || 0)
+          || Number(right.scansSeen || 0) - Number(left.scansSeen || 0)
+          || Number(right.totalRawEvents || 0) - Number(left.totalRawEvents || 0)
+          || String(left.name || left.key || '').localeCompare(String(right.name || right.key || ''))
+        ));
+      }
+
+      function filterHistorySummaryRecords(preparedRecords) {
+        const referenceTimestamp = preparedRecords.reduce((latest, { scanTimestamp }) => (
+          Number.isFinite(scanTimestamp) ? Math.max(latest, scanTimestamp) : latest
+        ), Date.now());
+        const timeCutoff = historySummaryTimeCutoff(historySummaryTimeFilterValue, referenceTimestamp);
+        return preparedRecords.filter(({ record, likely, providerKeys, scanTimestamp }) => {
+          const modeValue = String(record?.scan_mode || '').trim().toLowerCase() || 'prematch';
+          if (historySummaryLikelyFilterValue !== 'all' && likely.kind !== historySummaryLikelyFilterValue) {
+            return false;
+          }
+          if (historySummaryModeFilterValue !== 'all' && modeValue !== historySummaryModeFilterValue) {
+            return false;
+          }
+          if (historySummaryProviderFilterValue !== 'all' && !providerKeys.includes(historySummaryProviderFilterValue)) {
+            return false;
+          }
+          if (timeCutoff !== null && (!Number.isFinite(scanTimestamp) || scanTimestamp < timeCutoff)) {
+            return false;
+          }
+          return true;
+        });
+      }
+
+      function renderHistoryProviderWatchlist(filteredProviders) {
+        if (!historyProviderWatchlist || !historyProviderWatchlistSummary) return [];
+        const watchlist = buildHistoryProviderWatchlistEntries(filteredProviders);
+        const counts = watchlist.reduce((acc, entry) => {
+          acc.total += 1;
+          if (entry.insight.kind === 'fetch') acc.fetch += 1;
+          else if (entry.insight.kind === 'matching') acc.matching += 1;
+          else if (entry.insight.kind === 'mixed') acc.mixed += 1;
+          return acc;
+        }, { total: 0, fetch: 0, matching: 0, mixed: 0 });
+        const summaryChips = watchlist.length
+          ? [
+            `<span class="provider-chip is-warning">${escapeHtml(t('history_provider_watchlist_top_chip', { count: counts.total }))}</span>`,
+            counts.fetch > 0 ? `<span class="provider-chip is-error">${escapeHtml(t('history_provider_watchlist_fetch_chip', { count: counts.fetch }))}</span>` : '',
+            counts.matching > 0 ? `<span class="provider-chip is-warning">${escapeHtml(t('history_provider_watchlist_matching_chip', { count: counts.matching }))}</span>` : '',
+            counts.mixed > 0 ? `<span class="provider-chip">${escapeHtml(t('history_provider_watchlist_mixed_chip', { count: counts.mixed }))}</span>` : '',
+          ].filter(Boolean)
+          : [`<span class="provider-chip">${escapeHtml(t('history_provider_watchlist_empty'))}</span>`];
+        historyProviderWatchlistSummary.innerHTML = summaryChips.join('');
+
+        if (!watchlist.length) {
+          historyProviderWatchlist.innerHTML = '';
+          historyProviderWatchlist.classList.add('hidden');
+          return [];
+        }
+
+        historyProviderWatchlist.innerHTML = watchlist.map(({ aggregate, insight }, index) => {
+          const toneClass = historyProviderToneClass(insight.kind);
+          const trendSummary = t('history_provider_trend_summary', {
+            fetch: formatHistoryRatePercent(historyProviderTrendRate(aggregate?.trendCounts?.fetch, aggregate.scansSeen)),
+            matching: formatHistoryRatePercent(historyProviderTrendRate(aggregate?.trendCounts?.matching, aggregate.scansSeen)),
+            healthy: formatHistoryRatePercent(historyProviderTrendRate(aggregate?.trendCounts?.healthy, aggregate.scansSeen)),
+            idle: formatHistoryRatePercent(historyProviderTrendRate(aggregate?.trendCounts?.idle, aggregate.scansSeen)),
+          });
+          const recentChips = aggregate.recentStates.slice(0, 6).map((sample) => {
+            const tone = historyProviderTrendToneClass(sample.state);
+            const title = [
+              formatHistoryScanTime(sample.scanTime),
+              historyScanModeLabel(sample.scanMode),
+              historyProviderTrendFullLabel(sample.state),
+            ].filter(Boolean).join(' | ');
+            return `<span class="history-provider-trend-chip ${tone}" title="${escapeHtml(title)}">${escapeHtml(historyProviderTrendShortLabel(sample.state))}</span>`;
+          }).join('');
+          const lastSeenText = formatHistoryScanTime(aggregate.lastSeenValue) || '-';
+          return `
+            <article class="history-provider-watch-card ${toneClass}">
+              <div class="history-provider-watch-head">
+                <span class="provider-chip ${toneClass}">${escapeHtml(t('history_provider_watchlist_rank', { rank: index + 1 }))}</span>
+                <span class="provider-chip ${toneClass}">${escapeHtml(t(insight.titleKey))}</span>
+              </div>
+              <strong>${escapeHtml(aggregate.name)}</strong>
+              <p class="muted mono">${escapeHtml(aggregate.key)}</p>
+              <p class="muted">${escapeHtml(t(insight.bodyKey))}</p>
+              <div class="provider-match-summary">
+                <span class="provider-chip">${escapeHtml(t('history_provider_metric_scans', { count: Number(aggregate.scansSeen || 0) }))}</span>
+                <span class="provider-chip">${escapeHtml(t('history_provider_metric_fetch_issues', { count: Number(aggregate.scansWithErrors || 0) }))}</span>
+                <span class="provider-chip">${escapeHtml(t('history_provider_metric_match_review', { count: Number(aggregate.scansNeedingReview || 0) }))}</span>
+              </div>
+              <div class="history-provider-trend-list">${recentChips}</div>
+              <p class="muted">${escapeHtml(trendSummary)}</p>
+              <p class="muted">${escapeHtml(t('history_provider_watchlist_last_seen', { time: lastSeenText }))}</p>
+            </article>
+          `;
+        }).join('');
+        historyProviderWatchlist.classList.remove('hidden');
+        return watchlist.map(({ aggregate }) => aggregate.key);
+      }
+
+      function renderHistoryProviderLens(filteredRecords, preparedRecords) {
+        if (!historyProviderTableBody) return;
+        historyProviderTableBody.innerHTML = '';
+        const totalProviders = buildHistoryProviderAggregates(preparedRecords).length;
+        const filteredProviders = buildHistoryProviderAggregates(filteredRecords, historySummaryProviderFilterValue);
+        const watchlistKeys = new Set(renderHistoryProviderWatchlist(filteredProviders));
+
+        if (!preparedRecords.length || totalProviders === 0) {
+          historyProviderEmpty?.classList.remove('hidden');
+          historyProviderEmpty.textContent = t('history_provider_empty');
+          historyProviderTable?.parentElement?.classList.add('hidden');
+          if (historyProviderCount) historyProviderCount.textContent = t('history_provider_count', { count: 0 });
+          return;
+        }
+
+        if (!filteredProviders.length) {
+          historyProviderEmpty?.classList.remove('hidden');
+          historyProviderEmpty.textContent = t('history_provider_empty_filtered');
+          historyProviderTable?.parentElement?.classList.add('hidden');
+          if (historyProviderCount) {
+            historyProviderCount.textContent = t('history_provider_count_filtered', {
+              shown: 0,
+              total: totalProviders,
+            });
+          }
+          return;
+        }
+
+        historyProviderEmpty?.classList.add('hidden');
+        historyProviderEmpty.textContent = t('history_provider_empty');
+        historyProviderTable?.parentElement?.classList.remove('hidden');
+        if (historyProviderCount) {
+          historyProviderCount.textContent = filteredProviders.length === totalProviders
+            ? t('history_provider_count', { count: filteredProviders.length })
+            : t('history_provider_count_filtered', {
+              shown: filteredProviders.length,
+              total: totalProviders,
+            });
+        }
+
+        filteredProviders.forEach((aggregate) => {
+          const insight = historyProviderInsight(aggregate);
+          const toneClass = historyProviderToneClass(insight.kind);
+          const coverageChips = [
+            t('history_provider_metric_scans', { count: Number(aggregate.scansSeen || 0) }),
+            t('history_provider_metric_enabled', { count: Number(aggregate.enabledScans || 0) }),
+            t('history_provider_metric_with_events', { count: Number(aggregate.scansWithEvents || 0) }),
+          ];
+          const mergeChips = [
+            t('history_provider_metric_fetch_issues', { count: Number(aggregate.scansWithErrors || 0) }),
+            t('history_provider_metric_match_review', { count: Number(aggregate.scansNeedingReview || 0) }),
+            t('history_provider_metric_match_hits_scan', { count: Number(aggregate.scansWithMatchHits || 0) }),
+            t('history_provider_metric_raw_events', { count: Number(aggregate.totalRawEvents || 0) }),
+            t('history_provider_metric_merge_hits', { count: Number(aggregate.totalMergeHits || 0) }),
+          ];
+          const trendRates = {
+            fetch: historyProviderTrendRate(aggregate?.trendCounts?.fetch, aggregate.scansSeen),
+            matching: historyProviderTrendRate(aggregate?.trendCounts?.matching, aggregate.scansSeen),
+            healthy: historyProviderTrendRate(aggregate?.trendCounts?.healthy, aggregate.scansSeen),
+            idle: historyProviderTrendRate(aggregate?.trendCounts?.idle, aggregate.scansSeen),
+          };
+          const trendSummary = t('history_provider_trend_summary', {
+            fetch: formatHistoryRatePercent(trendRates.fetch),
+            matching: formatHistoryRatePercent(trendRates.matching),
+            healthy: formatHistoryRatePercent(trendRates.healthy),
+            idle: formatHistoryRatePercent(trendRates.idle),
+          });
+          const trendBarHtml = ['fetch', 'matching', 'healthy', 'idle']
+            .filter((state) => Number(trendRates[state] || 0) > 0)
+            .map((state) => {
+              const tone = historyProviderTrendToneClass(state);
+              const count = Number(aggregate?.trendCounts?.[state] || 0);
+              const label = historyProviderTrendFullLabel(state);
+              const percentText = formatHistoryRatePercent(trendRates[state]);
+              const title = `${label} | ${count}/${Number(aggregate.scansSeen || 0)} | ${percentText}`;
+              return `<span class="history-provider-rate-segment ${tone}" style="width: ${Number(trendRates[state] || 0)}%" title="${escapeHtml(title)}"></span>`;
+            })
+            .join('');
+          const recentTrendHtml = aggregate.recentStates.slice(0, 8).map((sample) => {
+            const tone = historyProviderTrendToneClass(sample.state);
+            const title = [
+              formatHistoryScanTime(sample.scanTime),
+              historyScanModeLabel(sample.scanMode),
+              historyProviderTrendFullLabel(sample.state),
+              `${t('provider_fetched')}: ${Number(sample.rawEvents || 0)}`,
+              `${t('provider_matched')}: ${Number(sample.matchedExisting || 0)}`,
+              `${t('provider_errors')}: ${Number(sample.errorCount || 0)}`,
+            ].filter(Boolean).join(' | ');
+            return `<span class="history-provider-trend-chip ${tone}" title="${escapeHtml(title)}">${escapeHtml(historyProviderTrendShortLabel(sample.state))}</span>`;
+          }).join('');
+          if (Number(aggregate.totalFuzzyMatches || 0) > 0) {
+            mergeChips.push(t('history_provider_metric_fuzzy', { count: Number(aggregate.totalFuzzyMatches || 0) }));
+          }
+          const tr = document.createElement('tr');
+          tr.className = watchlistKeys.has(aggregate.key) ? `history-provider-row is-watch ${toneClass}`.trim() : 'history-provider-row';
+          tr.innerHTML = `
+            <td class="history-provider-cell">
+              <strong>${escapeHtml(aggregate.name)}</strong>
+              <p class="muted mono">${escapeHtml(aggregate.key)}</p>
+            </td>
+            <td class="history-provider-signal">
+              <span class="provider-chip ${toneClass}">${escapeHtml(t(insight.titleKey))}</span>
+              <p class="muted">${escapeHtml(t(insight.bodyKey))}</p>
+            </td>
+            <td><div class="provider-match-summary">${coverageChips.map((item) => `<span class="provider-chip">${escapeHtml(item)}</span>`).join('')}</div></td>
+            <td><div class="provider-match-summary">${mergeChips.map((item) => `<span class="provider-chip">${escapeHtml(item)}</span>`).join('')}</div></td>
+            <td class="history-provider-recent">
+              <div class="history-provider-ratebar">${trendBarHtml || `<span class="history-provider-rate-segment is-muted" style="width: 100%"></span>`}</div>
+              <div class="history-provider-trend-list">${recentTrendHtml || `<span class="muted">${escapeHtml(t('unknown'))}</span>`}</div>
+              <p class="muted">${escapeHtml(trendSummary)}</p>
+            </td>
+            <td class="history-provider-last mono">${escapeHtml(formatHistoryScanTime(aggregate.lastSeenValue)) || '-'}</td>
+          `;
+          historyProviderTableBody.appendChild(tr);
+        });
+      }
+
+      function historyPreparedSummaryRecords(records) {
+        return records.map((record) => {
+          const diagnostics = record?.scan_diagnostics && typeof record.scan_diagnostics === 'object'
+            ? record.scan_diagnostics
+            : {};
+          const reportSummary = record?.cross_provider_match_report_summary && typeof record.cross_provider_match_report_summary === 'object'
+            ? { summary: record.cross_provider_match_report_summary }
+            : null;
+          const likely = likelyScanDiagnosis(diagnostics, reportSummary);
+          const providers = historySummaryProviders(diagnostics);
+          return {
+            record,
+            diagnostics,
+            likely,
+            providers,
+            providerKeys: providers.map((provider) => provider.key),
+            scanTimestamp: parseHistoryScanTimestamp(record?.scan_time),
+          };
+        });
+      }
+
+      function populateHistorySummaryFilters(preparedRecords) {
+        const modeValues = Array.from(new Set(
+          preparedRecords
+            .map(({ record }) => String(record?.scan_mode || '').trim().toLowerCase())
+            .filter(Boolean)
+        ));
+        modeValues.sort((left, right) => {
+          const order = { prematch: 0, live: 1 };
+          return (order[left] ?? 9) - (order[right] ?? 9) || left.localeCompare(right);
+        });
+        const providerMap = new Map();
+        preparedRecords.forEach(({ providers }) => {
+          providers.forEach((provider) => {
+            if (!providerMap.has(provider.key)) {
+              providerMap.set(provider.key, provider.name);
+            }
+          });
+        });
+        const providerValues = Array.from(providerMap.entries())
+          .map(([value, label]) => ({ value, label }))
+          .sort((left, right) => left.label.localeCompare(right.label));
+
+        if (historySummaryLikelyFilter) {
+          const options = [
+            `<option value="all">${escapeHtml(t('history_scan_summary_filter_all_likely'))}</option>`,
+            ...historyLikelyFilterKinds().map((kind) => (
+              `<option value="${escapeHtml(kind)}">${escapeHtml(historyLikelyLabel(kind))}</option>`
+            )),
+          ];
+          historySummaryLikelyFilter.innerHTML = options.join('');
+          historySummaryLikelyFilter.value = historyLikelyFilterKinds().includes(historySummaryLikelyFilterValue)
+            ? historySummaryLikelyFilterValue
+            : 'all';
+          historySummaryLikelyFilterValue = historySummaryLikelyFilter.value || 'all';
+        }
+
+        if (historySummaryModeFilter) {
+          const options = [
+            `<option value="all">${escapeHtml(t('history_scan_summary_filter_all_modes'))}</option>`,
+            ...modeValues.map((value) => (
+              `<option value="${escapeHtml(value)}">${escapeHtml(historyScanModeLabel(value))}</option>`
+            )),
+          ];
+          historySummaryModeFilter.innerHTML = options.join('');
+          historySummaryModeFilter.value = modeValues.includes(historySummaryModeFilterValue)
+            ? historySummaryModeFilterValue
+            : 'all';
+          historySummaryModeFilterValue = historySummaryModeFilter.value || 'all';
+        }
+
+        if (historySummaryTimeFilter) {
+          const timeOptions = historySummaryTimeOptions();
+          historySummaryTimeFilter.innerHTML = timeOptions
+            .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+            .join('');
+          historySummaryTimeFilter.value = timeOptions.some((option) => option.value === historySummaryTimeFilterValue)
+            ? historySummaryTimeFilterValue
+            : 'all';
+          historySummaryTimeFilterValue = historySummaryTimeFilter.value || 'all';
+        }
+
+        if (historySummaryProviderFilter) {
+          const options = [
+            `<option value="all">${escapeHtml(t('history_scan_summary_filter_all_providers'))}</option>`,
+            ...providerValues.map((provider) => (
+              `<option value="${escapeHtml(provider.value)}">${escapeHtml(provider.label)}</option>`
+            )),
+          ];
+          historySummaryProviderFilter.innerHTML = options.join('');
+          historySummaryProviderFilter.value = providerValues.some((provider) => provider.value === historySummaryProviderFilterValue)
+            ? historySummaryProviderFilterValue
+            : 'all';
+          historySummaryProviderFilterValue = historySummaryProviderFilter.value || 'all';
+        }
+      }
+
+      function renderHistoryScanSummaries(data) {
+        if (!historySummaryTableBody) return;
+        const records = Array.isArray(data?.records) ? data.records : historySummaryRecordsCache;
+        historySummaryRecordsCache = records.slice();
+        const preparedRecords = historyPreparedSummaryRecords(records);
+        populateHistorySummaryFilters(preparedRecords);
+        const filteredRecords = filterHistorySummaryRecords(preparedRecords);
+        renderHistoryProviderLens(filteredRecords, preparedRecords);
+        historySummaryTableBody.innerHTML = '';
+
+        if (!preparedRecords.length) {
+          historySummaryEmpty?.classList.remove('hidden');
+          historySummaryEmpty.textContent = t('history_scan_summary_empty');
+          historySummaryTable?.parentElement?.classList.add('hidden');
+          if (historySummaryCount) historySummaryCount.textContent = t('history_scan_summary_count', { count: 0 });
+          return;
+        }
+
+        if (!filteredRecords.length) {
+          historySummaryEmpty?.classList.remove('hidden');
+          historySummaryEmpty.textContent = t('history_scan_summary_empty_filtered');
+          historySummaryTable?.parentElement?.classList.add('hidden');
+          if (historySummaryCount) {
+            historySummaryCount.textContent = t('history_scan_summary_count_filtered', {
+              shown: 0,
+              total: preparedRecords.length,
+            });
+          }
+          return;
+        }
+
+        historySummaryEmpty?.classList.add('hidden');
+        historySummaryEmpty.textContent = t('history_scan_summary_empty');
+        historySummaryTable?.parentElement?.classList.remove('hidden');
+        if (historySummaryCount) {
+          historySummaryCount.textContent = filteredRecords.length === preparedRecords.length
+            ? t('history_scan_summary_count', { count: filteredRecords.length })
+            : t('history_scan_summary_count_filtered', {
+              shown: filteredRecords.length,
+              total: preparedRecords.length,
+            });
+        }
+
+        filteredRecords.forEach(({ record, likely }) => {
+          const toneClass = historyLikelyToneClass(likely.kind);
+          const resultText = t('history_scan_summary_results', {
+            arb: Number(record?.arbitrage_count || 0),
+            middle: Number(record?.middle_count || 0),
+            ev: Number(record?.plus_ev_count || 0),
+          });
+          const statusText = record?.partial
+            ? t('history_scan_summary_partial')
+            : t('history_scan_summary_complete');
+          const evidenceHtml = likely.evidence.length
+            ? `<div class="provider-match-summary">${likely.evidence.slice(0, 4).map((item) => `<span class="provider-chip">${escapeHtml(item)}</span>`).join('')}</div>`
+            : `<span class="muted">${escapeHtml(t('unknown'))}</span>`;
+
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td class="mono">${escapeHtml(formatHistoryScanTime(record?.scan_time))}</td>
+            <td><span class="badge uppercase">${escapeHtml(historyScanModeLabel(record?.scan_mode))}</span></td>
+            <td class="history-likely-cell">
+              <span class="provider-chip ${toneClass}">${escapeHtml(t(likely.titleKey))}</span>
+              <p class="muted">${escapeHtml(t(likely.bodyKey))}</p>
+            </td>
+            <td>
+              <div class="provider-match-summary">
+                <span class="provider-chip">${escapeHtml(resultText)}</span>
+                <span class="provider-chip">${escapeHtml(statusText)}</span>
+              </div>
+            </td>
+            <td>${evidenceHtml}</td>
+          `;
+          historySummaryTableBody.appendChild(tr);
+        });
+      }
+
+      function renderHistoryOpportunities(data) {
+        if (!historyTableBody) return;
+        historyTableBody.innerHTML = '';
+
+        const records = Array.isArray(data?.records) ? data.records : [];
+        if (!records.length) {
+          historyEmpty?.classList.remove('hidden');
+          historyTable?.parentElement?.classList.add('hidden');
+          if (historyTableCount) historyTableCount.textContent = '0 records';
+          return;
+        }
+
+        historyEmpty?.classList.add('hidden');
+        historyTable?.parentElement?.classList.remove('hidden');
+        if (historyTableCount) historyTableCount.textContent = records.length + ' records';
+
+        records.forEach(rec => {
+          const tr = document.createElement('tr');
+
+          let metricText = '';
+          let modeTitle = rec.mode;
+          let displayBooks = '';
+
+          if (rec.mode === 'arbitrage') {
+            metricText = `<span class="gross-roi positive-roi">${(rec.roi_percent || 0).toFixed(2)}% ROI</span>`;
+            modeTitle = 'Arb';
+            if (rec.books) displayBooks = rec.books.map(b => `${b.bookmaker} (${b.price})`).join(' vs ');
+          } else if (rec.mode === 'ev') {
+            metricText = `<span class="gross-roi positive-roi">${(rec.edge_percent || 0).toFixed(2)}% Edge</span>`;
+            modeTitle = '+EV';
+            displayBooks = `${rec.soft_book || ''} (${rec.soft_odds || ''}) vs Sharp (${rec.sharp_fair || ''})`;
+          } else if (rec.mode === 'middles') {
+            metricText = `<span class="gross-roi positive-roi">$${(rec.ev_dollars || 0).toFixed(2)} EV</span>`;
+            modeTitle = 'Middle';
+            if (rec.books) displayBooks = rec.books.map(b => `${b.bookmaker} (${b.price})`).join(' vs ');
+          }
+
+          const scanTime = rec.scan_time ? rec.scan_time.replace('T', ' ').slice(0, 19) : '';
+          const sport = rec.sport_display || rec.sport || '';
+
+          tr.innerHTML = `
+            <td class="mono">${scanTime}</td>
+            <td><span class="badge uppercase">${modeTitle}</span></td>
+            <td>${metricText}</td>
+            <td>${sport}</td>
+            <td class="event-cell">${rec.event || ''}</td>
+            <td>${rec.market || ''}</td>
+            <td class="event-cell muted">${displayBooks}</td>
+          `;
+          historyTableBody.appendChild(tr);
+        });
+      }
+
+      function fetchHistoryJson(url) {
+        return fetch(url)
+          .then((res) => res.json().then((payload) => ({ ok: res.ok, payload })))
+          .then(({ ok, payload }) => {
+            if (!ok || !payload?.success) {
+              throw new Error(payload?.error || t('unknown_error'));
+            }
+            return payload;
+          });
+      }
+
+      if (historySummaryLikelyFilter) {
+        historySummaryLikelyFilter.addEventListener('change', () => {
+          historySummaryLikelyFilterValue = historySummaryLikelyFilter.value || 'all';
+          renderHistoryScanSummaries({ records: historySummaryRecordsCache });
+        });
+      }
+
+      if (historySummaryModeFilter) {
+        historySummaryModeFilter.addEventListener('change', () => {
+          historySummaryModeFilterValue = historySummaryModeFilter.value || 'all';
+          renderHistoryScanSummaries({ records: historySummaryRecordsCache });
+        });
+      }
+
+      if (historySummaryTimeFilter) {
+        historySummaryTimeFilter.addEventListener('change', () => {
+          historySummaryTimeFilterValue = historySummaryTimeFilter.value || 'all';
+          renderHistoryScanSummaries({ records: historySummaryRecordsCache });
+        });
+      }
+
+      if (historySummaryProviderFilter) {
+        historySummaryProviderFilter.addEventListener('change', () => {
+          historySummaryProviderFilterValue = historySummaryProviderFilter.value || 'all';
+          renderHistoryScanSummaries({ records: historySummaryRecordsCache });
+        });
+      }
 
       window.loadHistory = function loadHistory() {
         if (!refreshHistoryBtn) return;
         refreshHistoryBtn.disabled = true;
         refreshHistoryBtn.textContent = 'Loading...';
 
-        fetch('/history?limit=200')
-          .then(res => res.json())
-          .then(data => {
+        Promise.all([
+          fetchHistoryJson('/history/scans?limit=120'),
+          fetchHistoryJson('/history?limit=200'),
+        ])
+          .then(([summaryData, opportunityData]) => {
             refreshHistoryBtn.disabled = false;
             refreshHistoryBtn.textContent = 'Refresh'; // Or use i18n
-
-            if (!historyTableBody) return;
-            historyTableBody.innerHTML = '';
-
-            if (!data.success || !data.records || data.records.length === 0) {
-              historyEmpty?.classList.remove('hidden');
-              document.querySelector('#history-table')?.parentElement.classList.add('hidden');
-              if (historyTableCount) historyTableCount.textContent = '0 records';
-              return;
-            }
-
-            historyEmpty?.classList.add('hidden');
-            document.querySelector('#history-table')?.parentElement.classList.remove('hidden');
-            if (historyTableCount) historyTableCount.textContent = data.records.length + ' records';
-
-            data.records.forEach(rec => {
-              const tr = document.createElement('tr');
-
-              let metricText = '';
-              let modeTitle = rec.mode;
-              let displayBooks = '';
-
-              if (rec.mode === 'arbitrage') {
-                metricText = `<span class="gross-roi positive-roi">${(rec.roi_percent || 0).toFixed(2)}% ROI</span>`;
-                modeTitle = 'Arb';
-                if (rec.books) displayBooks = rec.books.map(b => `${b.bookmaker} (${b.price})`).join(' vs ');
-              } else if (rec.mode === 'ev') {
-                metricText = `<span class="gross-roi positive-roi">${(rec.edge_percent || 0).toFixed(2)}% Edge</span>`;
-                modeTitle = '+EV';
-                displayBooks = `${rec.soft_book || ''} (${rec.soft_odds || ''}) vs Sharp (${rec.sharp_fair || ''})`;
-              } else if (rec.mode === 'middles') {
-                metricText = `<span class="gross-roi positive-roi">$${(rec.ev_dollars || 0).toFixed(2)} EV</span>`;
-                modeTitle = 'Middle';
-                if (rec.books) displayBooks = rec.books.map(b => `${b.bookmaker} (${b.price})`).join(' vs ');
-              }
-
-              const scanTime = rec.scan_time ? rec.scan_time.replace('T', ' ').slice(0, 19) : '';
-              const sport = rec.sport_display || rec.sport || '';
-
-              tr.innerHTML = `
-              <td class="mono">${scanTime}</td>
-              <td><span class="badge uppercase">${modeTitle}</span></td>
-              <td>${metricText}</td>
-              <td>${sport}</td>
-              <td class="event-cell">${rec.event || ''}</td>
-              <td>${rec.market || ''}</td>
-              <td class="event-cell muted">${displayBooks}</td>
-            `;
-              historyTableBody.appendChild(tr);
-            });
+            renderHistoryScanSummaries(summaryData);
+            renderHistoryOpportunities(opportunityData);
           })
           .catch(err => {
             console.error(err);

@@ -167,6 +167,7 @@ class ScanInputValidationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         history_manager.save_opportunities.assert_called_once()
+        history_manager.save_scan_summary.assert_called_once()
         history_payload = history_manager.save_opportunities.call_args.args[0]
         self.assertEqual(len(history_payload.get("opportunities") or []), 1)
         self.assertEqual(len(history_payload.get("middles") or []), 1)
@@ -196,6 +197,7 @@ class ScanInputValidationTests(unittest.TestCase):
         payload = response.get_json() or {}
         self.assertTrue(payload.get("success"))
         history_manager.save_opportunities.assert_called_once()
+        history_manager.save_scan_summary.assert_called_once()
 
     def test_scan_ignores_notification_failures(self) -> None:
         result_payload = {

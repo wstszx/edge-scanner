@@ -45,6 +45,7 @@ _MODE_FILES = {
     "middles": "middles_history.jsonl",
     "ev": "ev_history.jsonl",
 }
+_SUMMARY_FILE = "scan_history.jsonl"
 
 
 def _extract_mode_items(
@@ -132,6 +133,23 @@ class HistoryManager:
         all_records.sort(key=lambda r: r.get("scan_time", ""), reverse=True)
         return all_records[:limit]
 
+    def save_scan_summary(self, scan_result: dict, scan_time: Optional[str] = None) -> int:
+        """Persist a compact per-scan summary record."""
+        if not self._enabled:
+            return 0
+        if not isinstance(scan_result, dict):
+            return 0
+
+        ts = scan_time or _utc_now()
+        record = _flatten_scan_summary(scan_result, ts)
+        if not record:
+            return 0
+        return self._append_jsonl(self._dir / _SUMMARY_FILE, [record])
+
+    def load_recent_scan_summaries(self, limit: int = 100) -> List[dict]:
+        """Return the most-recent per-scan summary records."""
+        return self._read_tail_path(self._dir / _SUMMARY_FILE, limit)
+
     def get_stats(self) -> dict:
         """Return record counts per mode and disk usage."""
         stats: dict = {"enabled": self._enabled, "dir": str(self._dir), "modes": {}}
@@ -149,6 +167,22 @@ class HistoryManager:
                 except OSError:
                     pass
             stats["modes"][mode] = {"count": count, "size_bytes": size_bytes}
+        summary_path = self._dir / _SUMMARY_FILE
+        summary_count = 0
+        summary_size_bytes = 0
+        if summary_path.exists():
+            summary_size_bytes = summary_path.stat().st_size
+            try:
+                with summary_path.open("r", encoding="utf-8") as fh:
+                    for line in fh:
+                        if line.strip():
+                            summary_count += 1
+            except OSError:
+                pass
+        stats["scan_summaries"] = {
+            "count": summary_count,
+            "size_bytes": summary_size_bytes,
+        }
         return stats
 
     def clear(self, mode: Optional[str] = None) -> None:
@@ -159,6 +193,13 @@ class HistoryManager:
             try:
                 if path.exists():
                     path.unlink()
+            except OSError:
+                pass
+        if mode is None:
+            summary_path = self._dir / _SUMMARY_FILE
+            try:
+                if summary_path.exists():
+                    summary_path.unlink()
             except OSError:
                 pass
 
@@ -178,7 +219,13 @@ class HistoryManager:
             return 0
         if not self._ensure_dir():
             return 0
-        path = self._dir / _MODE_FILES[mode]
+        return self._append_jsonl(self._dir / _MODE_FILES[mode], records)
+
+    def _append_jsonl(self, path: Path, records: List[dict]) -> int:
+        if not records:
+            return 0
+        if not self._ensure_dir():
+            return 0
         written = 0
         with self._lock:
             try:
@@ -212,7 +259,9 @@ class HistoryManager:
                 pass
 
     def _read_tail(self, mode: str, limit: int) -> List[dict]:
-        path = self._dir / _MODE_FILES[mode]
+        return self._read_tail_path(self._dir / _MODE_FILES[mode], limit, default_mode=mode)
+
+    def _read_tail_path(self, path: Path, limit: int, default_mode: Optional[str] = None) -> List[dict]:
         if not path.exists():
             return []
         records: List[dict] = []
@@ -229,7 +278,8 @@ class HistoryManager:
             except (ValueError, UnicodeDecodeError):
                 continue
             if isinstance(rec, dict):
-                rec.setdefault("mode", mode)
+                if default_mode:
+                    rec.setdefault("mode", default_mode)
                 records.append(rec)
             if len(records) >= limit:
                 break
@@ -306,6 +356,49 @@ def _flatten_record(item: dict, scan_time: str, mode: str) -> dict:
         base["sharp_book"] = sharp.get("book")
         base["fair_odds"] = sharp.get("fair_odds")
     return base
+
+
+def _extract_opportunity_count(candidate: object) -> int:
+    if isinstance(candidate, list):
+        return len([item for item in candidate if isinstance(item, dict)])
+    if isinstance(candidate, dict):
+        nested = candidate.get("opportunities")
+        if isinstance(nested, list):
+            return len([item for item in nested if isinstance(item, dict)])
+        try:
+            return max(0, int(candidate.get("opportunities_count", 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def _flatten_scan_summary(scan_result: dict, scan_time: str) -> dict:
+    scan_diagnostics = (
+        scan_result.get("scan_diagnostics")
+        if isinstance(scan_result.get("scan_diagnostics"), dict)
+        else {}
+    )
+    cross_provider_summary = (
+        scan_result.get("cross_provider_match_report_summary")
+        if isinstance(scan_result.get("cross_provider_match_report_summary"), dict)
+        else {}
+    )
+    scan_mode = str(scan_result.get("scan_mode") or "prematch").strip().lower() or "prematch"
+    return {
+        "scan_time": scan_time,
+        "scan_mode": scan_mode,
+        "success": bool(scan_result.get("success")),
+        "partial": bool(scan_result.get("partial")),
+        "arbitrage_count": _extract_opportunity_count(
+            scan_result.get("arbitrage")
+            if "arbitrage" in scan_result
+            else scan_result.get("opportunities")
+        ),
+        "middle_count": _extract_opportunity_count(scan_result.get("middles")),
+        "plus_ev_count": _extract_opportunity_count(scan_result.get("plus_ev")),
+        "scan_diagnostics": scan_diagnostics,
+        "cross_provider_match_report_summary": cross_provider_summary,
+    }
 
 
 # ---------------------------------------------------------------------------

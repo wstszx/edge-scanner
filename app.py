@@ -936,8 +936,9 @@ def _execute_scan_payload(
                 arbitrage_items = _extract_opportunity_list(result.get("opportunities"))
             middle_items = _extract_opportunity_list(result.get("middles"))
             plus_ev_items = _extract_opportunity_list(result.get("plus_ev"))
+            history_manager = get_history_manager()
             try:
-                get_history_manager().save_opportunities(
+                history_manager.save_opportunities(
                     {
                         "opportunities": arbitrage_items,
                         "middles": middle_items,
@@ -947,6 +948,10 @@ def _execute_scan_payload(
                 )
             except Exception:
                 logging.warning("Failed to save scan history", exc_info=True)
+            try:
+                history_manager.save_scan_summary(result, scan_time=scan_time)
+            except Exception:
+                logging.warning("Failed to save scan summary history", exc_info=True)
             notifier = get_notifier()
             if notifier.is_configured:
                 def _notify():
@@ -1347,6 +1352,20 @@ def history() -> tuple:
         limit = 200
     try:
         records = get_history_manager().load_recent(limit=limit, mode=mode)
+        return jsonify({"success": True, "records": records, "count": len(records)}), 200
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/history/scans", methods=["GET"])
+def history_scans() -> tuple:
+    """Return recent per-scan diagnostic summaries."""
+    try:
+        limit = min(1000, max(1, int(request.args.get("limit", "100"))))
+    except (TypeError, ValueError):
+        limit = 100
+    try:
+        records = get_history_manager().load_recent_scan_summaries(limit=limit)
         return jsonify({"success": True, "records": records, "count": len(records)}), 200
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500

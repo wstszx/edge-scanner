@@ -5,7 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from history import HistoryManager, _flatten_record, _utc_now
+from history import HistoryManager, _flatten_record, _flatten_scan_summary, _utc_now
 
 
 class TestHistoryManager(unittest.TestCase):
@@ -112,6 +112,35 @@ class TestHistoryManager(unittest.TestCase):
         records = self.hm.load_recent(limit=100)
         self.assertEqual(len(records), 0)
 
+    def test_save_and_load_scan_summaries(self):
+        scan = {
+            "success": True,
+            "scan_mode": "live",
+            "partial": False,
+            "arbitrage": {"opportunities": [{"event": "A vs B"}], "opportunities_count": 1},
+            "middles": {"opportunities": []},
+            "plus_ev": {"opportunities": []},
+            "scan_diagnostics": {"reason_code": "matched_but_no_arbitrage", "overlap_clusters": 2},
+            "cross_provider_match_report_summary": {
+                "single_provider_reason_counts": {"same_pair_time_mismatch": 1},
+            },
+        }
+        written = self.hm.save_scan_summary(scan, scan_time="2024-01-01T12:00:00Z")
+        self.assertEqual(written, 1)
+
+        records = self.hm.load_recent_scan_summaries(limit=10)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["scan_mode"], "live")
+        self.assertEqual(records[0]["arbitrage_count"], 1)
+        self.assertEqual(records[0]["scan_diagnostics"]["reason_code"], "matched_but_no_arbitrage")
+        self.assertIn("cross_provider_match_report_summary", records[0])
+
+    def test_clear_removes_scan_summaries(self):
+        self.hm.save_scan_summary({"success": True}, "2024-01-01T12:00:00Z")
+        self.hm.clear()
+        records = self.hm.load_recent_scan_summaries(limit=10)
+        self.assertEqual(records, [])
+
     def test_save_nested_run_scan_result_shape(self):
         scan = {
             "success": True,
@@ -217,6 +246,26 @@ class TestFlattenRecord(unittest.TestCase):
         self.assertAlmostEqual(rec["probability"], 0.1, places=5)
         self.assertEqual(rec["books"][0]["bookmaker"], "Book A")
         self.assertEqual(rec["books"][1]["line"], 221.5)
+
+    def test_scan_summary_record(self):
+        scan = {
+            "success": True,
+            "scan_mode": "prematch",
+            "partial": True,
+            "arbitrage": {"opportunities_count": 2},
+            "middles": {"opportunities_count": 1},
+            "plus_ev": {"opportunities_count": 3},
+            "scan_diagnostics": {"reason_code": "partial_errors"},
+            "cross_provider_match_report_summary": {"overlap_clusters": 4},
+        }
+        rec = _flatten_scan_summary(scan, "2024-01-01T12:00:00Z")
+        self.assertEqual(rec["scan_mode"], "prematch")
+        self.assertTrue(rec["partial"])
+        self.assertEqual(rec["arbitrage_count"], 2)
+        self.assertEqual(rec["middle_count"], 1)
+        self.assertEqual(rec["plus_ev_count"], 3)
+        self.assertEqual(rec["scan_diagnostics"]["reason_code"], "partial_errors")
+        self.assertEqual(rec["cross_provider_match_report_summary"]["overlap_clusters"], 4)
 
 
 if __name__ == "__main__":

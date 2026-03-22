@@ -61,6 +61,54 @@ class HistoryEndpointTests(unittest.TestCase):
         self.assertFalse(payload.get("success"))
         self.assertIn("history unavailable", payload.get("error", ""))
 
+    def test_history_scans_returns_records_and_count(self) -> None:
+        records = [
+            {"scan_mode": "prematch", "scan_time": "2026-03-22T12:00:00Z"},
+            {"scan_mode": "live", "scan_time": "2026-03-22T11:00:00Z"},
+        ]
+        history_manager = MagicMock()
+        history_manager.load_recent_scan_summaries.return_value = records
+
+        with patch.object(app_module, "get_history_manager", return_value=history_manager):
+            response = self.client.get("/history/scans")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json() or {}
+        self.assertTrue(payload.get("success"))
+        self.assertEqual(payload.get("records"), records)
+        self.assertEqual(payload.get("count"), len(records))
+        history_manager.load_recent_scan_summaries.assert_called_once_with(limit=100)
+
+    def test_history_scans_clamps_limit_and_handles_invalid_values(self) -> None:
+        history_manager = MagicMock()
+        history_manager.load_recent_scan_summaries.return_value = []
+
+        with patch.object(app_module, "get_history_manager", return_value=history_manager):
+            response = self.client.get("/history/scans?limit=5000")
+
+        self.assertEqual(response.status_code, 200)
+        history_manager.load_recent_scan_summaries.assert_called_once_with(limit=1000)
+
+        history_manager = MagicMock()
+        history_manager.load_recent_scan_summaries.return_value = []
+        with patch.object(app_module, "get_history_manager", return_value=history_manager):
+            response = self.client.get("/history/scans?limit=not-a-number")
+
+        self.assertEqual(response.status_code, 200)
+        history_manager.load_recent_scan_summaries.assert_called_once_with(limit=100)
+
+    def test_history_scans_returns_500_when_manager_raises(self) -> None:
+        history_manager = MagicMock()
+        history_manager.load_recent_scan_summaries.side_effect = RuntimeError("scan summary unavailable")
+
+        with patch.object(app_module, "get_history_manager", return_value=history_manager):
+            response = self.client.get("/history/scans")
+
+        self.assertEqual(response.status_code, 500)
+        payload = response.get_json() or {}
+        self.assertFalse(payload.get("success"))
+        self.assertIn("scan summary unavailable", payload.get("error", ""))
+
     def test_history_stats_returns_manager_stats(self) -> None:
         stats = {
             "enabled": True,

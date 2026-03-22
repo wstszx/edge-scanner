@@ -5064,6 +5064,7 @@ async def run_scan_async(
             "api_market_skips": [],
             "provider_snapshot_paths": {},
             "cross_provider_match_report_path": "",
+            "cross_provider_match_report_summary": {},
             "arbitrage": {
                 "opportunities": [],
                 "opportunities_count": 0,
@@ -5272,6 +5273,12 @@ async def run_scan_async(
         scan_time,
         provider_snapshots,
     )
+    cross_provider_report_summary = (
+        cross_provider_report.get("summary")
+        if isinstance(cross_provider_report, dict)
+        and isinstance(cross_provider_report.get("summary"), dict)
+        else {}
+    )
     scan_diagnostics = _build_scan_diagnostics(
         provider_summaries=provider_summaries,
         cross_provider_report=cross_provider_report,
@@ -5291,6 +5298,7 @@ async def run_scan_async(
         "api_market_skips": api_market_skips,
         "provider_snapshot_paths": provider_snapshot_paths,
         "cross_provider_match_report_path": cross_provider_match_report_path,
+        "cross_provider_match_report_summary": cross_provider_report_summary,
         "arbitrage": {
             "opportunities": arb_opportunities,
             "opportunities_count": len(arb_opportunities),
