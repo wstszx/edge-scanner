@@ -116,6 +116,33 @@ class InplayArbitrageAdditionalTests(unittest.TestCase):
                 )
             )
 
+    def test_live_quote_without_any_timestamp_is_treated_as_fresh(self) -> None:
+        game = {"live_state": {"status": "live"}}
+        bookmaker = {}
+        market = {}
+        outcome = {"name": "Home Team", "price": 2.1}
+
+        with patch.object(scanner, "LIVE_QUOTE_MAX_AGE_SECONDS_RAW", "5"):
+            self.assertIsNone(
+                scanner._live_quote_age_seconds(
+                    game,
+                    bookmaker,
+                    market,
+                    outcome,
+                    now_epoch=100.0,
+                )
+            )
+            self.assertTrue(
+                scanner._is_live_quote_fresh(
+                    game,
+                    bookmaker,
+                    market,
+                    outcome,
+                    scan_mode="live",
+                    now_epoch=100.0,
+                )
+            )
+
     def test_live_quote_age_falls_back_across_market_bookmaker_event_state(self) -> None:
         game = {"live_state": {"status": "live", "updated_at": 96}, "updated_at": 95}
         bookmaker = {"updated_at": 97}

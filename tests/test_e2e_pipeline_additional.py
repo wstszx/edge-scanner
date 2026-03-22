@@ -422,6 +422,61 @@ class E2EPipelineAdditionalTests(unittest.TestCase):
         self.assertEqual(result.get("scan_mode"), "live")
         self.assertGreater((result.get("arbitrage") or {}).get("opportunities_count", 0), 0)
 
+    def test_live_e2e_pipeline_uses_default_live_providers_when_none_are_selected(self) -> None:
+        sx_fetcher = _make_live_provider_fetcher(
+            "sx_bet",
+            "SX Bet",
+            home_price=2.31,
+            away_price=1.80,
+        )
+        betdex_fetcher = _make_live_provider_fetcher(
+            "betdex",
+            "BetDEX",
+            home_price=1.79,
+            away_price=2.30,
+        )
+
+        with (
+            patch.dict(
+                scanner.PROVIDER_FETCHERS,
+                {"sx_bet": sx_fetcher, "betdex": betdex_fetcher},
+                clear=False,
+            ),
+            patch.object(scanner, "DEFAULT_LIVE_PROVIDER_KEYS", ("sx_bet", "betdex")),
+            patch.object(
+                scanner,
+                "fetch_odds_for_sport_multi_market",
+                side_effect=AssertionError("live mode should not fetch odds API"),
+            ) as mocked_fetch_odds,
+            patch.object(scanner, "fetch_sports") as mocked_fetch_sports,
+            patch.object(scanner, "_persist_provider_snapshots", return_value={}),
+            patch.object(scanner, "_persist_cross_provider_match_report", return_value=""),
+            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
+            patch.object(scanner, "_provider_fetch_max_workers", return_value=1),
+            patch.object(scanner, "time") as mocked_time,
+        ):
+            mocked_time.time.return_value = SCAN_EPOCH
+            mocked_time.perf_counter.side_effect = (3200.0 + i * 0.01 for i in range(10000))
+            result = scanner.run_scan(
+                api_key="live-has-api-key",
+                sports=[SPORT_KEY],
+                scan_mode="live",
+                regions=["us"],
+                include_providers=[],
+                bookmakers=[],
+                stake_amount=100.0,
+            )
+
+        mocked_fetch_sports.assert_not_called()
+        mocked_fetch_odds.assert_not_called()
+        self.assertTrue(result.get("success"))
+        self.assertEqual(result.get("scan_mode"), "live")
+        self.assertEqual(result.get("api_disabled_reason"), "live_mode_provider_only")
+        self.assertGreater((result.get("arbitrage") or {}).get("opportunities_count", 0), 0)
+        custom_providers = result.get("custom_providers") or {}
+        self.assertEqual((custom_providers.get("sx_bet") or {}).get("events_merged"), 1)
+        self.assertEqual((custom_providers.get("betdex") or {}).get("events_merged"), 1)
+
     def test_live_soccer_pipeline_analyzes_provider_h2h_markets_even_when_base_defaults_exclude_them(self) -> None:
         def _soccer_fetcher(
             provider_key: str,

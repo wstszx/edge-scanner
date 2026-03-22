@@ -100,6 +100,42 @@ class ScanInputValidationTests(unittest.TestCase):
         kwargs = mocked_run_scan.call_args.kwargs
         self.assertEqual(kwargs.get("scan_mode"), "live")
 
+    def test_scan_rejects_invalid_scan_mode(self) -> None:
+        with patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan:
+            response = self.client.post(
+                "/scan",
+                json={
+                    "scanMode": "LiVeSoon",
+                    "sports": ["basketball_nba"],
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.get_json() or {}
+        self.assertFalse(payload.get("success"))
+        self.assertEqual(payload.get("error_code"), 400)
+        self.assertEqual(payload.get("error"), "Invalid scanMode")
+        mocked_run_scan.assert_not_called()
+
+    def test_server_auto_scan_config_rejects_invalid_scan_mode(self) -> None:
+        response = self.client.post(
+            "/server-auto-scan-config",
+            json={
+                "enabled": True,
+                "intervalMinutes": 5,
+                "payload": {
+                    "scanMode": "LiVeSoon",
+                    "sports": ["basketball_nba"],
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.get_json() or {}
+        self.assertFalse(payload.get("success"))
+        self.assertEqual(payload.get("error_code"), 400)
+        self.assertEqual(payload.get("error"), "Invalid scanMode")
+
     def test_scan_accepts_provider_only_mode_without_api_key(self) -> None:
         with (
             patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True),

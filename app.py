@@ -466,6 +466,14 @@ def _normalize_scan_mode(value: object) -> str:
     return SCAN_MODE_PREMATCH
 
 
+def _is_valid_scan_mode(value: object) -> bool:
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        return False
+    return value.strip().lower() in {SCAN_MODE_PREMATCH, SCAN_MODE_LIVE}
+
+
 def _server_auto_scan_payload() -> dict:
     provider_keys = list(PROVIDER_FETCHERS.keys())
     payload = {
@@ -645,6 +653,9 @@ def _normalize_server_auto_scan_config(raw: object) -> Optional[dict]:
     scan_payload = raw.get("payload")
     if not isinstance(scan_payload, dict):
         scan_payload = raw
+
+    if not _is_valid_scan_mode(scan_payload.get("scanMode")):
+        return None
 
     sports_raw = scan_payload.get("sports")
     if isinstance(sports_raw, list):
@@ -1338,6 +1349,17 @@ def scan() -> tuple:
             ),
             400,
         )
+    if not _is_valid_scan_mode(payload.get("scanMode")):
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": "Invalid scanMode",
+                    "error_code": 400,
+                }
+            ),
+            400,
+        )
     result = _execute_scan_payload(payload)
     status = 200 if result.get("success") else result.get("error_code", 500)
     return _jsonify_client_payload(result), status
@@ -1372,7 +1394,18 @@ def server_auto_scan_config() -> tuple:
             jsonify(
                 {
                     "success": False,
-                    "error": "Auto scan config payload must be a JSON object",
+                    "error": (
+                        "Invalid scanMode"
+                        if isinstance(payload, dict)
+                        and isinstance(
+                            payload.get("payload") if isinstance(payload.get("payload"), dict) else payload,
+                            dict,
+                        )
+                        and not _is_valid_scan_mode(
+                            (payload.get("payload") if isinstance(payload.get("payload"), dict) else payload).get("scanMode")
+                        )
+                        else "Auto scan config payload must be a JSON object"
+                    ),
                     "error_code": 400,
                 }
             ),
