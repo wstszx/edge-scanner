@@ -75,7 +75,13 @@ class HistoryEndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json() or {}
         self.assertTrue(payload.get("success"))
-        self.assertEqual(payload.get("records"), records)
+        self.assertEqual(
+            payload.get("records"),
+            [
+                {"scan_mode": "prematch", "scan_time": "2026-03-22T20:00:00+08:00"},
+                {"scan_mode": "live", "scan_time": "2026-03-22T19:00:00+08:00"},
+            ],
+        )
         self.assertEqual(payload.get("count"), len(records))
         history_manager.load_recent_scan_summaries.assert_called_once_with(limit=100)
 
@@ -185,6 +191,32 @@ class ProviderSnapshotEndpointTests(unittest.TestCase):
         self.assertEqual(payload.get("provider_key"), "bookmaker_xyz")
         self.assertEqual(payload.get("snapshot"), snapshot)
 
+    def test_provider_snapshot_converts_nested_timestamp_fields(self) -> None:
+        snapshot = {
+            "provider": "bookmaker_xyz",
+            "saved_at": "2026-03-14T09:15:00Z",
+            "events": [
+                {
+                    "id": "evt-1",
+                    "commence_time": "2026-03-15T10:00:00Z",
+                    "updated_at": "2026-03-15T09:14:58Z",
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            snapshot_path = Path(temp_dir) / "bookmaker_xyz.json"
+            snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+            with patch.object(app_module, "_provider_snapshot_path", return_value=snapshot_path):
+                response = self.client.get("/provider-snapshots/bookmaker_xyz")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json() or {}
+        event = ((payload.get("snapshot") or {}).get("events") or [{}])[0]
+        self.assertEqual((payload.get("snapshot") or {}).get("saved_at"), "2026-03-14T17:15:00+08:00")
+        self.assertEqual(event.get("commence_time"), "2026-03-15T18:00:00+08:00")
+        self.assertEqual(event.get("updated_at"), "2026-03-15T17:14:58+08:00")
+
     def test_provider_snapshot_returns_500_for_invalid_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             snapshot_path = Path(temp_dir) / "bookmaker_xyz.json"
@@ -235,6 +267,30 @@ class CrossProviderReportEndpointTests(unittest.TestCase):
         payload = response.get_json() or {}
         self.assertTrue(payload.get("success"))
         self.assertEqual(payload.get("report"), report)
+
+    def test_cross_provider_report_converts_nested_timestamp_fields(self) -> None:
+        report = {
+            "saved_at": "2026-03-14T09:15:00Z",
+            "matched_events": [
+                {
+                    "event_id": "evt-1",
+                    "representative_time_utc": "2026-03-15T10:00:00Z",
+                }
+            ],
+            "summary": {"count": 1},
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "cross_provider_match_report.json"
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            with patch.object(app_module, "_cross_provider_report_path", return_value=report_path):
+                response = self.client.get("/cross-provider-report")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json() or {}
+        matched_event = ((payload.get("report") or {}).get("matched_events") or [{}])[0]
+        self.assertEqual((payload.get("report") or {}).get("saved_at"), "2026-03-14T17:15:00+08:00")
+        self.assertEqual(matched_event.get("representative_time_utc"), "2026-03-15T18:00:00+08:00")
 
     def test_cross_provider_report_returns_500_for_invalid_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

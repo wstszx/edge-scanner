@@ -1311,6 +1311,9 @@ class BrowserScanFlowTests(unittest.TestCase):
                 "sharp_fair": 1.95,
             }
         ]
+        matching_scan_time = "2026-03-22 20:00:00"
+        live_scan_time = "2026-03-22 19:30:00"
+        older_scan_time = "2026-03-10 17:15:00"
 
         with ExitStack() as stack:
             stack.enter_context(patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True))
@@ -1345,9 +1348,9 @@ class BrowserScanFlowTests(unittest.TestCase):
                         "Same teams, but kickoff window differs" in summary_text
                         or "队名一致，但开赛时间窗口不一致" in summary_text
                     )
-                    self.assertIn("2026-03-22 12:00:00", summary_text)
-                    self.assertIn("2026-03-22 11:30:00", summary_text)
-                    self.assertIn("2026-03-10 09:15:00", summary_text)
+                    self.assertIn(matching_scan_time, summary_text)
+                    self.assertIn(live_scan_time, summary_text)
+                    self.assertIn(older_scan_time, summary_text)
                     self.assertIn("BetMGM", provider_history_text)
                     self.assertTrue(
                         "Likely Fetch Risk" in provider_history_text
@@ -1367,9 +1370,9 @@ class BrowserScanFlowTests(unittest.TestCase):
                     )
                     filtered_matching_text = page.locator("#history-summary-table").inner_text()
                     self.assertEqual(page.locator("#history-summary-table tbody tr").count(), 1)
-                    self.assertIn("2026-03-22 12:00:00", filtered_matching_text)
-                    self.assertNotIn("2026-03-22 11:30:00", filtered_matching_text)
-                    self.assertNotIn("2026-03-10 09:15:00", filtered_matching_text)
+                    self.assertIn(matching_scan_time, filtered_matching_text)
+                    self.assertNotIn(live_scan_time, filtered_matching_text)
+                    self.assertNotIn(older_scan_time, filtered_matching_text)
 
                     page.select_option("#history-summary-likely-filter", "all")
                     page.select_option("#history-summary-mode-filter", "live")
@@ -1379,9 +1382,9 @@ class BrowserScanFlowTests(unittest.TestCase):
                     )
                     filtered_live_text = page.locator("#history-summary-table").inner_text()
                     self.assertEqual(page.locator("#history-summary-table tbody tr").count(), 1)
-                    self.assertIn("2026-03-22 11:30:00", filtered_live_text)
-                    self.assertNotIn("2026-03-22 12:00:00", filtered_live_text)
-                    self.assertNotIn("2026-03-10 09:15:00", filtered_live_text)
+                    self.assertIn(live_scan_time, filtered_live_text)
+                    self.assertNotIn(matching_scan_time, filtered_live_text)
+                    self.assertNotIn(older_scan_time, filtered_live_text)
 
                     page.select_option("#history-summary-mode-filter", "all")
                     page.select_option("#history-summary-provider-filter", "betmgm")
@@ -1406,9 +1409,9 @@ class BrowserScanFlowTests(unittest.TestCase):
                         page.locator("#history-provider-table tbody tr .history-provider-rate-segment").count(),
                         2,
                     )
-                    self.assertIn("2026-03-22 12:00:00", filtered_provider_text)
-                    self.assertIn("2026-03-10 09:15:00", filtered_provider_text)
-                    self.assertNotIn("2026-03-22 11:30:00", filtered_provider_text)
+                    self.assertIn(matching_scan_time, filtered_provider_text)
+                    self.assertIn(older_scan_time, filtered_provider_text)
+                    self.assertNotIn(live_scan_time, filtered_provider_text)
                     self.assertIn("BetMGM", filtered_provider_history_text)
                     self.assertNotIn("Polymarket", filtered_provider_history_text)
                     self.assertIn("BetMGM", filtered_provider_watchlist_text)
@@ -1437,9 +1440,9 @@ class BrowserScanFlowTests(unittest.TestCase):
                     self.assertEqual(page.locator("#history-summary-table tbody tr").count(), 2)
                     self.assertEqual(page.locator("#history-provider-table tbody tr").count(), 4)
                     self.assertEqual(page.locator("#history-provider-watchlist .history-provider-watch-card").count(), 2)
-                    self.assertIn("2026-03-22 12:00:00", filtered_time_text)
-                    self.assertIn("2026-03-22 11:30:00", filtered_time_text)
-                    self.assertNotIn("2026-03-10 09:15:00", filtered_time_text)
+                    self.assertIn(matching_scan_time, filtered_time_text)
+                    self.assertIn(live_scan_time, filtered_time_text)
+                    self.assertNotIn(older_scan_time, filtered_time_text)
                     self.assertIn("Polymarket", filtered_time_provider_history_text)
                     self.assertNotIn("DraftKings", filtered_time_provider_history_text)
                     self.assertIn("BetMGM", filtered_time_watchlist_text)

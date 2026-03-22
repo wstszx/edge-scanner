@@ -49,6 +49,7 @@ class FxRateRouteTests(unittest.TestCase):
         self.assertEqual(payload.get("source_date"), "2026-03-15")
         self.assertFalse(payload.get("stale"))
         self.assertEqual(payload.get("currencies"), list(app_module.ARB_CALC_SUPPORTED_CURRENCIES))
+        self.assertTrue(str(payload.get("fetched_at") or "").endswith("+08:00"))
         mocked_get.assert_called_once()
 
     def test_fx_rates_uses_stale_cache_if_refresh_fails(self) -> None:
@@ -75,6 +76,7 @@ class FxRateRouteTests(unittest.TestCase):
         self.assertTrue(payload.get("success"))
         self.assertTrue(payload.get("stale"))
         self.assertEqual((payload.get("rates") or {}).get("USD"), 1.12)
+        self.assertEqual(payload.get("fetched_at"), "2026-03-15T08:00:00+08:00")
 
     def test_index_renders_currency_select_controls(self) -> None:
         with patch.object(app_module, "_start_background_provider_services") as mocked_start:

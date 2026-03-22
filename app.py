@@ -11,7 +11,7 @@ import socket
 import threading
 import time
 import webbrowser
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import BinaryIO, Optional
 
@@ -244,6 +244,27 @@ ENV_OPEN_BROWSER_ON_START = _coerce_bool(
     os.getenv("OPEN_BROWSER_ON_START"),
     default=True,
 )
+CLIENT_DISPLAY_TIMEZONE = timezone(timedelta(hours=8))
+CLIENT_DATETIME_FIELD_NAMES = {
+    "scan_time",
+    "saved_at",
+    "fetched_at",
+    "created_at",
+    "updated_at",
+    "quote_updated_at",
+    "commence_time",
+    "representative_time_utc",
+    "market_last_message_at",
+    "sports_last_message_at",
+    "snapshot_saved_at",
+    "cleanup_ran_at",
+    "last_seen",
+}
+CLIENT_DATETIME_FIELD_SUFFIXES = (
+    "_time",
+    "_at",
+    "_utc",
+)
 
 
 def _should_save_scan(payload: dict) -> bool:
@@ -300,6 +321,61 @@ def _sanitize_scan_request(payload: dict) -> dict:
         elif isinstance(value, str) and value.strip():
             sanitized["apiKeys"] = "***redacted***"
     return sanitized
+
+
+def _parse_client_datetime_value(value: object) -> Optional[datetime]:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    normalized = f"{text[:-1]}+00:00" if text.endswith("Z") else text
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _should_convert_datetime_field(key: object) -> bool:
+    if not isinstance(key, str):
+        return False
+    normalized = key.strip().lower()
+    if not normalized:
+        return False
+    return normalized in CLIENT_DATETIME_FIELD_NAMES or normalized.endswith(
+        CLIENT_DATETIME_FIELD_SUFFIXES
+    )
+
+
+def _convert_datetime_for_client(value: object) -> object:
+    parsed = _parse_client_datetime_value(value)
+    if parsed is None:
+        return value
+    return parsed.astimezone(CLIENT_DISPLAY_TIMEZONE).isoformat(timespec="seconds")
+
+
+def _serialize_payload_datetimes_for_client(payload: object, key: Optional[str] = None) -> object:
+    if isinstance(payload, dict):
+        return {
+            item_key: _serialize_payload_datetimes_for_client(item_value, key=str(item_key))
+            for item_key, item_value in payload.items()
+        }
+    if isinstance(payload, list):
+        return [_serialize_payload_datetimes_for_client(item, key=key) for item in payload]
+    if isinstance(payload, tuple):
+        return [
+            _serialize_payload_datetimes_for_client(item, key=key) for item in payload
+        ]
+    if _should_convert_datetime_field(key):
+        return _convert_datetime_for_client(payload)
+    return payload
+
+
+def _jsonify_client_payload(payload: object):
+    return jsonify(_serialize_payload_datetimes_for_client(payload))
 
 
 def _provider_snapshot_path(provider_key: str) -> Optional[Path]:
@@ -1176,7 +1252,7 @@ def fx_rates() -> tuple:
             ),
             502,
         )
-    return jsonify({"success": True, **payload}), 200
+    return _jsonify_client_payload({"success": True, **payload}), 200
 
 
 @app.route("/")
@@ -1264,14 +1340,14 @@ def scan() -> tuple:
         )
     result = _execute_scan_payload(payload)
     status = 200 if result.get("success") else result.get("error_code", 500)
-    return jsonify(result), status
+    return _jsonify_client_payload(result), status
 
 
 @app.route("/server-auto-scan-config", methods=["GET", "POST"])
 def server_auto_scan_config() -> tuple:
     if request.method == "GET":
         config, _ = _get_server_auto_scan_config()
-        return jsonify({"success": True, "config": config}), 200
+        return _jsonify_client_payload({"success": True, "config": config}), 200
 
     raw_body = request.get_data(cache=True, as_text=False)
     if raw_body:
@@ -1334,7 +1410,7 @@ def server_auto_scan_config() -> tuple:
             )
     _set_server_auto_scan_config(normalized, persist=True)
     config, _ = _get_server_auto_scan_config()
-    return jsonify({"success": True, "config": config}), 200
+    return _jsonify_client_payload({"success": True, "config": config}), 200
 
 
 @app.route("/history", methods=["GET"])
@@ -1352,7 +1428,7 @@ def history() -> tuple:
         limit = 200
     try:
         records = get_history_manager().load_recent(limit=limit, mode=mode)
-        return jsonify({"success": True, "records": records, "count": len(records)}), 200
+        return _jsonify_client_payload({"success": True, "records": records, "count": len(records)}), 200
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
 
@@ -1366,7 +1442,7 @@ def history_scans() -> tuple:
         limit = 100
     try:
         records = get_history_manager().load_recent_scan_summaries(limit=limit)
-        return jsonify({"success": True, "records": records, "count": len(records)}), 200
+        return _jsonify_client_payload({"success": True, "records": records, "count": len(records)}), 200
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
 
@@ -1376,7 +1452,7 @@ def history_stats() -> tuple:
     """Return history storage statistics."""
     try:
         stats = get_history_manager().get_stats()
-        return jsonify({"success": True, **stats}), 200
+        return _jsonify_client_payload({"success": True, **stats}), 200
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
 
@@ -1402,7 +1478,7 @@ def provider_snapshot(provider_key: str) -> tuple:
     except (OSError, json.JSONDecodeError) as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
     return (
-        jsonify(
+        _jsonify_client_payload(
             {
                 "success": True,
                 "provider_key": provider_key,
@@ -1427,7 +1503,7 @@ def provider_runtime(provider_key: str) -> tuple:
             ),
             404,
         )
-    return jsonify({"success": True, "provider_key": resolve_provider_key(provider_key), **status}), 200
+    return _jsonify_client_payload({"success": True, "provider_key": resolve_provider_key(provider_key), **status}), 200
 
 
 @app.route("/cross-provider-report", methods=["GET"])
@@ -1450,7 +1526,7 @@ def cross_provider_report() -> tuple:
             report = json.load(handle)
     except (OSError, json.JSONDecodeError) as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
-    return jsonify({"success": True, "report": report}), 200
+    return _jsonify_client_payload({"success": True, "report": report}), 200
 
 
 def _port_available(port: int) -> bool:

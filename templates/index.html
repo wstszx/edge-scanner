@@ -1003,7 +1003,7 @@
                   <thead>
                     <tr>
                       <th data-i18n="provider_match_col_sport">Sport</th>
-                      <th data-i18n="provider_match_col_time">Start (UTC)</th>
+                      <th data-i18n="provider_match_col_time">Start (Beijing Time)</th>
                       <th data-i18n="provider_match_col_pair">Pair</th>
                       <th data-i18n="provider_match_col_providers">Providers</th>
                       <th data-i18n="provider_match_col_events">Events</th>
@@ -1022,7 +1022,7 @@
                   <thead>
                     <tr>
                       <th data-i18n="provider_match_col_sport">Sport</th>
-                      <th data-i18n="provider_match_col_time">Start (UTC)</th>
+                      <th data-i18n="provider_match_col_time">Start (Beijing Time)</th>
                       <th data-i18n="provider_match_col_provider">Provider</th>
                       <th data-i18n="provider_match_col_pair">Pair</th>
                       <th data-i18n="provider_match_col_events">Event ID</th>
@@ -1765,7 +1765,7 @@
         provider_match_filter_pair_chip: 'Pair {pair}',
         provider_match_filter_reason_chip: 'Reason {reason}',
         provider_match_col_sport: 'Sport',
-        provider_match_col_time: 'Start (UTC)',
+        provider_match_col_time: 'Start (Beijing Time)',
         provider_match_col_pair: 'Pair',
         provider_match_col_providers: 'Providers',
         provider_match_col_provider: 'Provider',
@@ -2802,7 +2802,7 @@
       provider_match_filter_pair_chip: '\u7ec4\u5408 {pair}',
       provider_match_filter_reason_chip: '\u539f\u56e0 {reason}',
       provider_match_col_sport: '\u9879\u76ee',
-      provider_match_col_time: '\u5f00\u8d5b\u65f6\u95f4(UTC)',
+      provider_match_col_time: '\u5f00\u8d5b\u65f6\u95f4(\u5317\u4eac\u65f6\u95f4)',
       provider_match_col_pair: '\u5bf9\u9635',
       provider_match_col_providers: '\u5e73\u53f0',
       provider_match_col_provider: '\u5e73\u53f0',
@@ -2946,6 +2946,7 @@
       activeLanguage = (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
     }
     let activeLocale = activeLanguage === 'zh' ? 'zh-CN' : 'en-US';
+    const DISPLAY_TIME_ZONE = 'Asia/Shanghai';
     currencyFormatter = createCurrencyFormatter(activeLocale);
     document.documentElement.dataset.density = densityMode;
 
@@ -3397,11 +3398,63 @@
       return map[market] || market;
     }
 
-    function formatDateTime(value) {
-      if (!value) return t('tbd');
+    function parseDisplayDate(value) {
+      if (!value) return null;
       const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return t('tbd');
-      return date.toLocaleString(activeLocale);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function formatDisplayDateTime(value, options = {}) {
+      const date = parseDisplayDate(value);
+      if (!date) return t('tbd');
+      return date.toLocaleString(activeLocale, {
+        timeZone: DISPLAY_TIME_ZONE,
+        ...options,
+      });
+    }
+
+    function formatDisplayTime(value, options = {}) {
+      const date = parseDisplayDate(value);
+      if (!date) return t('tbd');
+      return date.toLocaleTimeString(activeLocale, {
+        timeZone: DISPLAY_TIME_ZONE,
+        ...options,
+      });
+    }
+
+    function formatDisplayDate(value, options = {}) {
+      const date = parseDisplayDate(value);
+      if (!date) return t('tbd');
+      return date.toLocaleDateString(activeLocale, {
+        timeZone: DISPLAY_TIME_ZONE,
+        ...options,
+      });
+    }
+
+    function formatDisplayTimestamp(value) {
+      const date = parseDisplayDate(value);
+      if (!date) return '';
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: DISPLAY_TIME_ZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(date);
+      const partMap = {};
+      parts.forEach((part) => {
+        if (part.type !== 'literal') {
+          partMap[part.type] = part.value;
+        }
+      });
+      return `${partMap.year}-${partMap.month}-${partMap.day} ${partMap.hour}:${partMap.minute}:${partMap.second}`;
+    }
+
+    function formatDateTime(value) {
+      return formatDisplayDateTime(value);
     }
 
     function normalizeQuoteSource(value) {
@@ -3495,29 +3548,24 @@
     }
 
     function formatTime(value) {
-      if (!value) return t('tbd');
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return t('tbd');
-      return date.toLocaleTimeString(activeLocale);
+      return formatDisplayTime(value);
     }
 
     function formatDateParts(value) {
-      if (!value) return { date: t('tbd'), time: '' };
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return { date: t('tbd'), time: '' };
+      const date = parseDisplayDate(value);
+      if (!date) return { date: t('tbd'), time: '' };
       return {
-        date: date.toLocaleDateString(activeLocale),
-        time: date.toLocaleTimeString(activeLocale, { hour: '2-digit', minute: '2-digit' }),
+        date: formatDisplayDate(date),
+        time: formatDisplayTime(date, { hour: '2-digit', minute: '2-digit' }),
       };
     }
 
     function formatCompactDateParts(value) {
-      if (!value) return { date: t('tbd'), time: '' };
-      const date = new Date(value);
-      if (Number.isNaN(date.getTime())) return { date: t('tbd'), time: '' };
+      const date = parseDisplayDate(value);
+      if (!date) return { date: t('tbd'), time: '' };
       return {
-        date: date.toLocaleDateString(activeLocale, { day: 'numeric', month: 'short' }),
-        time: date.toLocaleTimeString(activeLocale, { hour: '2-digit', minute: '2-digit' }),
+        date: formatDisplayDate(date, { day: 'numeric', month: 'short' }),
+        time: formatDisplayTime(date, { hour: '2-digit', minute: '2-digit' }),
       };
     }
 
@@ -10066,8 +10114,7 @@
       let historySummaryProviderFilterValue = 'all';
 
       function formatHistoryScanTime(value) {
-        const raw = String(value || '').trim();
-        return raw ? raw.replace('T', ' ').slice(0, 19) : '';
+        return formatDisplayTimestamp(value);
       }
 
       function parseHistoryScanTimestamp(value) {
@@ -10733,7 +10780,7 @@
             if (rec.books) displayBooks = rec.books.map(b => `${b.bookmaker} (${b.price})`).join(' vs ');
           }
 
-          const scanTime = rec.scan_time ? rec.scan_time.replace('T', ' ').slice(0, 19) : '';
+          const scanTime = formatHistoryScanTime(rec.scan_time);
           const sport = rec.sport_display || rec.sport || '';
 
           tr.innerHTML = `

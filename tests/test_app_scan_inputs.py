@@ -166,6 +166,8 @@ class ScanInputValidationTests(unittest.TestCase):
             response = self.client.post("/scan", json={})
 
         self.assertEqual(response.status_code, 200)
+        payload = response.get_json() or {}
+        self.assertEqual(payload.get("scan_time"), "2026-02-22T20:00:00+08:00")
         history_manager.save_opportunities.assert_called_once()
         history_manager.save_scan_summary.assert_called_once()
         history_payload = history_manager.save_opportunities.call_args.args[0]
@@ -264,7 +266,10 @@ class ScanInputValidationTests(unittest.TestCase):
             "enabled": True,
             "started": True,
             "ready": True,
-            "status": {"market_connected": True},
+            "status": {
+                "market_connected": True,
+                "market_last_message_at": "2026-03-22T12:00:00Z",
+            },
         }
         with (
             patch.object(app_module, "_start_background_provider_services") as mocked_start,
@@ -277,6 +282,10 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertTrue(payload.get("success"))
         self.assertEqual(payload.get("provider_key"), "polymarket")
         self.assertTrue(payload.get("ready"))
+        self.assertEqual(
+            ((payload.get("status") or {}).get("market_last_message_at")),
+            "2026-03-22T20:00:00+08:00",
+        )
 
     def test_provider_runtime_rejects_unknown_provider(self) -> None:
         with patch.object(app_module, "_start_background_provider_services") as mocked_start:
