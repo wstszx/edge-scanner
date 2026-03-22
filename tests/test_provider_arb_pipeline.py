@@ -201,6 +201,16 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
 
         stats = provider_sports[0].get("stats") or {}
         self.assertEqual(stats.get("events_returned_count"), 1)
+        merge_stats = provider_sports[0].get("merge_stats") or {}
+        self.assertEqual(merge_stats.get("incoming_events"), 1)
+        self.assertGreaterEqual(merge_stats.get("matched_existing", 0), 0)
+
+        scan_diagnostics = result.get("scan_diagnostics") or {}
+        self.assertEqual(scan_diagnostics.get("reason_code"), "arbitrage_found")
+        self.assertGreaterEqual(scan_diagnostics.get("raw_provider_events", 0), 1)
+        self.assertGreaterEqual(scan_diagnostics.get("arbitrage_count", 0), 1)
+        provider_breakdown = scan_diagnostics.get("provider_breakdown") or []
+        self.assertTrue(provider_breakdown)
         if callable(stats_assertion):
             stats_assertion(stats)
 

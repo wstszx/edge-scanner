@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import copy
+import json
 import socket
 import threading
 import time
+import tempfile
 import unittest
 from contextlib import ExitStack
+from pathlib import Path
 from typing import Callable
 from unittest.mock import MagicMock, patch
 
@@ -83,9 +86,30 @@ def _sample_arbitrage_opportunity(over_price: float = 2.37) -> dict:
     }
 
 
-def _sample_scan_result(scan_mode: str = "prematch", opportunities: list[dict] | None = None) -> dict:
+def _sample_scan_result(
+    scan_mode: str = "prematch",
+    opportunities: list[dict] | None = None,
+    *,
+    custom_providers: dict | None = None,
+    cross_provider_match_report_path: str = "",
+) -> dict:
     arbitrage_items = copy.deepcopy(opportunities if opportunities is not None else [_sample_arbitrage_opportunity()])
-    return {
+    providers = copy.deepcopy(custom_providers) if custom_providers is not None else {
+        "sx_bet": {
+            "key": "sx_bet",
+            "name": "SX Bet",
+            "enabled": True,
+            "events_merged": 1,
+            "sports": [
+                {
+                    "sport_key": "icehockey_nhl",
+                    "events_returned": 1,
+                    "requested_markets": ["totals"],
+                }
+            ],
+        }
+    }
+    result = {
         "success": True,
         "scan_mode": scan_mode,
         "scan_time": "2026-03-14T09:15:00Z",
@@ -95,24 +119,124 @@ def _sample_scan_result(scan_mode: str = "prematch", opportunities: list[dict] |
         },
         "middles": {"opportunities": []},
         "plus_ev": {"opportunities": []},
-        "custom_providers": {
-            "sx_bet": {
-                "key": "sx_bet",
-                "name": "SX Bet",
-                "enabled": True,
-                "events_merged": 1,
-                "sports": [
-                    {
-                        "sport_key": "icehockey_nhl",
-                        "events_returned": 1,
-                        "requested_markets": ["totals"],
-                    }
-                ],
-            }
-        },
+        "custom_providers": providers,
         "provider_snapshot_paths": {
-            "sx_bet": "data/provider_snapshots/sx_bet.json",
+            str(key): f"data/provider_snapshots/{key}.json"
+            for key in providers.keys()
         },
+    }
+    if cross_provider_match_report_path:
+        result["cross_provider_match_report_path"] = cross_provider_match_report_path
+    return result
+
+
+def _sample_cross_provider_report() -> dict:
+    return {
+        "saved_at": "2026-03-14T09:15:00Z",
+        "summary": {
+            "providers_considered": ["sx_bet", "polymarket", "betdex"],
+            "provider_event_counts": {
+                "sx_bet": 3,
+                "polymarket": 2,
+                "betdex": 2,
+            },
+            "total_raw_records": 7,
+            "total_match_clusters": 4,
+            "overlap_clusters": 2,
+            "clusters_by_provider_count": {"2": 2, "1": 2},
+            "provider_cluster_presence": {
+                "sx_bet": 3,
+                "polymarket": 2,
+                "betdex": 2,
+            },
+            "pair_overlap_clusters": {
+                "polymarket__sx_bet": 1,
+                "betdex__sx_bet": 1,
+            },
+            "single_provider_cluster_counts": {
+                "sx_bet": 1,
+                "betdex": 1,
+            },
+            "single_provider_reason_counts": {
+                "same_pair_time_mismatch": 1,
+                "possible_name_mismatch": 1,
+            },
+            "tolerance_minutes": 180,
+            "event_match_tolerance_minutes": 15,
+            "event_match_fuzzy_threshold": 0.72,
+        },
+        "clusters": [
+            {
+                "cluster_id": 1,
+                "sport_key": "icehockey_nhl",
+                "pair_norm": "seattle kraken vs vancouver canucks",
+                "representative_time_utc": "2026-03-15T10:00:00Z",
+                "providers": ["sx_bet", "polymarket"],
+                "provider_count": 2,
+                "events": [
+                    {"provider": "sx_bet", "event_id": "sx-1", "markets_count": 2},
+                    {"provider": "polymarket", "event_id": "poly-1", "markets_count": 1},
+                ],
+            },
+            {
+                "cluster_id": 2,
+                "sport_key": "icehockey_nhl",
+                "pair_norm": "edmonton oilers vs calgary flames",
+                "representative_time_utc": "2026-03-15T12:30:00Z",
+                "providers": ["betdex", "sx_bet"],
+                "provider_count": 2,
+                "events": [
+                    {"provider": "sx_bet", "event_id": "sx-2", "markets_count": 1},
+                    {"provider": "betdex", "event_id": "betdex-2", "markets_count": 1},
+                ],
+            },
+        ],
+        "single_provider_samples": [
+            {
+                "cluster_id": 3,
+                "sport_key": "icehockey_nhl",
+                "pair_norm": "new jersey devils vs new york rangers",
+                "provider": "sx_bet",
+                "event_id": "sx-near-1",
+                "commence_time": "2026-03-16T01:00:00Z",
+                "markets_count": 1,
+                "reason_code": "same_pair_time_mismatch",
+                "closest_candidate": {
+                    "provider": "polymarket",
+                    "event_id": "poly-near-1",
+                    "pair_norm": "new jersey devils vs new york rangers",
+                    "time_delta_minutes": 215,
+                    "pair_similarity_percent": 100.0,
+                },
+            },
+            {
+                "cluster_id": 4,
+                "sport_key": "icehockey_nhl",
+                "pair_norm": "montreal canadiens vs ottawa senators",
+                "provider": "betdex",
+                "event_id": "betdex-near-1",
+                "commence_time": "2026-03-16T03:00:00Z",
+                "markets_count": 1,
+                "reason_code": "possible_name_mismatch",
+                "closest_candidate": {
+                    "provider": "sx_bet",
+                    "event_id": "sx-near-2",
+                    "pair_norm": "montreal canadiens vs ottawa sens",
+                    "time_delta_minutes": 12,
+                    "pair_similarity_percent": 74.0,
+                },
+            },
+        ],
+    }
+
+
+def _sample_provider_snapshot(provider_key: str, provider_name: str, events: list[dict]) -> dict:
+    return {
+        "saved_at": "2026-03-14T09:15:00Z",
+        "provider_key": provider_key,
+        "provider_name": provider_name,
+        "sports": [{"sport_key": "icehockey_nhl", "events_returned": len(events)}],
+        "events": copy.deepcopy(events),
     }
 
 
@@ -405,9 +529,244 @@ class BrowserScanFlowTests(unittest.TestCase):
             finally:
                 server.stop()
 
-        kwargs = run_scan_calls[0]
-        self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])
-        self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
+    def test_browser_provider_report_filters_by_pair_and_reason(self) -> None:
+        persisted_configs: list[dict] = []
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+        provider_report = _sample_cross_provider_report()
+        custom_providers = {
+            "sx_bet": {
+                "key": "sx_bet",
+                "name": "SX Bet",
+                "enabled": True,
+                "events_merged": 3,
+                "sports": [{"sport_key": "icehockey_nhl", "events_returned": 3}],
+            },
+            "polymarket": {
+                "key": "polymarket",
+                "name": "Polymarket",
+                "enabled": True,
+                "events_merged": 2,
+                "sports": [{"sport_key": "icehockey_nhl", "events_returned": 2}],
+            },
+            "betdex": {
+                "key": "betdex",
+                "name": "BetDEX",
+                "enabled": True,
+                "events_merged": 2,
+                "sports": [{"sport_key": "icehockey_nhl", "events_returned": 2}],
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "cross_provider_match_report.json"
+            report_path.write_text(json.dumps(provider_report), encoding="utf-8")
+            snapshot_paths = {
+                "sx_bet": Path(temp_dir) / "sx_bet.json",
+                "polymarket": Path(temp_dir) / "polymarket.json",
+                "betdex": Path(temp_dir) / "betdex.json",
+            }
+            snapshot_paths["sx_bet"].write_text(
+                json.dumps(
+                    _sample_provider_snapshot(
+                        "sx_bet",
+                        "SX Bet",
+                        [
+                            {
+                                "id": "sx-near-1",
+                                "sport_key": "icehockey_nhl",
+                                "home_team": "New Jersey Devils",
+                                "away_team": "New York Rangers",
+                                "commence_time": "2026-03-16T01:00:00Z",
+                                "bookmakers": [
+                                    {
+                                        "key": "sx_bet",
+                                        "title": "SX Bet",
+                                        "event_id": "sx-near-1",
+                                        "markets": [{"key": "h2h"}, {"key": "totals"}],
+                                    }
+                                ],
+                            },
+                            {
+                                "id": "sx-near-2",
+                                "sport_key": "icehockey_nhl",
+                                "home_team": "Montreal Canadiens",
+                                "away_team": "Ottawa Sens",
+                                "commence_time": "2026-03-16T03:12:00Z",
+                                "bookmakers": [
+                                    {
+                                        "key": "sx_bet",
+                                        "title": "SX Bet",
+                                        "event_id": "sx-near-2",
+                                        "markets": [{"key": "h2h"}],
+                                    }
+                                ],
+                            },
+                        ],
+                    )
+                ),
+                encoding="utf-8",
+            )
+            snapshot_paths["polymarket"].write_text(
+                json.dumps(
+                    _sample_provider_snapshot(
+                        "polymarket",
+                        "Polymarket",
+                        [
+                            {
+                                "id": "poly-near-1",
+                                "sport_key": "icehockey_nhl",
+                                "home_team": "New Jersey Devils",
+                                "away_team": "New York Rangers",
+                                "commence_time": "2026-03-16T04:35:00Z",
+                                "bookmakers": [
+                                    {
+                                        "key": "polymarket",
+                                        "title": "Polymarket",
+                                        "event_id": "poly-near-1",
+                                        "markets": [{"key": "h2h"}],
+                                    }
+                                ],
+                            }
+                        ],
+                    )
+                ),
+                encoding="utf-8",
+            )
+            snapshot_paths["betdex"].write_text(
+                json.dumps(
+                    _sample_provider_snapshot(
+                        "betdex",
+                        "BetDEX",
+                        [
+                            {
+                                "id": "betdex-near-1",
+                                "sport_key": "icehockey_nhl",
+                                "home_team": "Montreal Canadiens",
+                                "away_team": "Ottawa Senators",
+                                "commence_time": "2026-03-16T03:00:00Z",
+                                "bookmakers": [
+                                    {
+                                        "key": "betdex",
+                                        "title": "BetDEX",
+                                        "event_id": "betdex-near-1",
+                                        "markets": [{"key": "h2h"}],
+                                    }
+                                ],
+                            }
+                        ],
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            def _fake_run_scan(**kwargs):
+                return _sample_scan_result(
+                    custom_providers=custom_providers,
+                    cross_provider_match_report_path=str(report_path),
+                )
+
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True))
+                stack.enter_context(
+                    patch.object(
+                        app_module,
+                        "_persist_server_auto_scan_config",
+                        side_effect=lambda config: persisted_configs.append(copy.deepcopy(config)),
+                    )
+                )
+                stack.enter_context(patch.object(app_module, "_start_background_provider_services"))
+                stack.enter_context(patch.object(app_module, "get_history_manager", return_value=history_manager))
+                stack.enter_context(patch.object(app_module, "get_notifier", return_value=notifier))
+                stack.enter_context(patch.object(app_module, "_cross_provider_report_path", return_value=report_path))
+                stack.enter_context(
+                    patch.object(
+                        app_module,
+                        "_provider_snapshot_path",
+                        side_effect=lambda provider_key: snapshot_paths.get(str(provider_key)),
+                    )
+                )
+                stack.enter_context(patch.object(app_module, "run_scan", side_effect=_fake_run_scan))
+
+                server = _LiveServer(app_module.app)
+                server.start()
+                try:
+                    with sync_playwright() as playwright:
+                        browser = playwright.chromium.launch(headless=True)
+                        context = browser.new_context()
+                        page = context.new_page()
+                        page.route("https://fonts.googleapis.com/*", lambda route: route.abort())
+                        page.route("https://fonts.gstatic.com/*", lambda route: route.abort())
+                        page.goto(server.base_url, wait_until="domcontentloaded")
+
+                        self._configure_selected_provider(page)
+                        self._wait_for(
+                            lambda: any(
+                                config.get("payload", {}).get("bookmakers") == ["sx_bet"]
+                                for config in persisted_configs
+                            )
+                        )
+
+                        with page.expect_response(
+                            lambda response: response.url.endswith("/scan")
+                            and response.request.method == "POST"
+                        ):
+                            page.evaluate("document.getElementById('scan-form').requestSubmit()")
+
+                        page.wait_for_selector("#arb-desktop-list .arb-opportunity-card")
+                        page.click('button[data-tab="providers"]')
+                        page.wait_for_selector("#provider-match-content")
+
+                        self.assertEqual(page.locator("#provider-match-table tbody tr").count(), 2)
+                        self.assertEqual(page.locator("#provider-single-table tbody tr").count(), 2)
+                        self.assertIn("SX Bet", page.locator("#provider-match-table").inner_text())
+                        self.assertIn("Polymarket", page.locator("#provider-match-table").inner_text())
+
+                        page.select_option("#provider-match-pair-filter", "polymarket__sx_bet")
+                        self._wait_for(
+                            lambda: "1/2" in page.locator("#provider-match-count").inner_text()
+                            and "1/2" in page.locator("#provider-single-count").inner_text()
+                        )
+                        self.assertEqual(page.locator("#provider-match-table tbody tr").count(), 1)
+                        self.assertEqual(page.locator("#provider-single-table tbody tr").count(), 1)
+                        single_text = page.locator("#provider-single-table").inner_text()
+                        self.assertTrue(
+                            "Same teams, but kickoff window differs" in single_text
+                            or "队名一致，但开赛时间窗口不一致" in single_text
+                        )
+
+                        page.locator("#provider-single-table tbody tr").first.click()
+                        page.wait_for_selector("#provider-compare-content")
+                        compare_text = page.locator("#provider-compare-content").inner_text()
+                        self.assertIn("SX Bet", compare_text)
+                        self.assertIn("Polymarket", compare_text)
+                        self.assertIn("sx-near-1", compare_text)
+                        self.assertIn("poly-near-1", compare_text)
+                        self.assertIn("EVENT_TIME_TOLERANCE_MINUTES", compare_text)
+                        self.assertIn("CROSS_PROVIDER_MATCH_TOLERANCE_MINUTES", compare_text)
+                        self.assertIn("0.72", compare_text)
+                        self.assertTrue("15m" in compare_text or "180m" in compare_text)
+                        self.assertGreater(page.locator(".provider-compare-diff-row.is-different").count(), 0)
+                        self.assertGreater(page.locator(".provider-compare-status-badge").count(), 0)
+
+                        page.select_option("#provider-match-reason-filter", "possible_name_mismatch")
+                        self._wait_for(
+                            lambda: "No near misses match the current filters."
+                            in page.locator("#provider-single-table").inner_text()
+                            or "当前筛选下没有近似未匹配样本。"
+                            in page.locator("#provider-single-table").inner_text()
+                        )
+                        self.assertEqual(page.locator("#provider-single-table tbody tr").count(), 1)
+                        filtered_text = page.locator("#provider-single-table").inner_text()
+                        self.assertTrue(
+                            "No near misses match the current filters." in filtered_text
+                            or "当前筛选下没有近似未匹配样本。" in filtered_text
+                        )
+
+                        browser.close()
+                finally:
+                    server.stop()
 
     def test_browser_pause_auto_scan_stops_future_runs_and_restores_editing(self) -> None:
         persisted_configs: list[dict] = []

@@ -415,6 +415,13 @@ def _cross_provider_match_tolerance_minutes() -> int:
         return 180
 
 
+def _event_match_tolerance_minutes() -> int:
+    try:
+        return max(0, int(float(EVENT_TIME_TOLERANCE_MINUTES)))
+    except (TypeError, ValueError):
+        return 15
+
+
 def _normalize_match_team_token(value: object) -> str:
     text = str(value or "").strip().lower()
     if not text:
@@ -465,6 +472,118 @@ def _event_market_count(event: dict) -> int:
     return total
 
 
+def _cross_provider_candidate_reason(
+    candidate: Optional[dict],
+    *,
+    candidate_count: int,
+    tolerance_seconds: int,
+) -> str:
+    if candidate_count <= 0:
+        return "no_other_provider_candidates"
+    if not isinstance(candidate, dict):
+        return "no_close_candidate"
+    if candidate.get("same_pair_norm") and not candidate.get("within_tolerance"):
+        return "same_pair_time_mismatch"
+    pair_similarity = float(candidate.get("pair_similarity", 0.0) or 0.0)
+    fuzzy_threshold = _event_match_fuzzy_threshold()
+    if candidate.get("within_tolerance") and pair_similarity >= fuzzy_threshold:
+        return "name_variation_within_time"
+    if pair_similarity >= fuzzy_threshold:
+        return "similar_pair_time_mismatch"
+    if pair_similarity >= 0.5:
+        return "possible_name_mismatch"
+    return "no_close_candidate"
+
+
+def _nearest_cross_provider_candidate(
+    source: dict,
+    sport_records: Sequence[dict],
+    *,
+    tolerance_seconds: int,
+) -> dict:
+    other_records = [
+        record
+        for record in sport_records
+        if isinstance(record, dict)
+        and str(record.get("provider") or "").strip()
+        and str(record.get("provider") or "").strip() != str(source.get("provider") or "").strip()
+    ]
+    source_home_norm = _normalize_team_name(source.get("home_team"))
+    source_away_norm = _normalize_team_name(source.get("away_team"))
+    source_pair_norm = str(source.get("pair_norm") or "").strip()
+    source_ts = source.get("commence_ts")
+    source_time = str(source.get("commence_time") or "").strip()
+
+    best_candidate: Optional[dict] = None
+    best_rank: Optional[Tuple[int, int, float, float]] = None
+    for record in other_records:
+        home_norm = _normalize_team_name(record.get("home_team"))
+        away_norm = _normalize_team_name(record.get("away_team"))
+        if not home_norm and not away_norm:
+            continue
+        direct_home = _team_similarity(source_home_norm, home_norm)
+        direct_away = _team_similarity(source_away_norm, away_norm)
+        direct_score = min(direct_home, direct_away)
+        reverse_home = _team_similarity(source_home_norm, away_norm)
+        reverse_away = _team_similarity(source_away_norm, home_norm)
+        reverse_score = min(reverse_home, reverse_away)
+        pair_similarity = max(direct_score, reverse_score)
+
+        candidate_ts = record.get("commence_ts")
+        time_delta_seconds: Optional[int]
+        if source_ts is not None and candidate_ts is not None:
+            time_delta_seconds = abs(int(source_ts) - int(candidate_ts))
+        elif source_time and source_time == str(record.get("commence_time") or "").strip():
+            time_delta_seconds = 0
+        else:
+            time_delta_seconds = None
+
+        same_pair_norm = bool(source_pair_norm) and source_pair_norm == str(record.get("pair_norm") or "").strip()
+        within_tolerance = bool(
+            time_delta_seconds is not None and time_delta_seconds <= tolerance_seconds
+        )
+        rank = (
+            1 if same_pair_norm else 0,
+            1 if within_tolerance else 0,
+            float(pair_similarity),
+            -float(time_delta_seconds) if time_delta_seconds is not None else float("-inf"),
+        )
+        if best_rank is not None and rank <= best_rank:
+            continue
+        best_rank = rank
+        best_candidate = {
+            "provider": record.get("provider"),
+            "event_id": record.get("event_id"),
+            "commence_time": record.get("commence_time"),
+            "pair_norm": record.get("pair_norm"),
+            "home_team": record.get("home_team"),
+            "away_team": record.get("away_team"),
+            "markets_count": record.get("markets_count"),
+            "same_pair_norm": same_pair_norm,
+            "within_tolerance": within_tolerance,
+            "time_delta_seconds": time_delta_seconds,
+            "time_delta_minutes": (
+                round(time_delta_seconds / 60.0, 1)
+                if time_delta_seconds is not None
+                else None
+            ),
+            "pair_similarity": round(pair_similarity, 4),
+            "pair_similarity_percent": round(pair_similarity * 100.0, 1),
+            "orientation": "reversed" if reverse_score > direct_score else "direct",
+        }
+
+    reason_code = _cross_provider_candidate_reason(
+        best_candidate,
+        candidate_count=len(other_records),
+        tolerance_seconds=tolerance_seconds,
+    )
+    return {
+        "reason_code": reason_code,
+        "candidate_count": len(other_records),
+        "closest_candidate": best_candidate,
+    }
+
+
 def _build_cross_provider_match_report(scan_time: str, snapshots: Dict[str, dict]) -> Optional[dict]:
     providers = [str(key) for key in snapshots.keys()]
     provider_event_counts = {provider: 0 for provider in providers}
@@ -511,16 +630,20 @@ def _build_cross_provider_match_report(scan_time: str, snapshots: Dict[str, dict
                 "pair_overlap_clusters": {},
                 "single_provider_cluster_counts": {},
                 "tolerance_minutes": _cross_provider_match_tolerance_minutes(),
+                "event_match_tolerance_minutes": _event_match_tolerance_minutes(),
+                "event_match_fuzzy_threshold": _event_match_fuzzy_threshold(),
             },
             "clusters": [],
             "single_provider_samples": [],
         }
 
     grouped: Dict[Tuple[str, str], List[dict]] = {}
+    records_by_sport: Dict[str, List[dict]] = {}
     for idx, record in enumerate(records):
         sport_key = record.get("sport_key") or "unknown_sport"
         pair_norm = record.get("pair_norm") or f"__single__{idx}"
         grouped.setdefault((sport_key, pair_norm), []).append(record)
+        records_by_sport.setdefault(sport_key, []).append(record)
 
     tolerance_seconds = _cross_provider_match_tolerance_minutes() * 60
     cluster_id = 0
@@ -622,6 +745,7 @@ def _build_cross_provider_match_report(scan_time: str, snapshots: Dict[str, dict
     )
 
     single_provider_samples: List[dict] = []
+    single_provider_reason_counts: Dict[str, int] = {}
     for cluster in clusters:
         if int(cluster.get("provider_count", 0) or 0) != 1:
             continue
@@ -629,17 +753,32 @@ def _build_cross_provider_match_report(scan_time: str, snapshots: Dict[str, dict
         if not events:
             continue
         first = events[0] if isinstance(events[0], dict) else {}
-        single_provider_samples.append(
-            {
-                "cluster_id": cluster.get("cluster_id"),
-                "sport_key": cluster.get("sport_key"),
-                "pair_norm": cluster.get("pair_norm"),
-                "provider": first.get("provider"),
-                "event_id": first.get("event_id"),
-                "commence_time": first.get("commence_time"),
-                "markets_count": first.get("markets_count"),
-            }
+        source_record = dict(first)
+        source_record["pair_norm"] = cluster.get("pair_norm")
+        source_record["commence_ts"] = _parse_commence_ts(first.get("commence_time"))
+        near_match = _nearest_cross_provider_candidate(
+            source_record,
+            records_by_sport.get(str(cluster.get("sport_key") or "unknown_sport"), []),
+            tolerance_seconds=tolerance_seconds,
         )
+        reason_code = str(near_match.get("reason_code") or "no_close_candidate")
+        single_provider_reason_counts[reason_code] = (
+            single_provider_reason_counts.get(reason_code, 0) + 1
+        )
+        sample = {
+            "cluster_id": cluster.get("cluster_id"),
+            "sport_key": cluster.get("sport_key"),
+            "pair_norm": cluster.get("pair_norm"),
+            "provider": first.get("provider"),
+            "event_id": first.get("event_id"),
+            "commence_time": first.get("commence_time"),
+            "markets_count": first.get("markets_count"),
+            "reason_code": reason_code,
+        }
+        closest_candidate = near_match.get("closest_candidate")
+        if isinstance(closest_candidate, dict):
+            sample["closest_candidate"] = closest_candidate
+        single_provider_samples.append(sample)
         if len(single_provider_samples) >= 120:
             break
 
@@ -655,7 +794,10 @@ def _build_cross_provider_match_report(scan_time: str, snapshots: Dict[str, dict
             "provider_cluster_presence": provider_cluster_presence,
             "pair_overlap_clusters": pair_overlap_clusters,
             "single_provider_cluster_counts": single_provider_cluster_counts,
+            "single_provider_reason_counts": single_provider_reason_counts,
             "tolerance_minutes": _cross_provider_match_tolerance_minutes(),
+            "event_match_tolerance_minutes": _event_match_tolerance_minutes(),
+            "event_match_fuzzy_threshold": _event_match_fuzzy_threshold(),
         },
         "clusters": overlap_clusters,
         "single_provider_samples": single_provider_samples,
@@ -1945,25 +2087,51 @@ def _index_event_for_merge(
 
 
 def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dict]:
+    return _merge_events_with_stats(base_events, extra_events)
+
+
+def _empty_event_merge_stats() -> dict:
+    return {
+        "incoming_events": 0,
+        "matched_existing": 0,
+        "matched_identity": 0,
+        "matched_team": 0,
+        "matched_reverse_team": 0,
+        "matched_fuzzy": 0,
+        "appended_new": 0,
+    }
+
+
+def _merge_events_with_stats(
+    base_events: List[dict],
+    extra_events: List[dict],
+    stats: Optional[dict] = None,
+) -> List[dict]:
     index: Dict[Tuple[str, str, str, str], dict] = {}
     by_team: Dict[Tuple[str, str, str], List[Tuple[int, dict]]] = {}
     normalized_by_sport: Dict[str, List[Tuple[int, dict, str, str]]] = {}
-    try:
-        tolerance_minutes = int(EVENT_TIME_TOLERANCE_MINUTES)
-    except ValueError:
-        tolerance_minutes = 15
+    tolerance_minutes = _event_match_tolerance_minutes()
     tolerance_seconds = max(0, tolerance_minutes) * 60
     fuzzy_threshold = _event_match_fuzzy_threshold()
+    if isinstance(stats, dict):
+        for key, default in _empty_event_merge_stats().items():
+            stats[key] = int(stats.get(key, default) or 0)
+        stats["incoming_events"] += len(extra_events)
     for event in base_events:
         _index_event_for_merge(event, index, by_team, normalized_by_sport)
     for extra in extra_events:
         identity = _event_identity(extra)
+        match_reason = ""
         if identity and identity in index:
             base = index[identity]
             base_books = base.setdefault("bookmakers", [])
             extra_books = extra.get("bookmakers") or []
             if isinstance(base_books, list) and isinstance(extra_books, list):
                 _merge_bookmakers(base_books, extra_books)
+            match_reason = "matched_identity"
+            if isinstance(stats, dict):
+                stats["matched_existing"] += 1
+                stats[match_reason] += 1
             continue
         matched_event = None
         if tolerance_seconds > 0:
@@ -1977,6 +2145,7 @@ def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dic
                         if diff <= tolerance_seconds and (best_diff is None or diff < best_diff):
                             best_diff = diff
                             matched_event = base_event
+                            match_reason = "matched_team"
             # Some providers flip home/away labels for the same fixture.
             if matched_event is None and team_key:
                 reverse_team_key = (team_key[0], team_key[2], team_key[1])
@@ -1989,6 +2158,7 @@ def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dic
                             if diff <= tolerance_seconds and (best_diff is None or diff < best_diff):
                                 best_diff = diff
                                 matched_event = base_event
+                                match_reason = "matched_reverse_team"
         if matched_event is None and tolerance_seconds > 0 and fuzzy_threshold > 0:
             normalized_key = _event_team_key_normalized(extra)
             extra_epoch = _event_time_seconds(extra)
@@ -2017,15 +2187,181 @@ def _merge_events(base_events: List[dict], extra_events: List[dict]) -> List[dic
                     if best_score is None or avg_score > best_score:
                         best_score = avg_score
                         matched_event = base_event
+                        match_reason = "matched_fuzzy"
         if matched_event is not None:
             base_books = matched_event.setdefault("bookmakers", [])
             extra_books = extra.get("bookmakers") or []
             if isinstance(base_books, list) and isinstance(extra_books, list):
                 _merge_bookmakers(base_books, extra_books)
+            if isinstance(stats, dict):
+                stats["matched_existing"] += 1
+                if match_reason in stats:
+                    stats[match_reason] += 1
             continue
         base_events.append(extra)
         _index_event_for_merge(extra, index, by_team, normalized_by_sport)
+        if isinstance(stats, dict):
+            stats["appended_new"] += 1
     return base_events
+
+
+def _sum_stale_filter_counts(items: Sequence[dict]) -> int:
+    total = 0
+    for entry in items or []:
+        if not isinstance(entry, dict):
+            continue
+        for key in (
+            "dropped_past",
+            "dropped_future",
+            "dropped_missing_time",
+            "suspicious_explicit_live_future",
+        ):
+            try:
+                total += int(entry.get(key, 0) or 0)
+            except (TypeError, ValueError):
+                continue
+    return total
+
+
+def _build_scan_diagnostics(
+    *,
+    provider_summaries: Dict[str, dict],
+    cross_provider_report: Optional[dict],
+    events_scanned: int,
+    arbitrage_count: int,
+    middle_count: int,
+    plus_ev_count: int,
+    sport_errors: Sequence[dict],
+    stale_event_filters: Sequence[dict],
+) -> dict:
+    report_summary = (
+        cross_provider_report.get("summary")
+        if isinstance(cross_provider_report, dict)
+        and isinstance(cross_provider_report.get("summary"), dict)
+        else {}
+    )
+    total_raw_records = int(report_summary.get("total_raw_records", 0) or 0)
+    total_match_clusters = int(report_summary.get("total_match_clusters", 0) or 0)
+    overlap_clusters = int(report_summary.get("overlap_clusters", 0) or 0)
+    provider_breakdown: List[dict] = []
+    enabled_provider_count = 0
+    providers_with_events = 0
+    providers_with_errors = 0
+    providers_with_match_hits = 0
+    total_merge_hits = 0
+    total_fuzzy_matches = 0
+    total_new_events = 0
+
+    for provider_key, provider_summary in (provider_summaries or {}).items():
+        if not isinstance(provider_summary, dict):
+            continue
+        sports = provider_summary.get("sports")
+        if not isinstance(sports, list):
+            sports = []
+        enabled = bool(provider_summary.get("enabled"))
+        raw_events = 0
+        error_count = 0
+        matched_existing = 0
+        matched_identity = 0
+        matched_team = 0
+        matched_reverse_team = 0
+        matched_fuzzy = 0
+        appended_new = 0
+        for sport_entry in sports:
+            if not isinstance(sport_entry, dict):
+                continue
+            raw_events += int(sport_entry.get("events_returned", 0) or 0)
+            if sport_entry.get("error"):
+                error_count += 1
+            merge_stats = sport_entry.get("merge_stats")
+            if not isinstance(merge_stats, dict):
+                merge_stats = {}
+            matched_existing += int(merge_stats.get("matched_existing", 0) or 0)
+            matched_identity += int(merge_stats.get("matched_identity", 0) or 0)
+            matched_team += int(merge_stats.get("matched_team", 0) or 0)
+            matched_reverse_team += int(merge_stats.get("matched_reverse_team", 0) or 0)
+            matched_fuzzy += int(merge_stats.get("matched_fuzzy", 0) or 0)
+            appended_new += int(merge_stats.get("appended_new", 0) or 0)
+        if enabled:
+            enabled_provider_count += 1
+        if raw_events > 0:
+            providers_with_events += 1
+        if error_count > 0:
+            providers_with_errors += 1
+        if matched_existing > 0:
+            providers_with_match_hits += 1
+        total_merge_hits += matched_existing
+        total_fuzzy_matches += matched_fuzzy
+        total_new_events += appended_new
+        if enabled or raw_events > 0 or error_count > 0:
+            provider_breakdown.append(
+                {
+                    "provider_key": provider_key,
+                    "provider_name": provider_summary.get("name")
+                    or PROVIDER_TITLES.get(provider_key, provider_key),
+                    "enabled": enabled,
+                    "raw_events": raw_events,
+                    "events_merged": int(provider_summary.get("events_merged", 0) or 0),
+                    "matched_existing": matched_existing,
+                    "matched_identity": matched_identity,
+                    "matched_team": matched_team,
+                    "matched_reverse_team": matched_reverse_team,
+                    "matched_fuzzy": matched_fuzzy,
+                    "appended_new": appended_new,
+                    "error_count": error_count,
+                    "sport_count": len(sports),
+                }
+            )
+
+    provider_breakdown.sort(
+        key=lambda item: (
+            -int(item.get("raw_events", 0) or 0),
+            -int(item.get("matched_existing", 0) or 0),
+            str(item.get("provider_name") or item.get("provider_key") or ""),
+        )
+    )
+    stale_filter_drop_total = _sum_stale_filter_counts(stale_event_filters)
+    sport_error_count = len([item for item in sport_errors or [] if isinstance(item, dict)])
+    if arbitrage_count > 0:
+        reason_code = "arbitrage_found"
+    elif sport_error_count and events_scanned == 0 and total_raw_records == 0:
+        reason_code = "fetch_errors"
+    elif total_raw_records == 0 and enabled_provider_count > 0:
+        reason_code = "no_source_events"
+    elif stale_filter_drop_total > 0 and events_scanned == 0:
+        reason_code = "events_filtered_by_time"
+    elif enabled_provider_count >= 2 and total_raw_records > 0 and overlap_clusters == 0:
+        reason_code = "no_cross_provider_overlap"
+    elif total_raw_records > 0 and total_merge_hits == 0 and enabled_provider_count >= 2:
+        reason_code = "low_merge_overlap"
+    elif sport_error_count > 0:
+        reason_code = "partial_errors"
+    elif events_scanned > 0 and (overlap_clusters > 0 or total_merge_hits > 0):
+        reason_code = "matched_but_no_arbitrage"
+    else:
+        reason_code = "no_arbitrage_after_merge"
+
+    return {
+        "reason_code": reason_code,
+        "enabled_provider_count": enabled_provider_count,
+        "providers_with_events": providers_with_events,
+        "providers_with_errors": providers_with_errors,
+        "providers_with_match_hits": providers_with_match_hits,
+        "raw_provider_events": total_raw_records,
+        "merged_events_scanned": int(events_scanned or 0),
+        "total_match_clusters": total_match_clusters,
+        "overlap_clusters": overlap_clusters,
+        "single_provider_clusters": max(0, total_match_clusters - overlap_clusters),
+        "total_merge_hits": total_merge_hits,
+        "total_fuzzy_matches": total_fuzzy_matches,
+        "total_new_events": total_new_events,
+        "arbitrage_count": int(arbitrage_count or 0),
+        "middle_count": int(middle_count or 0),
+        "plus_ev_count": int(plus_ev_count or 0),
+        "sport_error_count": sport_error_count,
+        "stale_filter_drop_total": stale_filter_drop_total,
+        "provider_breakdown": provider_breakdown,
+    }
 
 
 def _safe_float(value) -> Optional[float]:
@@ -4307,6 +4643,7 @@ async def _scan_single_sport(
                 {
                     "sport_key": sport_key,
                     "error": provider_error,
+                    "requested_markets": list(provider_markets),
                 }
             )
             sport_snapshot["error"] = provider_error
@@ -4320,17 +4657,29 @@ async def _scan_single_sport(
                 }
             )
         else:
+            merge_stats = _empty_event_merge_stats()
+            events_before_merge = len(events)
+            if provider_events:
+                events = _merge_events_with_stats(events, provider_events, stats=merge_stats)
+            events_after_merge = len(events)
             provider_update["sports"].append(
                 {
                     "sport_key": sport_key,
                     "events_returned": len(provider_events),
                     "stats": stats,
+                    "requested_markets": list(provider_markets),
+                    "events_before_merge": events_before_merge,
+                    "events_after_merge": events_after_merge,
+                    "merge_stats": merge_stats,
                 }
             )
             sport_snapshot.update(
                 {
                     "events_returned": len(provider_events),
                     "stats": stats,
+                    "events_before_merge": events_before_merge,
+                    "events_after_merge": events_after_merge,
+                    "merge_stats": merge_stats,
                 }
             )
             provider_snapshot_update["sports"].append(sport_snapshot)
@@ -4339,7 +4688,6 @@ async def _scan_single_sport(
                 provider_snapshot_update["events"].extend(copy.deepcopy(provider_events))
             if provider_events:
                 provider_update["events_merged"] += len(provider_events)
-                events = _merge_events(events, provider_events)
 
         sport_timing["provider_fetch_ms"] += provider_fetch_ms
         provider_timing = {
@@ -4697,6 +5045,16 @@ async def run_scan_async(
         arb_summary = _summaries([], 0, 0, 0.0, api_pool.calls_made)
         middle_summary = _middle_summary([])
         plus_ev_summary = _plus_ev_summary([])
+        scan_diagnostics = _build_scan_diagnostics(
+            provider_summaries=provider_summaries,
+            cross_provider_report=None,
+            events_scanned=0,
+            arbitrage_count=0,
+            middle_count=0,
+            plus_ev_count=0,
+            sport_errors=[],
+            stale_event_filters=[],
+        )
         return _finish({
             "success": True,
             "scan_mode": normalized_scan_mode,
@@ -4739,6 +5097,7 @@ async def run_scan_async(
             "regions": normalized_regions,
             "commission_rate": commission_rate,
             "custom_providers": provider_summaries,
+            "scan_diagnostics": scan_diagnostics,
             "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
         })
 
@@ -4908,9 +5267,20 @@ async def run_scan_async(
     timings = _build_scan_timings(scan_started_at, timing_steps, sport_timings)
     scan_time = _iso_now()
     provider_snapshot_paths = _persist_provider_snapshots(scan_time, provider_snapshots)
+    cross_provider_report = _build_cross_provider_match_report(scan_time, provider_snapshots)
     cross_provider_match_report_path = _persist_cross_provider_match_report(
         scan_time,
         provider_snapshots,
+    )
+    scan_diagnostics = _build_scan_diagnostics(
+        provider_summaries=provider_summaries,
+        cross_provider_report=cross_provider_report,
+        events_scanned=events_scanned,
+        arbitrage_count=len(arb_opportunities),
+        middle_count=len(middle_opportunities),
+        plus_ev_count=len(plus_ev_opportunities),
+        sport_errors=sport_errors,
+        stale_event_filters=stale_event_filters,
     )
     return _finish({
         "success": True,
@@ -4955,6 +5325,7 @@ async def run_scan_async(
         "commission_rate": commission_rate,
         "stale_event_filters": stale_event_filters,
         "custom_providers": provider_summaries,
+        "scan_diagnostics": scan_diagnostics,
         "timings": timings,
     })
 

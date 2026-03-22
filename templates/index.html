@@ -922,6 +922,34 @@
 
 
         <section id="providers-panel" class="hidden">
+          <section class="card results-card provider-diagnostics-card">
+            <div class="card-head">
+              <h3 data-i18n="scan_diagnostics_title">Scan Diagnostics</h3>
+            </div>
+            <p class="helper" data-i18n="scan_diagnostics_helper">Shows whether the scan lost coverage at fetch,
+              matching, or final arbitrage generation.</p>
+            <div id="scan-diagnostics-empty" class="empty" data-i18n="scan_diagnostics_empty">Run a scan to load
+              diagnostics.</div>
+            <div id="scan-diagnostics-content" class="hidden">
+              <div id="scan-diagnostics-summary" class="provider-match-summary"></div>
+              <p id="scan-diagnostics-message" class="scan-diagnostics-message"></p>
+              <div class="table-scroll">
+                <table id="scan-diagnostics-table">
+                  <thead>
+                    <tr>
+                      <th data-i18n="scan_diag_col_provider">Provider</th>
+                      <th data-i18n="scan_diag_col_raw">Raw Events</th>
+                      <th data-i18n="scan_diag_col_matched">Matched</th>
+                      <th data-i18n="scan_diag_col_new">New</th>
+                      <th data-i18n="scan_diag_col_fuzzy">Fuzzy</th>
+                      <th data-i18n="scan_diag_col_errors">Errors</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
           <section class="card results-card provider-data-card">
             <div class="card-head">
               <h3 data-i18n="provider_data_title">Provider Data Inspector</h3>
@@ -950,6 +978,16 @@
               cross-provider match data.</div>
             <div id="provider-match-content" class="hidden">
               <div id="provider-match-summary" class="provider-match-summary"></div>
+              <div class="provider-filter-bar">
+                <label class="provider-filter-field">
+                  <span data-i18n="provider_match_pair_filter">Provider Pair</span>
+                  <select id="provider-match-pair-filter"></select>
+                </label>
+                <label class="provider-filter-field">
+                  <span data-i18n="provider_match_reason_filter">Near-Miss Reason</span>
+                  <select id="provider-match-reason-filter"></select>
+                </label>
+              </div>
               <div class="table-scroll">
                 <table id="provider-match-table">
                   <thead>
@@ -966,7 +1004,7 @@
                 </table>
               </div>
               <div class="provider-single-head">
-                <h4 data-i18n="provider_match_single_title">Single-Provider Samples</h4>
+                <h4 data-i18n="provider_match_single_title">Single-Provider Near Misses</h4>
                 <span id="provider-single-count">0 samples</span>
               </div>
               <div class="table-scroll">
@@ -979,10 +1017,42 @@
                       <th data-i18n="provider_match_col_pair">Pair</th>
                       <th data-i18n="provider_match_col_events">Event ID</th>
                       <th data-i18n="provider_match_col_markets">Markets</th>
+                      <th data-i18n="provider_match_col_closest_provider">Closest Provider</th>
+                      <th data-i18n="provider_match_col_closest_pair">Closest Pair</th>
+                      <th data-i18n="provider_match_col_delta">Time Delta</th>
+                      <th data-i18n="provider_match_col_similarity">Similarity</th>
+                      <th data-i18n="provider_match_col_reason">Reason</th>
                     </tr>
                   </thead>
                   <tbody></tbody>
                 </table>
+              </div>
+              <div class="provider-compare-panel">
+                <div class="provider-single-head">
+                  <h4 data-i18n="provider_compare_title">Near-Miss Event Compare</h4>
+                  <span id="provider-compare-status" class="muted" data-i18n="provider_compare_helper">Click a near-miss row to inspect both raw events.</span>
+                </div>
+                <div id="provider-compare-empty" class="empty" data-i18n="provider_compare_empty">Select a near-miss row to load the raw event comparison.</div>
+                <div id="provider-compare-content" class="hidden">
+                  <div id="provider-compare-diff" class="provider-compare-diff"></div>
+                  <div id="provider-compare-guidance" class="provider-compare-guidance"></div>
+                  <div class="provider-compare-grid">
+                    <section class="provider-compare-card">
+                      <div class="provider-compare-card-head">
+                        <h5 data-i18n="provider_compare_source">Source Event</h5>
+                      </div>
+                      <div id="provider-compare-source-summary" class="provider-compare-summary"></div>
+                      <div id="provider-compare-source-json" class="provider-json-shell"></div>
+                    </section>
+                    <section class="provider-compare-card">
+                      <div class="provider-compare-card-head">
+                        <h5 data-i18n="provider_compare_candidate">Closest Candidate</h5>
+                      </div>
+                      <div id="provider-compare-candidate-summary" class="provider-compare-summary"></div>
+                      <div id="provider-compare-candidate-json" class="provider-json-shell"></div>
+                    </section>
+                  </div>
+                </div>
               </div>
             </div>
           </section>
@@ -1245,6 +1315,11 @@
     const plusEvPanel = document.getElementById('plus-ev-panel');
     const providersPanel = document.getElementById('providers-panel');
     const historyPanel = document.getElementById('history-panel');
+    const scanDiagnosticsEmpty = document.getElementById('scan-diagnostics-empty');
+    const scanDiagnosticsContent = document.getElementById('scan-diagnostics-content');
+    const scanDiagnosticsSummary = document.getElementById('scan-diagnostics-summary');
+    const scanDiagnosticsMessage = document.getElementById('scan-diagnostics-message');
+    const scanDiagnosticsTableBody = document.querySelector('#scan-diagnostics-table tbody');
     const providerDataCount = document.getElementById('provider-data-count');
     const providerDataEmpty = document.getElementById('provider-data-empty');
     const providerDataList = document.getElementById('provider-data-list');
@@ -1252,9 +1327,20 @@
     const providerMatchEmpty = document.getElementById('provider-match-empty');
     const providerMatchContent = document.getElementById('provider-match-content');
     const providerMatchSummary = document.getElementById('provider-match-summary');
+    const providerMatchPairFilter = document.getElementById('provider-match-pair-filter');
+    const providerMatchReasonFilter = document.getElementById('provider-match-reason-filter');
     const providerMatchTableBody = document.querySelector('#provider-match-table tbody');
     const providerSingleCount = document.getElementById('provider-single-count');
     const providerSingleTableBody = document.querySelector('#provider-single-table tbody');
+    const providerCompareStatus = document.getElementById('provider-compare-status');
+    const providerCompareEmpty = document.getElementById('provider-compare-empty');
+    const providerCompareContent = document.getElementById('provider-compare-content');
+    const providerCompareDiff = document.getElementById('provider-compare-diff');
+    const providerCompareGuidance = document.getElementById('provider-compare-guidance');
+    const providerCompareSourceSummary = document.getElementById('provider-compare-source-summary');
+    const providerCompareCandidateSummary = document.getElementById('provider-compare-candidate-summary');
+    const providerCompareSourceJson = document.getElementById('provider-compare-source-json');
+    const providerCompareCandidateJson = document.getElementById('provider-compare-candidate-json');
     const refreshProviderMatchBtn = document.getElementById('refresh-provider-match-btn');
     const middlesConfig = document.getElementById('middles-config');
     const plusEvConfig = document.getElementById('plus-ev-config');
@@ -1372,9 +1458,14 @@
     };
     const providerSnapshotCache = {};
     const providerSnapshotLoading = new Set();
+    const providerSnapshotPromises = new Map();
     const providerJsonChildLimit = 200;
     let crossProviderReportCache = null;
     let crossProviderReportLoading = false;
+    let providerMatchPairFilterValue = 'all';
+    let providerMatchReasonFilterValue = 'all';
+    let renderedNearMissEntries = [];
+    let selectedNearMissKey = '';
 
     const TRANSLATIONS = {
       en: {
@@ -1477,15 +1568,53 @@
         provider_json_truncated: '{count} more entries truncated.',
         provider_key_label: 'Key',
         provider_requested_markets: 'Requested Markets',
+        provider_fetched: 'Fetched',
+        provider_matched: 'Matched',
+        provider_new: 'New',
+        provider_fuzzy: 'Fuzzy',
+        scan_diagnostics_title: 'Scan Diagnostics',
+        scan_diagnostics_helper: 'Shows whether the scan lost coverage at fetch, matching, or final arbitrage generation.',
+        scan_diagnostics_empty: 'Run a scan to load diagnostics.',
+        scan_diag_raw_events: 'Raw provider events: {count}',
+        scan_diag_merged_events: 'Merged events: {count}',
+        scan_diag_overlap_clusters: 'Overlap clusters: {count}',
+        scan_diag_arbitrage: 'Arbitrage: {count}',
+        scan_diag_middle: 'Middles: {count}',
+        scan_diag_plus_ev: '+EV: {count}',
+        scan_diag_col_provider: 'Provider',
+        scan_diag_col_raw: 'Raw Events',
+        scan_diag_col_matched: 'Matched',
+        scan_diag_col_new: 'New',
+        scan_diag_col_fuzzy: 'Fuzzy',
+        scan_diag_col_errors: 'Errors',
+        scan_diag_no_providers: 'No provider diagnostics were produced for this scan.',
+        scan_diag_open_providers: 'Open the Providers tab for raw snapshots and overlap samples.',
+        scan_diag_reason_arbitrage_found: 'Matching worked and arbitrage opportunities were found.',
+        scan_diag_reason_fetch_errors: 'The scan hit upstream fetch errors before enough event data was collected.',
+        scan_diag_reason_no_source_events: 'Custom providers returned no events for this scan.',
+        scan_diag_reason_events_filtered_by_time: 'Events were fetched, but the current prematch/live time rules filtered them out.',
+        scan_diag_reason_no_cross_provider_overlap: 'Providers returned events, but none overlapped in the same game window.',
+        scan_diag_reason_low_merge_overlap: 'Providers returned events, but very few were merged into shared games.',
+        scan_diag_reason_matched_but_no_arbitrage: 'Matching worked, but the matched games did not produce arbitrage at current prices.',
+        scan_diag_reason_partial_errors: 'Some providers errored, so this scan may be incomplete.',
+        scan_diag_reason_no_arbitrage_after_merge: 'The scan completed, but no arbitrage survived the current prices and filters.',
         provider_match_title: 'Cross-Provider Match Report',
         provider_match_helper: 'Shows matched games across providers based on teams and kickoff window.',
         provider_match_empty: 'Run a scan to load cross-provider match data.',
         provider_match_count: '{count} matched clusters',
+        provider_match_count_filtered: '{shown}/{total} matched clusters',
         provider_match_single_count: '{count} samples',
+        provider_match_single_count_filtered: '{shown}/{total} samples',
         provider_match_overlaps: 'Overlaps',
         provider_match_total_clusters: 'Clusters',
         provider_match_raw_records: 'Raw records',
         provider_match_tolerance: 'Tolerance {minutes}m',
+        provider_match_pair_filter: 'Provider Pair',
+        provider_match_pair_all: 'All provider pairs',
+        provider_match_reason_filter: 'Near-Miss Reason',
+        provider_match_reason_all: 'All near-miss reasons',
+        provider_match_filter_pair_chip: 'Pair {pair}',
+        provider_match_filter_reason_chip: 'Reason {reason}',
         provider_match_col_sport: 'Sport',
         provider_match_col_time: 'Start (UTC)',
         provider_match_col_pair: 'Pair',
@@ -1493,9 +1622,60 @@
         provider_match_col_provider: 'Provider',
         provider_match_col_events: 'Events',
         provider_match_col_markets: 'Markets',
-        provider_match_single_title: 'Single-Provider Samples',
+        provider_match_col_closest_provider: 'Closest Provider',
+        provider_match_col_closest_pair: 'Closest Pair',
+        provider_match_col_delta: 'Time Delta',
+        provider_match_col_similarity: 'Similarity',
+        provider_match_col_reason: 'Reason',
+        provider_match_single_title: 'Single-Provider Near Misses',
         provider_match_no_overlaps: 'No overlap clusters found in this scan.',
-        provider_match_no_single: 'No single-provider samples to show.',
+        provider_match_no_overlaps_filtered: 'No overlap clusters match the current provider-pair filter.',
+        provider_match_no_single: 'No single-provider near misses to show.',
+        provider_match_no_single_filtered: 'No near misses match the current filters.',
+        provider_compare_title: 'Near-Miss Event Compare',
+        provider_compare_diff_title: 'Field Differences',
+        provider_compare_guidance_title: 'Likely Fix Direction',
+        provider_compare_helper: 'Click a near-miss row to inspect both raw events.',
+        provider_compare_empty: 'Select a near-miss row to load the raw event comparison.',
+        provider_compare_loading: 'Loading raw events for comparison...',
+        provider_compare_fetch_failed: 'Failed to load raw event comparison: {error}',
+        provider_compare_source: 'Source Event',
+        provider_compare_candidate: 'Closest Candidate',
+        provider_compare_event_missing: 'Raw event not found in the snapshot.',
+        provider_compare_field: 'Field',
+        provider_compare_source_col: 'Source',
+        provider_compare_candidate_col: 'Candidate',
+        provider_compare_status_col: 'Status',
+        provider_compare_provider: 'Provider',
+        provider_compare_event_id: 'Event ID',
+        provider_compare_home_team: 'Home Team',
+        provider_compare_away_team: 'Away Team',
+        provider_compare_pair: 'Pair',
+        provider_compare_start: 'Start',
+        provider_compare_markets: 'Markets',
+        provider_compare_reason: 'Reason',
+        provider_compare_similarity_chip: 'Similarity {value}',
+        provider_compare_delta_chip: 'Delta {value}',
+        provider_compare_reason_chip: 'Reason {reason}',
+        provider_compare_report_tolerance_chip: 'Report Tolerance {value}',
+        provider_compare_match_tolerance_chip: 'Merge Tolerance {value}',
+        provider_compare_fuzzy_chip: 'Fuzzy {value}',
+        provider_compare_status_same: 'Same',
+        provider_compare_status_variant: 'Variant',
+        provider_compare_status_different: 'Different',
+        provider_compare_status_missing: 'Missing',
+        provider_compare_guidance_time: 'Kickoff gap is {delta}; report tolerance is {report_tolerance} and merge tolerance is {match_tolerance}. Check EVENT_TIME_TOLERANCE_MINUTES and CROSS_PROVIDER_MATCH_TOLERANCE_MINUTES.',
+        provider_compare_guidance_name: 'Team names are close but not identical. Current fuzzy threshold is {threshold}. Extend team alias normalization or provider name mapping before blaming pricing.',
+        provider_compare_guidance_market: 'Markets differ between the two raw events. Check market standardization and provider segmentation for this pair.',
+        provider_compare_guidance_snapshot: 'One side raw event was missing from the saved snapshot. Check provider snapshot persistence before changing match rules.',
+        provider_compare_guidance_coverage: 'The other providers do not appear to have this event in the same sport window. This looks more like coverage than matching.',
+        provider_compare_guidance_same_game: 'Similarity is high and the gap is modest. This looks like the same game separated by metadata differences.',
+        provider_match_reason_no_other_provider_candidates: 'No other provider event in this sport',
+        provider_match_reason_same_pair_time_mismatch: 'Same teams, but kickoff window differs',
+        provider_match_reason_name_variation_within_time: 'Likely same game, but team names differ',
+        provider_match_reason_similar_pair_time_mismatch: 'Similar teams, but kickoff window differs',
+        provider_match_reason_possible_name_mismatch: 'Closest candidate has only partial team-name match',
+        provider_match_reason_no_close_candidate: 'No close candidate found',
         provider_match_loading: 'Loading cross-provider report...',
         provider_match_fetch_failed: 'Failed to load cross-provider report: {error}',
 
@@ -2205,15 +2385,53 @@
       provider_json_truncated: '\u5df2\u622a\u65ad {count} \u6761\uff0c\u5f53\u6570\u636e\u8fc7\u5927\u65f6\u5efa\u8bae\u6309\u9700\u5c55\u5f00\u3002',
       provider_key_label: 'Key',
       provider_requested_markets: '\u8bf7\u6c42\u76d8\u53e3',
+      provider_fetched: '\u6293\u53d6',
+      provider_matched: '\u5339\u914d',
+      provider_new: '\u65b0\u589e',
+      provider_fuzzy: '\u6a21\u7cca',
+      scan_diagnostics_title: '\u626b\u63cf\u8bca\u65ad',
+      scan_diagnostics_helper: '\u7528\u6765\u5224\u65ad\u95ee\u9898\u51fa\u5728\u6570\u636e\u6293\u53d6\u3001\u8d5b\u4e8b\u5339\u914d\uff0c\u8fd8\u662f\u6700\u7ec8\u5957\u5229\u751f\u6210\u9636\u6bb5\u3002',
+      scan_diagnostics_empty: '\u8bf7\u5148\u8fd0\u884c\u4e00\u6b21\u626b\u63cf\u4ee5\u52a0\u8f7d\u8bca\u65ad\u4fe1\u606f\u3002',
+      scan_diag_raw_events: '\u539f\u59cb provider \u4e8b\u4ef6\uff1a{count}',
+      scan_diag_merged_events: '\u5408\u5e76\u540e\u4e8b\u4ef6\uff1a{count}',
+      scan_diag_overlap_clusters: '\u91cd\u53e0\u5339\u914d\u7c07\uff1a{count}',
+      scan_diag_arbitrage: '\u5957\u5229\uff1a{count}',
+      scan_diag_middle: '\u4e2d\u95f4\u76d8\uff1a{count}',
+      scan_diag_plus_ev: '+EV\uff1a{count}',
+      scan_diag_col_provider: '\u5e73\u53f0',
+      scan_diag_col_raw: '\u539f\u59cb\u4e8b\u4ef6',
+      scan_diag_col_matched: '\u5df2\u5339\u914d',
+      scan_diag_col_new: '\u65b0\u589e',
+      scan_diag_col_fuzzy: '\u6a21\u7cca',
+      scan_diag_col_errors: '\u9519\u8bef',
+      scan_diag_no_providers: '\u8fd9\u6b21\u626b\u63cf\u6ca1\u6709\u751f\u6210 provider \u8bca\u65ad\u660e\u7ec6\u3002',
+      scan_diag_open_providers: '\u53ef\u4ee5\u5230 Providers \u9875\u7b7e\u67e5\u770b\u539f\u59cb\u5feb\u7167\u548c\u5339\u914d\u6837\u672c\u3002',
+      scan_diag_reason_arbitrage_found: '\u5339\u914d\u6d41\u7a0b\u5de5\u4f5c\u6b63\u5e38\uff0c\u800c\u4e14\u5df2\u7ecf\u627e\u5230\u5957\u5229\u673a\u4f1a\u3002',
+      scan_diag_reason_fetch_errors: '\u5728\u6536\u96c6\u5230\u8db3\u591f\u4e8b\u4ef6\u4e4b\u524d\uff0c\u4e0a\u6e38\u6570\u636e\u6293\u53d6\u5df2\u7ecf\u51fa\u9519\u3002',
+      scan_diag_reason_no_source_events: '\u8fd9\u6b21\u626b\u63cf\u4e2d\uff0c\u81ea\u5b9a\u4e49 provider \u6ca1\u6709\u8fd4\u56de\u4efb\u4f55\u4e8b\u4ef6\u3002',
+      scan_diag_reason_events_filtered_by_time: '\u5df2\u7ecf\u6293\u5230\u4e8b\u4ef6\uff0c\u4f46\u88ab\u5f53\u524d\u8d5b\u524d/\u8d5b\u4e2d\u65f6\u95f4\u89c4\u5219\u8fc7\u6ee4\u6389\u4e86\u3002',
+      scan_diag_reason_no_cross_provider_overlap: '\u5404 provider \u6709\u8fd4\u56de\u4e8b\u4ef6\uff0c\u4f46\u5728\u540c\u4e00\u5bf9\u9635\u65f6\u95f4\u7a97\u53e3\u91cc\u6ca1\u6709\u91cd\u53e0\u3002',
+      scan_diag_reason_low_merge_overlap: '\u5404 provider \u6709\u8fd4\u56de\u4e8b\u4ef6\uff0c\u4f46\u88ab\u5408\u5e76\u5230\u540c\u4e00\u573a\u6bd4\u8d5b\u7684\u6570\u91cf\u5f88\u5c11\u3002',
+      scan_diag_reason_matched_but_no_arbitrage: '\u5339\u914d\u6d41\u7a0b\u5de5\u4f5c\u6b63\u5e38\uff0c\u4f46\u5f53\u524d\u4ef7\u683c\u6761\u4ef6\u4e0b\u6ca1\u6709\u5f62\u6210\u5957\u5229\u3002',
+      scan_diag_reason_partial_errors: '\u90e8\u5206 provider \u51fa\u73b0\u9519\u8bef\uff0c\u6240\u4ee5\u8fd9\u6b21\u7ed3\u679c\u53ef\u80fd\u4e0d\u5b8c\u6574\u3002',
+      scan_diag_reason_no_arbitrage_after_merge: '\u626b\u63cf\u5df2\u5b8c\u6210\uff0c\u4f46\u5f53\u524d\u4ef7\u683c\u548c\u7b5b\u9009\u6761\u4ef6\u4e0b\u6ca1\u6709\u5269\u4e0b\u5957\u5229\u673a\u4f1a\u3002',
       provider_match_title: '\u8de8\u5e73\u53f0\u6bd4\u8d5b\u5339\u914d\u62a5\u544a',
       provider_match_helper: '\u6839\u636e\u961f\u540d\u4e0e\u5f00\u8d5b\u65f6\u95f4\u7a97\u53e3\u5c55\u793a\u591a\u5e73\u53f0\u5339\u914d\u7684\u6bd4\u8d5b\u3002',
       provider_match_empty: '\u8bf7\u5148\u8fd0\u884c\u626b\u63cf\u4ee5\u751f\u6210\u8de8\u5e73\u53f0\u5339\u914d\u6570\u636e\u3002',
       provider_match_count: '\u5339\u914d\u7c07 {count}',
+      provider_match_count_filtered: '\u5339\u914d\u7c07 {shown}/{total}',
       provider_match_single_count: '\u6837\u672c {count}',
+      provider_match_single_count_filtered: '\u6837\u672c {shown}/{total}',
       provider_match_overlaps: '\u91cd\u53e0\u7c07',
       provider_match_total_clusters: '\u603b\u7c07\u6570',
       provider_match_raw_records: '\u539f\u59cb\u8bb0\u5f55',
       provider_match_tolerance: '\u5bb9\u5dee {minutes}\u5206\u949f',
+      provider_match_pair_filter: '\u5e73\u53f0\u7ec4\u5408',
+      provider_match_pair_all: '\u6240\u6709\u5e73\u53f0\u7ec4\u5408',
+      provider_match_reason_filter: '\u8fd1\u4f3c\u672a\u5339\u914d\u539f\u56e0',
+      provider_match_reason_all: '\u6240\u6709\u672a\u5339\u914d\u539f\u56e0',
+      provider_match_filter_pair_chip: '\u7ec4\u5408 {pair}',
+      provider_match_filter_reason_chip: '\u539f\u56e0 {reason}',
       provider_match_col_sport: '\u9879\u76ee',
       provider_match_col_time: '\u5f00\u8d5b\u65f6\u95f4(UTC)',
       provider_match_col_pair: '\u5bf9\u9635',
@@ -2221,9 +2439,60 @@
       provider_match_col_provider: '\u5e73\u53f0',
       provider_match_col_events: '\u8d5b\u4e8b',
       provider_match_col_markets: '\u76d8\u53e3',
-      provider_match_single_title: '\u5355\u5e73\u53f0\u6837\u672c',
+      provider_match_col_closest_provider: '\u6700\u63a5\u8fd1\u7684\u5e73\u53f0',
+      provider_match_col_closest_pair: '\u6700\u63a5\u8fd1\u7684\u5bf9\u9635',
+      provider_match_col_delta: '\u65f6\u95f4\u5dee',
+      provider_match_col_similarity: '\u76f8\u4f3c\u5ea6',
+      provider_match_col_reason: '\u539f\u56e0',
+      provider_match_single_title: '\u5355\u5e73\u53f0\u8fd1\u4f3c\u672a\u5339\u914d',
       provider_match_no_overlaps: '\u672c\u6b21\u626b\u63cf\u6ca1\u6709\u53d1\u73b0\u8de8\u5e73\u53f0\u91cd\u53e0\u7c07\u3002',
-      provider_match_no_single: '\u6682\u65e0\u5355\u5e73\u53f0\u6837\u672c\u3002',
+      provider_match_no_overlaps_filtered: '\u5f53\u524d\u5e73\u53f0\u7ec4\u5408\u7b5b\u9009\u4e0b\u6ca1\u6709\u91cd\u53e0\u7c07\u3002',
+      provider_match_no_single: '\u6682\u65e0\u5355\u5e73\u53f0\u8fd1\u4f3c\u672a\u5339\u914d\u6837\u672c\u3002',
+      provider_match_no_single_filtered: '\u5f53\u524d\u7b5b\u9009\u4e0b\u6ca1\u6709\u8fd1\u4f3c\u672a\u5339\u914d\u6837\u672c\u3002',
+      provider_compare_title: '\u8fd1\u4f3c\u672a\u5339\u914d\u5bf9\u7167',
+      provider_compare_diff_title: '\u5b57\u6bb5\u5dee\u5f02',
+      provider_compare_guidance_title: '\u53ef\u80fd\u7684\u4fee\u590d\u65b9\u5411',
+      provider_compare_helper: '\u70b9\u51fb\u4e00\u884c near-miss\uff0c\u76f4\u63a5\u67e5\u770b\u4e24\u8fb9\u539f\u59cb event\u3002',
+      provider_compare_empty: '\u9009\u4e2d\u4e00\u884c near-miss \u540e\u52a0\u8f7d\u539f\u59cb event \u5bf9\u7167\u3002',
+      provider_compare_loading: '\u6b63\u5728\u52a0\u8f7d\u539f\u59cb event \u5bf9\u7167...',
+      provider_compare_fetch_failed: '\u52a0\u8f7d\u539f\u59cb event \u5bf9\u7167\u5931\u8d25\uff1a{error}',
+      provider_compare_source: '\u539f\u59cb\u6765\u6e90 event',
+      provider_compare_candidate: '\u6700\u63a5\u8fd1\u5019\u9009',
+      provider_compare_event_missing: '\u5728 snapshot \u4e2d\u6ca1\u6709\u627e\u5230\u8fd9\u6761 raw event\u3002',
+      provider_compare_field: '\u5b57\u6bb5',
+      provider_compare_source_col: '\u6765\u6e90',
+      provider_compare_candidate_col: '\u5019\u9009',
+      provider_compare_status_col: '\u72b6\u6001',
+      provider_compare_provider: '\u5e73\u53f0',
+      provider_compare_event_id: 'Event ID',
+      provider_compare_home_team: '\u4e3b\u961f',
+      provider_compare_away_team: '\u5ba2\u961f',
+      provider_compare_pair: '\u5bf9\u9635',
+      provider_compare_start: '\u5f00\u8d5b\u65f6\u95f4',
+      provider_compare_markets: '\u76d8\u53e3',
+      provider_compare_reason: '\u539f\u56e0',
+      provider_compare_similarity_chip: '\u76f8\u4f3c\u5ea6 {value}',
+      provider_compare_delta_chip: '\u65f6\u95f4\u5dee {value}',
+      provider_compare_reason_chip: '\u539f\u56e0 {reason}',
+      provider_compare_report_tolerance_chip: '\u62a5\u544a\u5bb9\u5dee {value}',
+      provider_compare_match_tolerance_chip: '\u5408\u5e76\u5bb9\u5dee {value}',
+      provider_compare_fuzzy_chip: 'Fuzzy {value}',
+      provider_compare_status_same: '\u4e00\u81f4',
+      provider_compare_status_variant: '\u53d8\u4f53',
+      provider_compare_status_different: '\u4e0d\u540c',
+      provider_compare_status_missing: '\u7f3a\u5931',
+      provider_compare_guidance_time: '\u5f00\u8d5b\u65f6\u95f4\u5dee\u4e3a {delta}\uff1b\u62a5\u544a\u5bb9\u5dee\u662f {report_tolerance}\uff0c\u5408\u5e76\u5bb9\u5dee\u662f {match_tolerance}\u3002\u53ef\u4ee5\u5148\u68c0\u67e5 EVENT_TIME_TOLERANCE_MINUTES \u548c CROSS_PROVIDER_MATCH_TOLERANCE_MINUTES\u3002',
+      provider_compare_guidance_name: '\u961f\u540d\u5f88\u63a5\u8fd1\uff0c\u4f46\u4e0d\u5b8c\u5168\u4e00\u81f4\u3002\u5f53\u524d fuzzy threshold \u662f {threshold}\uff0c\u66f4\u50cf\u662f\u8981\u8865 team alias \u5f52\u4e00\u5316\u6216 provider \u540d\u79f0\u6620\u5c04\u3002',
+      provider_compare_guidance_market: '\u4e24\u8fb9 raw event \u7684 markets \u4e0d\u4e00\u81f4\uff0c\u9700\u8981\u68c0\u67e5 market standardization \u548c provider segmentation\u3002',
+      provider_compare_guidance_snapshot: '\u5176\u4e2d\u4e00\u8fb9\u7684 raw event \u6ca1\u6709\u4fdd\u5b58\u5230 snapshot \u91cc\uff0c\u5efa\u8bae\u5148\u68c0\u67e5 provider snapshot persistence\u3002',
+      provider_compare_guidance_coverage: '\u5176\u4ed6 providers \u5728\u540c\u4e00 sport \u7a97\u53e3\u91cc\u6ca1\u6709\u5bf9\u5e94\u4e8b\u4ef6\uff0c\u66f4\u50cf coverage \u95ee\u9898\uff0c\u4e0d\u4e00\u5b9a\u662f matching \u95ee\u9898\u3002',
+      provider_compare_guidance_same_game: '\u76f8\u4f3c\u5ea6\u5f88\u9ad8\uff0c\u800c\u4e14\u5dee\u8ddd\u4e0d\u7b97\u5927\uff0c\u8fd9\u66f4\u50cf\u662f\u540c\u4e00\u573a\u6bd4\u8d5b\u88ab metadata \u5dee\u5f02\u62c6\u5f00\u4e86\u3002',
+      provider_match_reason_no_other_provider_candidates: '\u8fd9\u4e2a\u9879\u76ee\u4e0b\u5176\u4ed6 provider \u6ca1\u6709\u5bf9\u5e94\u4e8b\u4ef6',
+      provider_match_reason_same_pair_time_mismatch: '\u961f\u540d\u4e00\u81f4\uff0c\u4f46\u5f00\u8d5b\u65f6\u95f4\u7a97\u53e3\u4e0d\u4e00\u81f4',
+      provider_match_reason_name_variation_within_time: '\u5f88\u53ef\u80fd\u662f\u540c\u4e00\u573a\uff0c\u4f46\u961f\u540d\u5199\u6cd5\u4e0d\u540c',
+      provider_match_reason_similar_pair_time_mismatch: '\u961f\u540d\u5f88\u50cf\uff0c\u4f46\u5f00\u8d5b\u65f6\u95f4\u7a97\u53e3\u4e0d\u4e00\u81f4',
+      provider_match_reason_possible_name_mismatch: '\u627e\u5230\u7684\u6700\u8fd1\u5019\u9009\u53ea\u662f\u90e8\u5206\u961f\u540d\u80fd\u5bf9\u4e0a',
+      provider_match_reason_no_close_candidate: '\u6ca1\u6709\u627e\u5230\u8db3\u591f\u63a5\u8fd1\u7684\u5019\u9009',
       provider_match_loading: '\u6b63\u5728\u52a0\u8f7d\u8de8\u5e73\u53f0\u62a5\u544a...',
       provider_match_fetch_failed: '\u52a0\u8f7d\u8de8\u5e73\u53f0\u62a5\u544a\u5931\u8d25\uff1a{error}',
     });
@@ -2490,6 +2759,7 @@
       }
       renderPartialWarning(lastScanData);
       renderArbCalculator();
+      renderScanDiagnostics();
       renderCrossProviderReport(crossProviderReportCache);
     }
 
@@ -3213,6 +3483,37 @@
     if (refreshProviderMatchBtn) {
       refreshProviderMatchBtn.addEventListener('click', () => {
         loadCrossProviderReport(true);
+      });
+    }
+
+    if (providerMatchPairFilter) {
+      providerMatchPairFilter.addEventListener('change', () => {
+        providerMatchPairFilterValue = providerMatchPairFilter.value || 'all';
+        if (crossProviderReportCache) {
+          renderCrossProviderReport(crossProviderReportCache);
+        }
+      });
+    }
+
+    if (providerMatchReasonFilter) {
+      providerMatchReasonFilter.addEventListener('change', () => {
+        providerMatchReasonFilterValue = providerMatchReasonFilter.value || 'all';
+        if (crossProviderReportCache) {
+          renderCrossProviderReport(crossProviderReportCache);
+        }
+      });
+    }
+
+    if (providerSingleTableBody) {
+      providerSingleTableBody.addEventListener('click', (event) => {
+        const row = event.target instanceof Element
+          ? event.target.closest('tr[data-near-miss-key]')
+          : null;
+        if (!row) return;
+        const key = row.getAttribute('data-near-miss-key') || '';
+        const entry = renderedNearMissEntries.find((item) => nearMissEntryKey(item) === key);
+        if (!entry) return;
+        selectNearMissCompare(entry);
       });
     }
 
@@ -4282,6 +4583,7 @@
       renderArbitrage();
       renderMiddles();
       renderPlusEv();
+      renderScanDiagnostics();
       renderProviderData();
       if (payload && payload.cross_provider_match_report_path) {
         crossProviderReportCache = null;
@@ -4308,8 +4610,8 @@
         .replace(/'/g, '&#39;');
     }
 
-    function getProviderSummaries() {
-      const providers = lastScanData?.custom_providers;
+    function getProviderSummaries(payload = lastScanData) {
+      const providers = payload?.custom_providers;
       if (!providers || typeof providers !== 'object') return [];
       return Object.values(providers)
         .filter((item) => item && typeof item === 'object')
@@ -4324,6 +4626,132 @@
           if (leftEvents !== rightEvents) return rightEvents - leftEvents;
           return String(left?.name || left?.key || '').localeCompare(String(right?.name || right?.key || ''));
         });
+    }
+
+    function getScanDiagnostics(payload = lastScanData) {
+      if (!payload || typeof payload !== 'object') return null;
+      if (payload.scan_diagnostics && typeof payload.scan_diagnostics === 'object') {
+        return payload.scan_diagnostics;
+      }
+      const summaries = getProviderSummaries(payload);
+      const providerBreakdown = summaries.map((summary) => {
+        const sports = Array.isArray(summary?.sports) ? summary.sports : [];
+        const errorCount = sports.filter((item) => item && item.error).length;
+        const rawEvents = Number(summary?.events_merged || 0);
+        return {
+          provider_key: String(summary?.key || ''),
+          provider_name: String(summary?.name || summary?.key || ''),
+          enabled: Boolean(summary?.enabled),
+          raw_events: rawEvents,
+          events_merged: rawEvents,
+          matched_existing: 0,
+          matched_fuzzy: 0,
+          appended_new: rawEvents,
+          error_count: errorCount,
+          sport_count: sports.length,
+        };
+      });
+      return {
+        reason_code: Number(payload?.arbitrage?.opportunities_count || 0) > 0
+          ? 'arbitrage_found'
+          : 'no_arbitrage_after_merge',
+        enabled_provider_count: summaries.filter((item) => item?.enabled).length,
+        providers_with_events: providerBreakdown.filter((item) => Number(item.raw_events || 0) > 0).length,
+        providers_with_errors: providerBreakdown.filter((item) => Number(item.error_count || 0) > 0).length,
+        providers_with_match_hits: 0,
+        raw_provider_events: providerBreakdown.reduce((sum, item) => sum + Number(item.raw_events || 0), 0),
+        merged_events_scanned: Number(payload?.arbitrage?.summary?.events_scanned || 0),
+        total_match_clusters: 0,
+        overlap_clusters: 0,
+        single_provider_clusters: 0,
+        total_merge_hits: 0,
+        total_fuzzy_matches: 0,
+        total_new_events: providerBreakdown.reduce((sum, item) => sum + Number(item.appended_new || 0), 0),
+        arbitrage_count: Number(payload?.arbitrage?.opportunities_count || 0),
+        middle_count: Number(payload?.middles?.opportunities_count || 0),
+        plus_ev_count: Number(payload?.plus_ev?.opportunities_count || 0),
+        sport_error_count: Array.isArray(payload?.sport_errors) ? payload.sport_errors.length : 0,
+        stale_filter_drop_total: 0,
+        provider_breakdown: providerBreakdown,
+      };
+    }
+
+    function scanDiagnosticMessage(diagnostics) {
+      const reasonCode = String(diagnostics?.reason_code || 'no_arbitrage_after_merge');
+      const key = `scan_diag_reason_${reasonCode}`;
+      return t(key, {
+        raw: Number(diagnostics?.raw_provider_events || 0),
+        merged: Number(diagnostics?.merged_events_scanned || 0),
+        overlaps: Number(diagnostics?.overlap_clusters || 0),
+        arbitrage: Number(diagnostics?.arbitrage_count || 0),
+        errors: Number(diagnostics?.sport_error_count || 0),
+      });
+    }
+
+    function renderScanDiagnostics() {
+      if (
+        !scanDiagnosticsEmpty ||
+        !scanDiagnosticsContent ||
+        !scanDiagnosticsSummary ||
+        !scanDiagnosticsMessage ||
+        !scanDiagnosticsTableBody
+      ) {
+        return;
+      }
+
+      const diagnostics = getScanDiagnostics();
+      if (!lastScanData || !diagnostics || typeof diagnostics !== 'object') {
+        scanDiagnosticsSummary.innerHTML = '';
+        scanDiagnosticsMessage.textContent = '';
+        scanDiagnosticsTableBody.innerHTML = '';
+        scanDiagnosticsContent.classList.add('hidden');
+        scanDiagnosticsEmpty.textContent = t('scan_diagnostics_empty');
+        scanDiagnosticsEmpty.classList.remove('hidden');
+        return;
+      }
+
+      const breakdown = Array.isArray(diagnostics.provider_breakdown) ? diagnostics.provider_breakdown : [];
+      const rawProviderEvents = Number(diagnostics.raw_provider_events || 0);
+      const mergedEvents = Number(diagnostics.merged_events_scanned || 0);
+      const overlapClusters = Number(diagnostics.overlap_clusters || 0);
+      const arbitrageCount = Number(diagnostics.arbitrage_count || 0);
+      const middleCount = Number(diagnostics.middle_count || 0);
+      const plusEvCount = Number(diagnostics.plus_ev_count || 0);
+
+      scanDiagnosticsSummary.innerHTML = `
+        <span class="provider-chip">${t('scan_diag_raw_events', { count: rawProviderEvents })}</span>
+        <span class="provider-chip">${t('scan_diag_merged_events', { count: mergedEvents })}</span>
+        <span class="provider-chip">${t('scan_diag_overlap_clusters', { count: overlapClusters })}</span>
+        <span class="provider-chip">${t('scan_diag_arbitrage', { count: arbitrageCount })}</span>
+        <span class="provider-chip">${t('scan_diag_middle', { count: middleCount })}</span>
+        <span class="provider-chip">${t('scan_diag_plus_ev', { count: plusEvCount })}</span>
+      `;
+      scanDiagnosticsMessage.textContent = scanDiagnosticMessage(diagnostics);
+
+      if (breakdown.length) {
+        scanDiagnosticsTableBody.innerHTML = breakdown.map((entry) => {
+          const providerName = String(entry?.provider_name || entry?.provider_key || '-');
+          return `
+            <tr>
+              <td>${escapeHtml(providerName)}</td>
+              <td>${escapeHtml(String(Number(entry?.raw_events || 0)))}</td>
+              <td>${escapeHtml(String(Number(entry?.matched_existing || 0)))}</td>
+              <td>${escapeHtml(String(Number(entry?.appended_new || 0)))}</td>
+              <td>${escapeHtml(String(Number(entry?.matched_fuzzy || 0)))}</td>
+              <td>${escapeHtml(String(Number(entry?.error_count || 0)))}</td>
+            </tr>
+          `;
+        }).join('');
+      } else {
+        scanDiagnosticsTableBody.innerHTML = `
+          <tr>
+            <td colspan="6">${escapeHtml(t('scan_diag_no_providers'))}</td>
+          </tr>
+        `;
+      }
+
+      scanDiagnosticsEmpty.classList.add('hidden');
+      scanDiagnosticsContent.classList.remove('hidden');
     }
 
     function providerStatusKey(providerSummary) {
@@ -4382,10 +4810,24 @@
                 </div>
               `;
             }
+            const mergeStats = entry?.merge_stats && typeof entry.merge_stats === 'object'
+              ? entry.merge_stats
+              : {};
+            const matchedCount = Number(mergeStats.matched_existing || 0);
+            const newCount = Number(mergeStats.appended_new || 0);
+            const fuzzyCount = Number(mergeStats.matched_fuzzy || 0);
+            const metrics = `
+              <div class="provider-sport-metrics">
+                <span class="provider-sport-value">${escapeHtml(`${t('provider_fetched')}: ${eventsReturned}`)}</span>
+                <span class="provider-sport-meta">${escapeHtml(`${t('provider_matched')}: ${matchedCount}`)}</span>
+                <span class="provider-sport-meta">${escapeHtml(`${t('provider_new')}: ${newCount}`)}</span>
+                ${fuzzyCount ? `<span class="provider-sport-meta">${escapeHtml(`${t('provider_fuzzy')}: ${fuzzyCount}`)}</span>` : ''}
+              </div>
+            `;
             return `
               <div class="provider-sport-row">
                 <span class="provider-sport-key">${escapeHtml(sportLabel)}</span>
-                <span class="provider-sport-value">${eventsReturned}</span>
+                ${metrics}
                 ${marketHint}
               </div>
             `;
@@ -4535,24 +4977,55 @@
       container.appendChild(buildProviderJsonNode(snapshot, null, 0));
     }
 
+    async function fetchProviderSnapshot(providerKey, options = {}) {
+      const normalized = String(providerKey || '').trim();
+      if (!normalized) return null;
+      const {
+        mount = false,
+        updateStatus = false,
+      } = options || {};
+      if (providerSnapshotCache[normalized]) {
+        if (mount) mountProviderSnapshotTree(normalized, providerSnapshotCache[normalized]);
+        return providerSnapshotCache[normalized];
+      }
+      if (providerSnapshotPromises.has(normalized)) {
+        const snapshot = await providerSnapshotPromises.get(normalized);
+        if (snapshot && mount) mountProviderSnapshotTree(normalized, snapshot);
+        return snapshot;
+      }
+
+      const promise = (async () => {
+        const response = await fetch(`/provider-snapshots/${encodeURIComponent(normalized)}`);
+        const payload = await response.json();
+        if (!response.ok || !payload || payload.success !== true) {
+          throw new Error(payload?.error || t('unknown_error'));
+        }
+        providerSnapshotCache[normalized] = payload.snapshot;
+        return payload.snapshot;
+      })();
+      providerSnapshotPromises.set(normalized, promise);
+      try {
+        const snapshot = await promise;
+        if (snapshot && mount) mountProviderSnapshotTree(normalized, snapshot);
+        if (updateStatus) setProviderStatusMessage(normalized, '');
+        return snapshot;
+      } finally {
+        providerSnapshotPromises.delete(normalized);
+      }
+    }
+
     async function loadProviderSnapshot(providerKey) {
-      if (!providerKey || providerSnapshotLoading.has(providerKey)) return;
+      if (!providerKey || providerSnapshotLoading.has(providerKey)) return null;
       const loadBtn = providerLoadButton(providerKey);
       providerSnapshotLoading.add(providerKey);
       if (loadBtn) loadBtn.disabled = true;
       setProviderStatusMessage(providerKey, t('provider_loading'), false);
       try {
-        const response = await fetch(`/provider-snapshots/${encodeURIComponent(providerKey)}`);
-        const payload = await response.json();
-        if (!response.ok || !payload || payload.success !== true) {
-          throw new Error(payload?.error || t('unknown_error'));
-        }
-        providerSnapshotCache[providerKey] = payload.snapshot;
-        mountProviderSnapshotTree(providerKey, payload.snapshot);
-        setProviderStatusMessage(providerKey, '');
+        return await fetchProviderSnapshot(providerKey, { mount: true, updateStatus: true });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error || t('unknown_error'));
         setProviderStatusMessage(providerKey, t('provider_fetch_failed', { error: message }), true);
+        return null;
       } finally {
         providerSnapshotLoading.delete(providerKey);
         const refreshBtn = providerLoadButton(providerKey);
@@ -4571,6 +5044,552 @@
       return raw.replace(/\s+/g, ' ');
     }
 
+    function providerDisplayName(providerKey) {
+      const normalized = String(providerKey || '').trim();
+      if (!normalized) return t('unknown');
+      const provider = lastScanData?.custom_providers?.[normalized];
+      const name = provider && typeof provider === 'object' ? provider.name : '';
+      return String(name || normalized);
+    }
+
+    function normalizeProviderPairKey(left, right) {
+      const parts = [String(left || '').trim(), String(right || '').trim()]
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+      return parts.length === 2 ? `${parts[0]}__${parts[1]}` : '';
+    }
+
+    function splitProviderPairKey(pairKey) {
+      const normalized = String(pairKey || '').trim();
+      if (!normalized || normalized === 'all') return [];
+      return normalized.split('__').map((item) => String(item || '').trim()).filter(Boolean);
+    }
+
+    function providerPairLabel(pairKey) {
+      if (!pairKey || pairKey === 'all') return t('provider_match_pair_all');
+      const [left, right] = splitProviderPairKey(pairKey);
+      if (!left || !right) return formatProviderPair(pairKey);
+      return `${providerDisplayName(left)} <-> ${providerDisplayName(right)}`;
+    }
+
+    function reportProviderPairKeys(report) {
+      const pairKeys = new Set();
+      const summary = report?.summary && typeof report.summary === 'object' ? report.summary : {};
+      const pairOverlapClusters = summary?.pair_overlap_clusters && typeof summary.pair_overlap_clusters === 'object'
+        ? summary.pair_overlap_clusters
+        : {};
+      Object.keys(pairOverlapClusters).forEach((pairKey) => {
+        const normalized = normalizeProviderPairKey(...String(pairKey || '').split('__'));
+        if (normalized) pairKeys.add(normalized);
+      });
+
+      const singles = Array.isArray(report?.single_provider_samples) ? report.single_provider_samples : [];
+      singles.forEach((entry) => {
+        const normalized = normalizeProviderPairKey(entry?.provider, entry?.closest_candidate?.provider);
+        if (normalized) pairKeys.add(normalized);
+      });
+
+      if (!pairKeys.size) {
+        const providers = Array.isArray(summary?.providers_considered) ? summary.providers_considered : [];
+        for (let idx = 0; idx < providers.length; idx += 1) {
+          for (let inner = idx + 1; inner < providers.length; inner += 1) {
+            const normalized = normalizeProviderPairKey(providers[idx], providers[inner]);
+            if (normalized) pairKeys.add(normalized);
+          }
+        }
+      }
+
+      return Array.from(pairKeys).sort((left, right) => providerPairLabel(left).localeCompare(providerPairLabel(right)));
+    }
+
+    function reportNearMissReasons(report) {
+      const summary = report?.summary && typeof report.summary === 'object' ? report.summary : {};
+      const reasonCounts = summary?.single_provider_reason_counts && typeof summary.single_provider_reason_counts === 'object'
+        ? summary.single_provider_reason_counts
+        : {};
+      const seen = new Set();
+      const ordered = [];
+      Object.keys(reasonCounts).forEach((reasonCode) => {
+        const normalized = String(reasonCode || '').trim();
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        ordered.push(normalized);
+      });
+      if (!ordered.length) {
+        const singles = Array.isArray(report?.single_provider_samples) ? report.single_provider_samples : [];
+        singles.forEach((entry) => {
+          const normalized = String(entry?.reason_code || '').trim();
+          if (!normalized || seen.has(normalized)) return;
+          seen.add(normalized);
+          ordered.push(normalized);
+        });
+      }
+      return ordered.sort((left, right) => providerMatchReasonLabel(left).localeCompare(providerMatchReasonLabel(right)));
+    }
+
+    function renderProviderMatchFilters(report) {
+      const pairSelect = providerMatchPairFilter;
+      const reasonSelect = providerMatchReasonFilter;
+      if (!pairSelect || !reasonSelect) return;
+
+      const pairOptions = ['all', ...reportProviderPairKeys(report)];
+      if (!pairOptions.includes(providerMatchPairFilterValue)) {
+        providerMatchPairFilterValue = 'all';
+      }
+      pairSelect.innerHTML = pairOptions.map((value) => `
+        <option value="${escapeHtml(value)}">${escapeHtml(providerPairLabel(value))}</option>
+      `).join('');
+      pairSelect.value = providerMatchPairFilterValue;
+      pairSelect.disabled = pairOptions.length <= 1;
+
+      const reasonCodes = ['all', ...reportNearMissReasons(report)];
+      if (!reasonCodes.includes(providerMatchReasonFilterValue)) {
+        providerMatchReasonFilterValue = 'all';
+      }
+      reasonSelect.innerHTML = reasonCodes.map((value) => `
+        <option value="${escapeHtml(value)}">${escapeHtml(value === 'all' ? t('provider_match_reason_all') : providerMatchReasonLabel(value))}</option>
+      `).join('');
+      reasonSelect.value = providerMatchReasonFilterValue;
+      reasonSelect.disabled = reasonCodes.length <= 1;
+    }
+
+    function clusterMatchesProviderPairFilter(cluster, pairKey) {
+      if (!pairKey || pairKey === 'all') return true;
+      const [left, right] = splitProviderPairKey(pairKey);
+      if (!left || !right) return true;
+      const providers = Array.isArray(cluster?.providers) ? cluster.providers.map((item) => String(item || '').trim()) : [];
+      return providers.includes(left) && providers.includes(right);
+    }
+
+    function nearMissMatchesProviderPairFilter(entry, pairKey) {
+      if (!pairKey || pairKey === 'all') return true;
+      const nearestProvider = entry?.closest_candidate?.provider;
+      if (!nearestProvider) return false;
+      return normalizeProviderPairKey(entry?.provider, nearestProvider) === pairKey;
+    }
+
+    function nearMissMatchesReasonFilter(entry, reasonCode) {
+      if (!reasonCode || reasonCode === 'all') return true;
+      return String(entry?.reason_code || '').trim() === reasonCode;
+    }
+
+    function nearMissEntryKey(entry) {
+      if (!entry || typeof entry !== 'object') return '';
+      return [
+        String(entry.provider || '').trim(),
+        String(entry.event_id || '').trim(),
+        String(entry?.closest_candidate?.provider || '').trim(),
+        String(entry?.closest_candidate?.event_id || '').trim(),
+        String(entry.cluster_id || '').trim(),
+      ].join('::');
+    }
+
+    function providerEventById(snapshot, eventId) {
+      const normalized = String(eventId || '').trim();
+      if (!normalized) return null;
+      const events = Array.isArray(snapshot?.events) ? snapshot.events : [];
+      return events.find((event) => {
+        if (!event || typeof event !== 'object') return false;
+        const candidateId = String(event.id || event.event_id || '').trim();
+        return candidateId === normalized;
+      }) || null;
+    }
+
+    function eventMarketKeys(event) {
+      const books = Array.isArray(event?.bookmakers) ? event.bookmakers : [];
+      const seen = new Set();
+      books.forEach((book) => {
+        const markets = Array.isArray(book?.markets) ? book.markets : [];
+        markets.forEach((market) => {
+          const key = String(market?.key || '').trim();
+          if (key) seen.add(key);
+        });
+      });
+      return Array.from(seen);
+    }
+
+    function normalizeTeamForCompare(value) {
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\b(fc|cf|sc|ac|afc|u23|u21|u20|u19|u18|u17|women|woman|ladies|reserves|ii|iii)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    function compareProviderTextState(leftValue, rightValue, normalizer = (value) => String(value || '').trim()) {
+      const leftRaw = String(leftValue || '').trim();
+      const rightRaw = String(rightValue || '').trim();
+      if (!leftRaw && !rightRaw) return 'same';
+      if (!leftRaw || !rightRaw) return 'missing';
+      if (leftRaw === rightRaw) return 'same';
+      const leftNorm = normalizer(leftRaw);
+      const rightNorm = normalizer(rightRaw);
+      if (leftNorm && rightNorm && leftNorm === rightNorm) return 'variant';
+      return 'different';
+    }
+
+    function compareProviderMarketState(sourceMarkets, candidateMarkets) {
+      const left = Array.isArray(sourceMarkets) ? sourceMarkets.filter(Boolean) : [];
+      const right = Array.isArray(candidateMarkets) ? candidateMarkets.filter(Boolean) : [];
+      if (!left.length && !right.length) return 'same';
+      if (!left.length || !right.length) return 'missing';
+      const leftSet = new Set(left);
+      const rightSet = new Set(right);
+      if (left.length === right.length && left.every((item) => rightSet.has(item))) return 'same';
+      const overlap = left.some((item) => rightSet.has(item));
+      return overlap ? 'variant' : 'different';
+    }
+
+    function providerCompareStatusLabel(status) {
+      const normalized = String(status || 'different').trim() || 'different';
+      return t(`provider_compare_status_${normalized}`);
+    }
+
+    function providerCompareFieldValue(value, fallback = '-') {
+      const text = String(value || '').trim();
+      return text || fallback;
+    }
+
+    function formatProviderThreshold(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return '-';
+      return numeric.toFixed(numeric >= 1 ? 0 : 2);
+    }
+
+    function buildProviderCompareRows(entry, sourceEvent, candidateEvent) {
+      const sourceSummary = sourceEvent && typeof sourceEvent === 'object' ? sourceEvent : {};
+      const candidateSummary = candidateEvent && typeof candidateEvent === 'object' ? candidateEvent : {};
+      const sourceMarkets = eventMarketKeys(sourceSummary);
+      const candidateMarkets = eventMarketKeys(candidateSummary);
+      const rows = [
+        {
+          key: 'home_team',
+          label: t('provider_compare_home_team'),
+          source: providerCompareFieldValue(sourceSummary.home_team || entry?.home_team),
+          candidate: providerCompareFieldValue(candidateSummary.home_team || entry?.closest_candidate?.home_team),
+          status: compareProviderTextState(
+            sourceSummary.home_team || entry?.home_team,
+            candidateSummary.home_team || entry?.closest_candidate?.home_team,
+            normalizeTeamForCompare,
+          ),
+        },
+        {
+          key: 'away_team',
+          label: t('provider_compare_away_team'),
+          source: providerCompareFieldValue(sourceSummary.away_team || entry?.away_team),
+          candidate: providerCompareFieldValue(candidateSummary.away_team || entry?.closest_candidate?.away_team),
+          status: compareProviderTextState(
+            sourceSummary.away_team || entry?.away_team,
+            candidateSummary.away_team || entry?.closest_candidate?.away_team,
+            normalizeTeamForCompare,
+          ),
+        },
+        {
+          key: 'start',
+          label: t('provider_compare_start'),
+          source: providerCompareFieldValue(
+            sourceSummary.commence_time ? formatDateTime(sourceSummary.commence_time) : formatDateTime(entry?.commence_time),
+          ),
+          candidate: providerCompareFieldValue(
+            candidateSummary.commence_time
+              ? formatDateTime(candidateSummary.commence_time)
+              : formatDateTime(entry?.closest_candidate?.commence_time),
+          ),
+          status: compareProviderTextState(
+            sourceSummary.commence_time || entry?.commence_time,
+            candidateSummary.commence_time || entry?.closest_candidate?.commence_time,
+          ),
+        },
+        {
+          key: 'markets',
+          label: t('provider_compare_markets'),
+          source: providerCompareFieldValue(sourceMarkets.join(', ') || String(entry?.markets_count ?? '')),
+          candidate: providerCompareFieldValue(candidateMarkets.join(', ') || String(entry?.closest_candidate?.markets_count ?? '')),
+          status: compareProviderMarketState(sourceMarkets, candidateMarkets),
+        },
+      ];
+      const similarity = entry?.closest_candidate?.pair_similarity_percent;
+      const delta = entry?.closest_candidate?.time_delta_minutes;
+      return {
+        rows,
+        similarity,
+        delta,
+        sourceMarkets,
+        candidateMarkets,
+      };
+    }
+
+    function renderProviderCompareDiff(entry, diffInfo) {
+      if (!providerCompareDiff) return;
+      const rows = Array.isArray(diffInfo?.rows) ? diffInfo.rows : [];
+      const similarity = diffInfo?.similarity;
+      const delta = diffInfo?.delta;
+      const chips = [
+        `<span class="provider-chip">${t('provider_compare_reason_chip', { reason: escapeHtml(providerMatchReasonLabel(entry?.reason_code)) })}</span>`,
+        similarity !== undefined && similarity !== null
+          ? `<span class="provider-chip">${t('provider_compare_similarity_chip', { value: escapeHtml(formatProviderSimilarity(similarity)) })}</span>`
+          : '',
+        delta !== undefined && delta !== null
+          ? `<span class="provider-chip">${t('provider_compare_delta_chip', { value: escapeHtml(formatProviderDeltaMinutes(delta)) })}</span>`
+          : '',
+      ].filter(Boolean).join('');
+      providerCompareDiff.innerHTML = `
+        <div class="provider-compare-diff-head">
+          <h5>${escapeHtml(t('provider_compare_diff_title'))}</h5>
+          <div class="provider-match-summary">${chips}</div>
+        </div>
+        <div class="table-scroll">
+          <table class="provider-compare-diff-table">
+            <thead>
+              <tr>
+                <th>${escapeHtml(t('provider_compare_field'))}</th>
+                <th>${escapeHtml(t('provider_compare_source_col'))}</th>
+                <th>${escapeHtml(t('provider_compare_candidate_col'))}</th>
+                <th>${escapeHtml(t('provider_compare_status_col'))}</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((row) => `
+                <tr class="provider-compare-diff-row is-${escapeHtml(row.status)}">
+                  <td>${escapeHtml(row.label)}</td>
+                  <td>${escapeHtml(row.source)}</td>
+                  <td>${escapeHtml(row.candidate)}</td>
+                  <td><span class="provider-compare-status-badge is-${escapeHtml(row.status)}">${escapeHtml(providerCompareStatusLabel(row.status))}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderProviderCompareGuidance(entry, diffInfo, sourceEvent, candidateEvent) {
+      if (!providerCompareGuidance) return;
+      const rows = Array.isArray(diffInfo?.rows) ? diffInfo.rows : [];
+      const rowByKey = Object.fromEntries(rows.map((row) => [row.key, row]));
+      const suggestions = [];
+      const seen = new Set();
+      const pushSuggestion = (value) => {
+        const normalized = String(value || '').trim();
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        suggestions.push(normalized);
+      };
+
+      const reportToleranceMinutes = Number(crossProviderReportCache?.summary?.tolerance_minutes || 0);
+      const matchToleranceMinutes = Number(crossProviderReportCache?.summary?.event_match_tolerance_minutes || 0);
+      const fuzzyThreshold = Number(crossProviderReportCache?.summary?.event_match_fuzzy_threshold);
+      const delta = Number(diffInfo?.delta);
+      const similarity = Number(diffInfo?.similarity);
+      const reasonCode = String(entry?.reason_code || '').trim();
+      const sourceMissing = !(sourceEvent && typeof sourceEvent === 'object');
+      const candidateMissing = !(candidateEvent && typeof candidateEvent === 'object');
+
+      if (sourceMissing || candidateMissing) {
+        pushSuggestion(t('provider_compare_guidance_snapshot'));
+      }
+      if (reasonCode === 'no_other_provider_candidates') {
+        pushSuggestion(t('provider_compare_guidance_coverage'));
+      }
+      if (
+        reasonCode === 'same_pair_time_mismatch'
+        || (rowByKey.start && rowByKey.start.status === 'different' && Number.isFinite(delta))
+      ) {
+        pushSuggestion(
+          t('provider_compare_guidance_time', {
+            delta: formatProviderDeltaMinutes(delta),
+            report_tolerance: reportToleranceMinutes > 0 ? formatProviderDeltaMinutes(reportToleranceMinutes) : '-',
+            match_tolerance: matchToleranceMinutes > 0 ? formatProviderDeltaMinutes(matchToleranceMinutes) : '-',
+          })
+        );
+      }
+      if (
+        ['name_variation_within_time', 'possible_name_mismatch', 'similar_pair_time_mismatch'].includes(reasonCode)
+        || ['variant', 'different'].includes(rowByKey.home_team?.status)
+        || ['variant', 'different'].includes(rowByKey.away_team?.status)
+      ) {
+        pushSuggestion(
+          t('provider_compare_guidance_name', {
+            threshold: formatProviderThreshold(fuzzyThreshold),
+          })
+        );
+      }
+      if (['variant', 'different', 'missing'].includes(rowByKey.markets?.status)) {
+        pushSuggestion(t('provider_compare_guidance_market'));
+      }
+      if (
+        Number.isFinite(similarity)
+        && similarity >= 95
+        && (!Number.isFinite(delta) || delta <= Math.max(30, reportToleranceMinutes + 30))
+      ) {
+        pushSuggestion(t('provider_compare_guidance_same_game'));
+      }
+
+      const configChips = [
+        reportToleranceMinutes > 0
+          ? `<span class="provider-chip">${t('provider_compare_report_tolerance_chip', { value: escapeHtml(formatProviderDeltaMinutes(reportToleranceMinutes)) })}</span>`
+          : '',
+        matchToleranceMinutes > 0
+          ? `<span class="provider-chip">${t('provider_compare_match_tolerance_chip', { value: escapeHtml(formatProviderDeltaMinutes(matchToleranceMinutes)) })}</span>`
+          : '',
+        Number.isFinite(fuzzyThreshold)
+          ? `<span class="provider-chip">${t('provider_compare_fuzzy_chip', { value: escapeHtml(formatProviderThreshold(fuzzyThreshold)) })}</span>`
+          : '',
+      ].filter(Boolean).join('');
+
+      providerCompareGuidance.innerHTML = suggestions.length
+        ? `
+          <div class="provider-compare-guidance-head">
+            <h5>${escapeHtml(t('provider_compare_guidance_title'))}</h5>
+            <div class="provider-match-summary">${configChips}</div>
+          </div>
+          <ul class="provider-compare-guidance-list">
+            ${suggestions.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
+          </ul>
+        `
+        : '';
+    }
+
+    function renderProviderCompareSummary(container, meta, event, fallbackMessage = '') {
+      if (!container) return;
+      const summaryEvent = event && typeof event === 'object' ? event : {};
+      const providerName = providerDisplayName(meta?.provider);
+      const eventId = String(summaryEvent.id || summaryEvent.event_id || meta?.event_id || '-');
+      const pairText = formatProviderPair(
+        meta?.pair_norm
+        || summaryEvent.pair_norm
+        || `${summaryEvent.home_team || ''} vs ${summaryEvent.away_team || ''}`
+      );
+      const startText = formatDateTime(summaryEvent.commence_time || meta?.commence_time);
+      const marketList = eventMarketKeys(summaryEvent);
+      const marketText = marketList.length
+        ? marketList.join(', ')
+        : (meta?.markets_count !== undefined && meta?.markets_count !== null ? String(meta.markets_count) : '-');
+      const rows = [
+        [t('provider_compare_provider'), providerName],
+        [t('provider_compare_event_id'), eventId],
+        [t('provider_compare_pair'), pairText],
+        [t('provider_compare_start'), startText],
+        [t('provider_compare_markets'), marketText],
+      ];
+      if (meta?.reason_code) {
+        rows.push([t('provider_compare_reason'), providerMatchReasonLabel(meta.reason_code)]);
+      }
+      container.innerHTML = `
+        <dl class="provider-compare-list">
+          ${rows.map(([label, value]) => `
+            <div class="provider-compare-row">
+              <dt>${escapeHtml(label)}</dt>
+              <dd>${escapeHtml(value || '-')}</dd>
+            </div>
+          `).join('')}
+        </dl>
+        ${fallbackMessage ? `<p class="muted provider-compare-note">${escapeHtml(fallbackMessage)}</p>` : ''}
+      `;
+    }
+
+    function mountProviderCompareJson(container, value, fallbackMessage = '') {
+      if (!container) return;
+      container.innerHTML = '';
+      if (value && typeof value === 'object') {
+        container.appendChild(buildProviderJsonNode(value, null, 0));
+        return;
+      }
+      const note = document.createElement('p');
+      note.className = 'muted provider-compare-note';
+      note.textContent = fallbackMessage || t('provider_compare_event_missing');
+      container.appendChild(note);
+    }
+
+    function renderNearMissCompareEmpty(messageKey = 'provider_compare_empty', params = {}) {
+      if (!providerCompareEmpty || !providerCompareContent || !providerCompareStatus) return;
+      providerCompareStatus.textContent = t('provider_compare_helper');
+      providerCompareEmpty.textContent = t(messageKey, params);
+      providerCompareEmpty.classList.remove('hidden');
+      providerCompareContent.classList.add('hidden');
+      if (providerCompareDiff) providerCompareDiff.innerHTML = '';
+      if (providerCompareGuidance) providerCompareGuidance.innerHTML = '';
+      if (providerCompareSourceSummary) providerCompareSourceSummary.innerHTML = '';
+      if (providerCompareCandidateSummary) providerCompareCandidateSummary.innerHTML = '';
+      if (providerCompareSourceJson) providerCompareSourceJson.innerHTML = '';
+      if (providerCompareCandidateJson) providerCompareCandidateJson.innerHTML = '';
+    }
+
+    async function selectNearMissCompare(entry) {
+      const key = nearMissEntryKey(entry);
+      if (!key) return;
+      selectedNearMissKey = key;
+      if (crossProviderReportCache) {
+        renderCrossProviderReport(crossProviderReportCache);
+      }
+      if (!providerCompareEmpty || !providerCompareContent || !providerCompareStatus) return;
+      providerCompareStatus.textContent = t('provider_compare_loading');
+      providerCompareEmpty.textContent = t('provider_compare_loading');
+      providerCompareEmpty.classList.remove('hidden');
+      providerCompareContent.classList.add('hidden');
+      try {
+        const sourceProvider = entry?.provider;
+        const candidateProvider = entry?.closest_candidate?.provider;
+        const [sourceSnapshot, candidateSnapshot] = await Promise.all([
+          fetchProviderSnapshot(sourceProvider),
+          candidateProvider ? fetchProviderSnapshot(candidateProvider) : Promise.resolve(null),
+        ]);
+        if (selectedNearMissKey !== key) return;
+
+        const sourceEvent = providerEventById(sourceSnapshot, entry?.event_id);
+        const candidateEvent = providerEventById(candidateSnapshot, entry?.closest_candidate?.event_id);
+        const diffInfo = buildProviderCompareRows(entry, sourceEvent, candidateEvent);
+        renderProviderCompareDiff(entry, diffInfo);
+        renderProviderCompareGuidance(entry, diffInfo, sourceEvent, candidateEvent);
+        renderProviderCompareSummary(
+          providerCompareSourceSummary,
+          entry,
+          sourceEvent,
+          sourceEvent ? '' : t('provider_compare_event_missing'),
+        );
+        renderProviderCompareSummary(
+          providerCompareCandidateSummary,
+          {
+            ...entry?.closest_candidate,
+            reason_code: entry?.reason_code,
+          },
+          candidateEvent,
+          candidateEvent ? '' : t('provider_compare_event_missing'),
+        );
+        mountProviderCompareJson(providerCompareSourceJson, sourceEvent, t('provider_compare_event_missing'));
+        mountProviderCompareJson(providerCompareCandidateJson, candidateEvent, t('provider_compare_event_missing'));
+        providerCompareStatus.textContent = `${providerDisplayName(entry?.provider)} vs ${providerDisplayName(entry?.closest_candidate?.provider)}`;
+        providerCompareEmpty.classList.add('hidden');
+        providerCompareContent.classList.remove('hidden');
+      } catch (error) {
+        if (selectedNearMissKey !== key) return;
+        const message = error instanceof Error ? error.message : String(error || t('unknown_error'));
+        renderNearMissCompareEmpty('provider_compare_fetch_failed', { error: message });
+      }
+    }
+
+    function providerMatchReasonLabel(reasonCode) {
+      const normalized = String(reasonCode || 'no_close_candidate').trim() || 'no_close_candidate';
+      return t(`provider_match_reason_${normalized}`);
+    }
+
+    function formatProviderSimilarity(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric < 0) return '-';
+      if (numeric >= 99.95) return '100%';
+      return `${numeric.toFixed(numeric >= 10 ? 0 : 1)}%`;
+    }
+
+    function formatProviderDeltaMinutes(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric < 0) return '-';
+      return `${numeric.toFixed(numeric % 1 === 0 ? 0 : 1)}m`;
+    }
+
     function renderCrossProviderReport(report, errorMessage = '') {
       if (
         !providerMatchCount ||
@@ -4584,9 +5603,23 @@
         return;
       }
       if (!report || typeof report !== 'object') {
+        renderedNearMissEntries = [];
+        selectedNearMissKey = '';
         providerMatchCount.textContent = t('provider_match_count', { count: 0 });
         providerSingleCount.textContent = t('provider_match_single_count', { count: 0 });
         providerMatchSummary.innerHTML = '';
+        if (providerMatchPairFilter) {
+          providerMatchPairFilterValue = 'all';
+          providerMatchPairFilter.innerHTML = `<option value="all">${escapeHtml(t('provider_match_pair_all'))}</option>`;
+          providerMatchPairFilter.value = 'all';
+          providerMatchPairFilter.disabled = true;
+        }
+        if (providerMatchReasonFilter) {
+          providerMatchReasonFilterValue = 'all';
+          providerMatchReasonFilter.innerHTML = `<option value="all">${escapeHtml(t('provider_match_reason_all'))}</option>`;
+          providerMatchReasonFilter.value = 'all';
+          providerMatchReasonFilter.disabled = true;
+        }
         providerMatchTableBody.innerHTML = '';
         providerSingleTableBody.innerHTML = '';
         providerMatchContent.classList.add('hidden');
@@ -4594,40 +5627,72 @@
           ? t('provider_match_fetch_failed', { error: errorMessage })
           : t('provider_match_empty');
         providerMatchEmpty.classList.remove('hidden');
+        renderNearMissCompareEmpty(errorMessage ? 'provider_compare_fetch_failed' : 'provider_compare_empty', errorMessage ? { error: errorMessage } : {});
         return;
       }
 
       const summary = report.summary && typeof report.summary === 'object' ? report.summary : {};
       const clusters = Array.isArray(report.clusters) ? report.clusters : [];
       const singles = Array.isArray(report.single_provider_samples) ? report.single_provider_samples : [];
+      renderProviderMatchFilters(report);
+      const filteredClusters = clusters.filter((cluster) => clusterMatchesProviderPairFilter(cluster, providerMatchPairFilterValue));
+      const filteredSingles = singles.filter((entry) => (
+        nearMissMatchesProviderPairFilter(entry, providerMatchPairFilterValue)
+        && nearMissMatchesReasonFilter(entry, providerMatchReasonFilterValue)
+      ));
+      renderedNearMissEntries = filteredSingles.slice();
+      const selectedStillVisible = renderedNearMissEntries.some((entry) => nearMissEntryKey(entry) === selectedNearMissKey);
+      if (!selectedStillVisible) {
+        selectedNearMissKey = '';
+        renderNearMissCompareEmpty();
+      }
       const overlapCount = Number(summary.overlap_clusters ?? clusters.length ?? 0);
       const totalClusters = Number(summary.total_match_clusters ?? 0);
       const totalRawRecords = Number(summary.total_raw_records ?? 0);
       const toleranceMinutes = Number(summary.tolerance_minutes ?? 0);
+      const hasPairFilter = providerMatchPairFilterValue !== 'all';
+      const hasReasonFilter = providerMatchReasonFilterValue !== 'all';
 
-      providerMatchCount.textContent = t('provider_match_count', { count: clusters.length });
-      providerSingleCount.textContent = t('provider_match_single_count', { count: singles.length });
+      providerMatchCount.textContent = hasPairFilter
+        ? t('provider_match_count_filtered', { shown: filteredClusters.length, total: clusters.length })
+        : t('provider_match_count', { count: clusters.length });
+      providerSingleCount.textContent = (hasPairFilter || hasReasonFilter)
+        ? t('provider_match_single_count_filtered', { shown: filteredSingles.length, total: singles.length })
+        : t('provider_match_single_count', { count: singles.length });
+
+      const filterChips = [];
+      if (hasPairFilter) {
+        filterChips.push(
+          `<span class="provider-chip">${t('provider_match_filter_pair_chip', { pair: escapeHtml(providerPairLabel(providerMatchPairFilterValue)) })}</span>`
+        );
+      }
+      if (hasReasonFilter) {
+        filterChips.push(
+          `<span class="provider-chip">${t('provider_match_filter_reason_chip', { reason: escapeHtml(providerMatchReasonLabel(providerMatchReasonFilterValue)) })}</span>`
+        );
+      }
       providerMatchSummary.innerHTML = `
         <span class="provider-chip is-ready">${t('provider_match_overlaps')}: ${overlapCount}</span>
         <span class="provider-chip">${t('provider_match_total_clusters')}: ${totalClusters}</span>
         <span class="provider-chip">${t('provider_match_raw_records')}: ${totalRawRecords}</span>
         <span class="provider-chip">${t('provider_match_tolerance', { minutes: toleranceMinutes })}</span>
+        ${filterChips.join('')}
       `;
 
-      if (clusters.length) {
-        providerMatchTableBody.innerHTML = clusters.map((cluster) => {
+      if (filteredClusters.length) {
+        providerMatchTableBody.innerHTML = filteredClusters.map((cluster) => {
           const sportKey = String(cluster?.sport_key || '');
           const sportLabel = translateSportKey(sportKey, sportKey || t('unknown'));
           const startUtc = formatDateTime(cluster?.representative_time_utc);
           const pairText = formatProviderPair(cluster?.pair_norm);
           const providers = Array.isArray(cluster?.providers) ? cluster.providers : [];
           const events = Array.isArray(cluster?.events) ? cluster.events : [];
-          const providerText = providers.length ? providers.join(', ') : '-';
+          const providerText = providers.length ? providers.map((providerKey) => providerDisplayName(providerKey)).join(', ') : '-';
           const eventsText = events.length
-            ? events.map((entry) => `${entry?.provider || '-'}:${entry?.event_id || '-'}`).join(' | ')
+            ? events.map((entry) => `${providerDisplayName(entry?.provider)}:${entry?.event_id || '-'}`).join(' | ')
             : '-';
           const marketsText = events.length
-            ? events.map((entry) => `${entry?.provider || '-'}:${entry?.markets_count ?? '-'}`).join(' | ')
+            ? events.map((entry) => `${providerDisplayName(entry?.provider)}:${entry?.markets_count ?? '-'}`).join(' | ')
             : '-';
           return `
             <tr>
@@ -4643,35 +5708,52 @@
       } else {
         providerMatchTableBody.innerHTML = `
           <tr>
-            <td colspan="6">${escapeHtml(t('provider_match_no_overlaps'))}</td>
+            <td colspan="6">${escapeHtml(t(hasPairFilter ? 'provider_match_no_overlaps_filtered' : 'provider_match_no_overlaps'))}</td>
           </tr>
         `;
       }
 
-      if (singles.length) {
-        providerSingleTableBody.innerHTML = singles.map((entry) => {
+      if (filteredSingles.length) {
+        providerSingleTableBody.innerHTML = filteredSingles.map((entry) => {
+          const rowKey = nearMissEntryKey(entry);
+          const isSelected = selectedNearMissKey && selectedNearMissKey === rowKey;
           const sportKey = String(entry?.sport_key || '');
           const sportLabel = translateSportKey(sportKey, sportKey || t('unknown'));
           const startUtc = formatDateTime(entry?.commence_time);
-          const provider = String(entry?.provider || '-');
+          const provider = providerDisplayName(entry?.provider);
           const pairText = formatProviderPair(entry?.pair_norm);
           const eventId = String(entry?.event_id || '-');
           const marketsCount = String(entry?.markets_count ?? '-');
+          const nearest = entry?.closest_candidate && typeof entry.closest_candidate === 'object'
+            ? entry.closest_candidate
+            : null;
+          const closestProvider = nearest ? providerDisplayName(nearest.provider) : '-';
+          const closestPair = nearest
+            ? formatProviderPair(nearest.pair_norm || `${nearest.home_team || ''} vs ${nearest.away_team || ''}`)
+            : '-';
+          const timeDelta = nearest ? formatProviderDeltaMinutes(nearest.time_delta_minutes) : '-';
+          const similarity = nearest ? formatProviderSimilarity(nearest.pair_similarity_percent) : '-';
+          const reasonLabel = providerMatchReasonLabel(entry?.reason_code);
           return `
-            <tr>
+            <tr class="provider-selectable-row ${isSelected ? 'is-selected' : ''}" data-near-miss-key="${escapeHtml(rowKey)}">
               <td>${escapeHtml(sportLabel)}</td>
               <td>${escapeHtml(startUtc)}</td>
               <td>${escapeHtml(provider)}</td>
               <td>${escapeHtml(pairText)}</td>
               <td>${escapeHtml(eventId)}</td>
               <td>${escapeHtml(marketsCount)}</td>
+              <td>${escapeHtml(closestProvider)}</td>
+              <td>${escapeHtml(closestPair)}</td>
+              <td>${escapeHtml(timeDelta)}</td>
+              <td>${escapeHtml(similarity)}</td>
+              <td>${escapeHtml(reasonLabel)}</td>
             </tr>
           `;
         }).join('');
       } else {
         providerSingleTableBody.innerHTML = `
           <tr>
-            <td colspan="6">${escapeHtml(t('provider_match_no_single'))}</td>
+            <td colspan="11">${escapeHtml(t((hasPairFilter || hasReasonFilter) ? 'provider_match_no_single_filtered' : 'provider_match_no_single'))}</td>
           </tr>
         `;
       }
@@ -7257,6 +8339,7 @@
       } else if (normalizedTab === 'plus-ev') {
         renderPlusEv();
       } else if (normalizedTab === 'providers') {
+        renderScanDiagnostics();
         renderProviderData();
         if (crossProviderReportCache) {
           renderCrossProviderReport(crossProviderReportCache);
@@ -7483,6 +8566,10 @@
       if (mode === 'scan') {
         title = t('arb_empty_scan_title');
         copy = t('arb_empty_scan_copy');
+        const diagnostics = getScanDiagnostics();
+        if (diagnostics && Number(diagnostics.enabled_provider_count || 0) > 0) {
+          copy = `${scanDiagnosticMessage(diagnostics)} ${t('scan_diag_open_providers')}`;
+        }
       } else if (mode === 'filtered') {
         title = t('arb_empty_filtered_title');
         if (activeArbRoiBand !== 'all') {

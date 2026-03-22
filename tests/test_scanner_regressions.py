@@ -1318,6 +1318,100 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertIn("sx_bet", keys)
         self.assertIn("polymarket", keys)
 
+    def test_merge_events_with_stats_reports_reverse_team_match(self) -> None:
+        base_events = [
+            {
+                "id": "base-1",
+                "sport_key": "baseball_mlb",
+                "home_team": "Los Angeles Dodgers",
+                "away_team": "Cleveland Guardians",
+                "commence_time": "2026-03-03T20:05:00Z",
+                "bookmakers": [
+                    {
+                        "key": "sx_bet",
+                        "title": "SX Bet",
+                        "markets": [{"key": "h2h", "outcomes": []}],
+                    }
+                ],
+            }
+        ]
+        extra_events = [
+            {
+                "id": "extra-1",
+                "sport_key": "baseball_mlb",
+                "home_team": "Cleveland Guardians",
+                "away_team": "Los Angeles Dodgers",
+                "commence_time": "2026-03-03T20:05:00Z",
+                "bookmakers": [
+                    {
+                        "key": "polymarket",
+                        "title": "Polymarket",
+                        "markets": [{"key": "h2h", "outcomes": []}],
+                    }
+                ],
+            }
+        ]
+
+        stats = {}
+        merged = scanner._merge_events_with_stats(base_events, extra_events, stats=stats)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(stats.get("incoming_events"), 1)
+        self.assertEqual(stats.get("matched_existing"), 1)
+        self.assertEqual(stats.get("matched_reverse_team"), 1)
+        self.assertEqual(stats.get("appended_new"), 0)
+
+    def test_cross_provider_match_report_flags_same_pair_time_mismatch(self) -> None:
+        snapshots = {
+            "sx_bet": {
+                "events": [
+                    {
+                        "id": "sx-1",
+                        "sport_key": "soccer_usa_mls",
+                        "home_team": "Columbus Crew",
+                        "away_team": "Orlando City",
+                        "commence_time": "2026-03-10T23:30:00Z",
+                        "bookmakers": [{"key": "sx_bet", "markets": [{"key": "h2h"}]}],
+                    }
+                ]
+            },
+            "polymarket": {
+                "events": [
+                    {
+                        "id": "poly-1",
+                        "sport_key": "soccer_usa_mls",
+                        "home_team": "Columbus Crew",
+                        "away_team": "Orlando City",
+                        "commence_time": "2026-03-11T03:45:00Z",
+                        "bookmakers": [{"key": "polymarket", "markets": [{"key": "h2h"}]}],
+                    }
+                ]
+            },
+        }
+
+        report = scanner._build_cross_provider_match_report("2026-03-10T20:00:00Z", snapshots)
+
+        self.assertIsInstance(report, dict)
+        singles = report.get("single_provider_samples") or []
+        sx_sample = next(
+            (
+                item
+                for item in singles
+                if isinstance(item, dict)
+                and item.get("provider") == "sx_bet"
+                and item.get("event_id") == "sx-1"
+            ),
+            None,
+        )
+        self.assertIsNotNone(sx_sample)
+        self.assertEqual(sx_sample.get("reason_code"), "same_pair_time_mismatch")
+        closest = sx_sample.get("closest_candidate") or {}
+        self.assertEqual(closest.get("provider"), "polymarket")
+        self.assertEqual(closest.get("event_id"), "poly-1")
+        self.assertGreater(closest.get("time_delta_minutes", 0), 180)
+        summary = report.get("summary") or {}
+        self.assertIn("event_match_tolerance_minutes", summary)
+        self.assertIn("event_match_fuzzy_threshold", summary)
+
     def test_merge_events_merges_markets_for_same_bookmaker(self) -> None:
         base_events = [
             {

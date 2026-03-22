@@ -2561,6 +2561,20 @@ body.modal-open .content {
   color: var(--text-muted);
 }
 
+.provider-sport-metrics {
+  display: inline-flex;
+  justify-self: end;
+  align-items: center;
+  gap: 0.38rem;
+  flex-wrap: wrap;
+}
+
+.provider-sport-meta {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
 .provider-sport-error {
   font-size: 0.8rem;
   color: var(--error);
@@ -2666,6 +2680,36 @@ body.modal-open .content {
   flex-wrap: wrap;
 }
 
+.provider-filter-bar {
+  margin-top: 0.78rem;
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.provider-filter-field {
+  display: grid;
+  gap: 0.28rem;
+  min-width: min(280px, 100%);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.provider-filter-field select {
+  min-height: 2.4rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.5rem 0.72rem;
+}
+
+.scan-diagnostics-message {
+  margin: 0.78rem 0 0.2rem;
+  font-size: 0.86rem;
+  color: var(--text-soft);
+}
+
 .provider-single-head {
   margin-top: 0.35rem;
   display: flex;
@@ -2685,16 +2729,181 @@ body.modal-open .content {
   font-family: var(--font-mono);
 }
 
+.provider-selectable-row {
+  cursor: pointer;
+}
+
+.provider-selectable-row.is-selected td {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.provider-compare-panel {
+  margin-top: 0.9rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.provider-compare-diff {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.provider-compare-guidance {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.provider-compare-guidance-head h5 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.provider-compare-guidance-list {
+  margin: 0;
+  padding-left: 1.15rem;
+  display: grid;
+  gap: 0.38rem;
+}
+
+.provider-compare-guidance-list li {
+  color: var(--text-soft);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.provider-compare-diff-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.provider-compare-diff-head h5 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.provider-compare-diff-table td,
+.provider-compare-diff-table th {
+  white-space: nowrap;
+}
+
+.provider-compare-diff-row.is-variant td {
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+}
+
+.provider-compare-diff-row.is-different td,
+.provider-compare-diff-row.is-missing td {
+  background: color-mix(in srgb, var(--error) 9%, var(--surface));
+}
+
+.provider-compare-status-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  padding: 0.18rem 0.52rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--surface);
+}
+
+.provider-compare-status-badge.is-same {
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.provider-compare-status-badge.is-variant {
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  color: color-mix(in srgb, var(--warning) 70%, var(--text));
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+.provider-compare-status-badge.is-different,
+.provider-compare-status-badge.is-missing {
+  border-color: color-mix(in srgb, var(--error) 45%, transparent);
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+.provider-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.provider-compare-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  padding: 0.72rem;
+  display: grid;
+  gap: 0.6rem;
+}
+
+.provider-compare-card-head h5 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.provider-compare-summary {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.provider-compare-list {
+  margin: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.provider-compare-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.provider-compare-row dt {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.provider-compare-row dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.provider-compare-note {
+  margin: 0;
+  font-size: 0.78rem;
+}
+
 #provider-match-table td,
-#provider-single-table td {
+#provider-single-table td,
+#scan-diagnostics-table td {
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: 0.78rem;
 }
 
 #provider-match-table th,
-#provider-single-table th {
+#provider-single-table th,
+#scan-diagnostics-table th {
   white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .provider-compare-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .hidden {
