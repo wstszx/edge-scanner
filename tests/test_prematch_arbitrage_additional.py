@@ -23,7 +23,7 @@ class PrematchArbitrageAdditionalTests(unittest.TestCase):
         self.assertGreater(negative_inverse_sum, 1.0)
         self.assertLess(arbitrage_roi(negative_prices), 0.0)
 
-    def test_collect_market_entries_detects_known_arb_and_rejects_boundary_non_arb(self) -> None:
+    def test_collect_market_entries_detects_known_arb_and_keeps_boundary_roi(self) -> None:
         arbitrage_game = {
             "sport_key": "basketball_nba",
             "sport_display": "NBA",
@@ -78,7 +78,9 @@ class PrematchArbitrageAdditionalTests(unittest.TestCase):
 
         self.assertTrue(arbitrage_entries)
         self.assertGreater(arbitrage_entries[0]["roi_percent"], 0.0)
-        self.assertEqual(non_arb_entries, [])
+        self.assertTrue(non_arb_entries)
+        self.assertAlmostEqual(non_arb_entries[0]["roi_percent"], 0.0, places=2)
+        self.assertAlmostEqual(non_arb_entries[0]["stakes"]["guaranteed_profit"], 0.0, places=2)
 
     def test_calculate_stakes_three_way_arbitrage_distribution_and_profit(self) -> None:
         outcomes = [
@@ -244,7 +246,45 @@ class PrematchArbitrageAdditionalTests(unittest.TestCase):
 
         self.assertTrue(no_commission)
         self.assertGreater(no_commission[0]["roi_percent"], 0.0)
-        self.assertEqual(with_commission, [])
+        self.assertTrue(with_commission)
+        self.assertLess(with_commission[0]["roi_percent"], 0.0)
+        self.assertLess(with_commission[0]["stakes"]["guaranteed_profit"], 0.0)
+
+    def test_collect_market_entries_keeps_negative_roi_cross_book_combos(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "book_home",
+                    "title": "Book Home",
+                    "markets": [{"key": "h2h", "outcomes": [{"name": "Home Team", "price": 2.0}, {"name": "Away Team", "price": 1.5}]}],
+                },
+                {
+                    "key": "betdex",
+                    "title": "BetDEX",
+                    "markets": [{"key": "h2h", "outcomes": [{"name": "Home Team", "price": 1.6}, {"name": "Away Team", "price": 2.05}]}],
+                },
+            ],
+        }
+
+        entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.05,
+            scan_mode="prematch",
+        )
+
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        best_by_outcome = {item["outcome"]: item for item in entry["best_odds"]}
+        self.assertEqual(best_by_outcome["Home Team"]["bookmaker_key"], "book_home")
+        self.assertEqual(best_by_outcome["Away Team"]["bookmaker_key"], "betdex")
+        self.assertLess(entry["roi_percent"], 0.0)
+        self.assertLess(entry["stakes"]["guaranteed_profit"], 0.0)
 
     def test_collect_market_entries_three_way_known_arbitrage_profit(self) -> None:
         game = {

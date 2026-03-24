@@ -211,6 +211,42 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(len(history_payload.get("middles") or []), 1)
         self.assertEqual(len(history_payload.get("plus_ev") or []), 1)
 
+    def test_scan_preserves_negative_roi_arbitrage_results_from_run_scan(self) -> None:
+        result_payload = {
+            "success": True,
+            "scan_time": "2026-02-22T12:00:00Z",
+            "arbitrage": {
+                "opportunities": [
+                    {
+                        "event": "A vs B",
+                        "roi_percent": -0.85,
+                        "stakes": {"guaranteed_profit": -0.85},
+                    }
+                ]
+            },
+            "middles": {"opportunities": []},
+            "plus_ev": {"opportunities": []},
+        }
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+        with (
+            patch.object(app_module, "run_scan", return_value=result_payload),
+            patch.object(app_module, "get_history_manager", return_value=history_manager),
+            patch.object(app_module, "get_notifier", return_value=notifier),
+        ):
+            response = self.client.post("/scan", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json() or {}
+        arbitrage_items = (((payload.get("arbitrage") or {}).get("opportunities")) or [])
+        self.assertEqual(len(arbitrage_items), 1)
+        self.assertEqual(arbitrage_items[0].get("roi_percent"), -0.85)
+        history_payload = history_manager.save_opportunities.call_args.args[0]
+        saved_opportunities = history_payload.get("opportunities") or []
+        self.assertEqual(len(saved_opportunities), 1)
+        self.assertEqual(saved_opportunities[0].get("roi_percent"), -0.85)
+
     def test_scan_ignores_history_save_failures(self) -> None:
         result_payload = {
             "success": True,

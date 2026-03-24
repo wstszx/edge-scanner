@@ -3553,7 +3553,7 @@ def _collect_market_entries(
                     continue
             net_stake_info = _calculate_stakes(outcomes, stake_total, price_field="effective_price")
             guaranteed_profit = _safe_float(net_stake_info.get("guaranteed_profit"))
-            if guaranteed_profit is None or guaranteed_profit <= 0:
+            if guaranteed_profit is None:
                 continue
             net_roi = _safe_float(net_stake_info.get("roi_percent")) or 0.0
             score = (guaranteed_profit, net_roi)
