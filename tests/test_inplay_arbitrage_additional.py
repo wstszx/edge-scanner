@@ -243,6 +243,28 @@ class InplayArbitrageAdditionalTests(unittest.TestCase):
         self.assertEqual(stats.get("dropped_not_live_state"), 0)
         self.assertEqual(stats.get("dropped_terminal_state"), 0)
 
+    def test_filter_live_events_drops_future_events_without_explicit_live_state(self) -> None:
+        events = [
+            {
+                "id": "future-no-live-state",
+                "commence_time": "2023-11-14T22:20:00Z",
+                "bookmakers": [
+                    {"key": "book_a"},
+                    {"key": "book_b"},
+                ],
+            }
+        ]
+
+        with (
+            patch("scanner.time.time", return_value=1_700_000_000),
+            patch.object(scanner, "LIVE_EVENT_MAX_FUTURE_SECONDS_RAW", "0"),
+        ):
+            filtered, stats = scanner._filter_live_events_for_scan(events)
+
+        self.assertEqual(filtered, [])
+        self.assertEqual(stats.get("dropped_future"), 1)
+        self.assertEqual(stats.get("suspicious_explicit_live_future"), 0)
+
     def test_live_state_compatibility_enforces_clock_tolerance(self) -> None:
         state_a = {"status": "live", "period": "Q2", "score": "55-50", "clock": "05:00"}
         state_b = {"status": "live", "period": "Q2", "score": "50-55", "clock": "08:10"}
