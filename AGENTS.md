@@ -17,8 +17,11 @@
 
 Superpowers is installed for this machine through Codex native skill discovery:
 
-- Repo clone: `D:\pythonProject\superpowers`
-- Skill junction: `C:\Users\93037\.agents\skills\superpowers`
+Installation paths can vary by machine. Do not assume a fixed clone path in this repository.
+
+This repository does not vendor Superpowers as a Python dependency. It is integrated
+through Codex native skill discovery, and the `superpowers` skills should be used when
+they are available in the current user's local Codex environment.
 
 When working in this repository, prefer the matching Superpowers workflow for non-trivial tasks:
 
