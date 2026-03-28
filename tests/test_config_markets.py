@@ -2,10 +2,24 @@
 
 import unittest
 
-from config import ALL_BOOKMAKER_KEYS, BOOKMAKER_LABELS, BOOKMAKER_URLS, EXCHANGE_BOOKMAKERS, EXCHANGE_CONFIG_WARNINGS, markets_for_sport
+from config import ALL_BOOKMAKER_KEYS, BOOKMAKER_LABELS, BOOKMAKER_URLS, DEFAULT_SPORT_KEYS, EXCHANGE_BOOKMAKERS, EXCHANGE_CONFIG_WARNINGS, SPORT_OPTIONS, markets_for_sport
 
 
 class ConfigMarketsTests(unittest.TestCase):
+    def test_generic_tennis_and_rugby_keys_are_enabled_by_default(self) -> None:
+        self.assertIn("tennis_atp", DEFAULT_SPORT_KEYS)
+        self.assertIn("tennis_wta", DEFAULT_SPORT_KEYS)
+        self.assertIn("rugby_union", DEFAULT_SPORT_KEYS)
+
+    def test_legacy_tennis_and_rugby_event_keys_are_flagged_in_sport_options(self) -> None:
+        by_key = {row["key"]: row for row in SPORT_OPTIONS}
+        self.assertTrue(by_key["tennis_atp_indian_wells"].get("legacy"))
+        self.assertTrue(by_key["tennis_wta_indian_wells"].get("legacy"))
+        self.assertTrue(by_key["rugby_union_six_nations"].get("legacy"))
+        self.assertFalse(by_key["tennis_atp"].get("legacy"))
+        self.assertFalse(by_key["tennis_wta"].get("legacy"))
+        self.assertFalse(by_key["rugby_union"].get("legacy"))
+
     def test_default_unknown_sport_uses_h2h_only(self) -> None:
         self.assertEqual(markets_for_sport("tennis_atp"), ["h2h"])
 

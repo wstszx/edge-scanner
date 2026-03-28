@@ -31,13 +31,24 @@ ARTLINE_USER_AGENT = os.getenv(
 ARTLINE_SPORT_FILTERS: Dict[str, Dict[str, str]] = {
     "basketball_nba": {"sport": "basketball", "tournament_id": "17"},
     "basketball_euroleague": {"sport": "basketball", "tournament_id": "13"},
+    "basketball_france_pro_a": {"sport": "basketball", "tournament_id": "652"},
     "icehockey_nhl": {"sport": "hockey", "tournament_id": "136"},
+    "icehockey_ahl": {"sport": "hockey", "tournament_id": "567"},
     "soccer_epl": {"sport": "football", "tournament_id": "1"},
+    "soccer_england_championship": {"sport": "football", "tournament_id": "49"},
+    "soccer_england_league_one": {"sport": "football", "tournament_id": "41"},
+    "soccer_england_league_two": {"sport": "football", "tournament_id": "42"},
+    "soccer_portugal_primeira_liga": {"sport": "football", "tournament_id": "6"},
+    "soccer_netherlands_eredivisie": {"sport": "football", "tournament_id": "7"},
+    "soccer_argentina_liga_profesional": {"sport": "football", "tournament_id": "66"},
+    "soccer_mexico_liga_mx": {"sport": "football", "tournament_id": "26"},
     "soccer_spain_la_liga": {"sport": "football", "tournament_id": "2"},
     "soccer_italy_serie_a": {"sport": "football", "tournament_id": "3"},
     "soccer_germany_bundesliga": {"sport": "football", "tournament_id": "4"},
     "soccer_france_ligue_one": {"sport": "football", "tournament_id": "5"},
     "soccer_usa_mls": {"sport": "football", "tournament_id": "52"},
+    "basketball_germany_bbl": {"sport": "basketball", "tournament_id": "693"},
+    "baseball_mlb": {"sport": "baseball", "tournament_id": "102"},
 }
 
 

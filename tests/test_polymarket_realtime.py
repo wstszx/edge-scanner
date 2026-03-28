@@ -97,6 +97,87 @@ class _FakeRealtimeManager:
 
 
 class PolymarketRealtimeTests(unittest.TestCase):
+    def test_stop_closes_active_websockets_on_loop_before_joining(self) -> None:
+        closed = []
+
+        class _FakeThread:
+            def __init__(self):
+                self.join_calls = []
+
+            def is_alive(self):
+                return True
+
+            def join(self, timeout=None):
+                self.join_calls.append(timeout)
+
+        class _FakeLoop:
+            def __init__(self):
+                self.running = True
+                self.scheduled = []
+
+            def is_running(self):
+                return self.running
+
+            def call_soon_threadsafe(self, callback, *args):
+                self.scheduled.append((callback, args))
+                callback(*args)
+
+        class _FakeWebSocket:
+            def __init__(self, name):
+                self.name = name
+
+            async def close(self):
+                closed.append(self.name)
+
+        manager = polymarket.PolymarketRealtimeManager()
+        fake_thread = _FakeThread()
+        fake_loop = _FakeLoop()
+        manager._thread = fake_thread
+        manager._loop = fake_loop
+        manager._started = True
+        manager._owner_active = True
+        manager._market_connected = True
+        manager._sports_connected = True
+        manager._market_ws = _FakeWebSocket("market")
+        manager._sports_ws = _FakeWebSocket("sports")
+
+        fake_loop.call_soon_threadsafe = lambda callback, *args: (
+            fake_loop.scheduled.append((callback, args)),
+            callback(*args),
+        )
+
+        with patch.object(
+            polymarket.asyncio,
+            "run_coroutine_threadsafe",
+            side_effect=lambda coro, loop: asyncio.run(coro),
+        ):
+            manager.stop(timeout_seconds=1.25)
+
+        self.assertTrue(manager._stop_requested.is_set())
+        self.assertEqual(closed, ["market", "sports"])
+        self.assertEqual(len(fake_loop.scheduled), 1)
+        self.assertEqual(fake_thread.join_calls, [1.25])
+        self.assertIsNone(manager._thread)
+        self.assertIsNone(manager._loop)
+
+    def test_websockets_connection_lost_guard_handles_missing_recv_messages(self) -> None:
+        class _FakeConnection:
+            def __init__(self):
+                self.close_calls = 0
+
+            def connection_lost(self, exc):
+                self.recv_messages.close()
+                self.close_calls += 1
+
+        self.assertTrue(polymarket._install_websockets_connection_lost_guard(_FakeConnection))
+        self.assertFalse(polymarket._install_websockets_connection_lost_guard(_FakeConnection))
+
+        connection = _FakeConnection()
+        connection.connection_lost(ConnectionResetError())
+
+        self.assertEqual(connection.close_calls, 1)
+        self.assertTrue(hasattr(connection, "recv_messages"))
+
     def test_realtime_manager_updates_ask_depth_from_book_and_price_change(self) -> None:
         manager = polymarket.PolymarketRealtimeManager()
 

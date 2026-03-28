@@ -519,6 +519,36 @@ def _normalize_text(value: object) -> str:
     return str(value).strip()
 
 
+def _install_websockets_connection_lost_guard(connection_cls: object = None) -> bool:
+    cls = connection_cls
+    if cls is None:
+        try:
+            from websockets.asyncio.client import ClientConnection as cls  # type: ignore[assignment]
+        except Exception:
+            return False
+    if cls is None or getattr(cls, "_edge_scanner_recv_messages_guard", False):
+        return False
+    original = getattr(cls, "connection_lost", None)
+    if not callable(original):
+        return False
+
+    class _MissingRecvMessages:
+        def close(self) -> None:
+            return None
+
+    def _guarded_connection_lost(self, exc):
+        if not hasattr(self, "recv_messages"):
+            self.recv_messages = _MissingRecvMessages()
+        return original(self, exc)
+
+    setattr(cls, "connection_lost", _guarded_connection_lost)
+    setattr(cls, "_edge_scanner_recv_messages_guard", True)
+    return True
+
+
+_install_websockets_connection_lost_guard()
+
+
 def _normalize_token(value: object) -> str:
     text = _normalize_text(value).lower()
     text = re.sub(r"[^a-z0-9]+", "-", text)
@@ -1374,6 +1404,9 @@ def _event_sports_result_keys(event: object) -> List[str]:
         event.get("gameId"),
         event.get("metadataGameId"),
         event.get("slug"),
+        event.get("marketSlug"),
+        event.get("eventSlug"),
+        event.get("gameSlug"),
     ):
         token = _normalize_text(value)
         if token and token not in keys:
@@ -1626,6 +1659,7 @@ class PolymarketRealtimeManager:
     def stop(self, timeout_seconds: float = 2.0) -> None:
         with self._state_lock:
             thread = self._thread
+            loop = self._loop
         if not thread:
             with self._state_lock:
                 self._started = False
@@ -1634,6 +1668,15 @@ class PolymarketRealtimeManager:
             self._release_owner()
             return
         self._stop_requested.set()
+        if loop is not None and loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(self._close_active_websockets(), loop)
+            except Exception:
+                pass
+            try:
+                loop.call_soon_threadsafe(lambda: None)
+            except RuntimeError:
+                pass
         if thread.is_alive():
             thread.join(timeout=max(0.0, float(timeout_seconds)))
         with self._state_lock:
@@ -1647,6 +1690,19 @@ class PolymarketRealtimeManager:
             self._market_subscription_initialized = False
             self._owner_active = False
         self._release_owner()
+
+    async def _close_active_websockets(self) -> None:
+        with self._state_lock:
+            websockets = [
+                websocket
+                for websocket in (self._market_ws, self._sports_ws)
+                if websocket is not None
+            ]
+        for websocket in websockets:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
     def _try_acquire_owner(self) -> bool:
         owner_path = _realtime_owner_path()

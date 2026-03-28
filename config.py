@@ -206,9 +206,12 @@ SPORT_DISPLAY_NAMES = {
     "soccer_turkey_super_lig": "Super Lig",
     "mma_ufc": "UFC",
     "boxing_professional": "Professional Boxing",
+    "rugby_union": "Rugby Union",
     "rugby_union_six_nations": "Six Nations",
     "rugby_league_nrl": "National Rugby League",
+    "tennis_atp": "ATP Tennis",
     "tennis_atp_indian_wells": "ATP Indian Wells",
+    "tennis_wta": "WTA Tennis",
     "tennis_wta_indian_wells": "WTA Indian Wells",
 }
 
@@ -260,6 +263,9 @@ _DEFAULT_SPORT_KEYS = [
     "soccer_italy_serie_a",
     "soccer_france_ligue_one",
     "soccer_usa_mls",
+    "rugby_union",
+    "tennis_atp",
+    "tennis_wta",
 ]
 _ENV_DEFAULT_SPORTS = _env_list("DEFAULT_SPORT_KEYS")
 if _ENV_DEFAULT_SPORTS:
@@ -268,7 +274,12 @@ else:
     DEFAULT_SPORT_KEYS = _DEFAULT_SPORT_KEYS
 
 SPORT_OPTIONS = [
-    {"key": key, "label": label, "default": key in DEFAULT_SPORT_KEYS}
+    {
+        "key": key,
+        "label": label,
+        "default": key in DEFAULT_SPORT_KEYS,
+        "legacy": key in {"tennis_atp_indian_wells", "tennis_wta_indian_wells", "rugby_union_six_nations"},
+    }
     for key, label in SPORT_DISPLAY_NAMES.items()
 ]
 DEFAULT_SPORT_OPTIONS = SPORT_OPTIONS

@@ -665,6 +665,209 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
             ),
         )
 
+    def test_betdex_mma_pipeline_standardizes_two_way_fight_market_as_h2h(self) -> None:
+        fighter_a = "Fighter A"
+        fighter_b = "Fighter B"
+
+        async def _fake_betdex_request(
+            client,
+            url,
+            params=None,
+            access_token=None,
+            retries=0,
+            backoff_seconds=0.0,
+            timeout=20,
+        ):
+            if url.endswith("/api/session"):
+                return {"sessions": [{"accessToken": "token-1"}]}, 0
+            if url.endswith("/events"):
+                return (
+                    {
+                        "events": [
+                            {
+                                "id": "mma-event-1",
+                                "name": f"{fighter_a} vs {fighter_b}",
+                                "active": True,
+                                "expectedStartTime": COMMENCE_TIME,
+                                "eventGroup": {"_ids": ["group-mma-1"]},
+                                "participants": {"_ids": ["p-a", "p-b"]},
+                            }
+                        ],
+                        "eventGroups": [
+                            {
+                                "id": "group-mma-1",
+                                "name": "UFC",
+                                "subcategory": {"_ids": ["MMA"]},
+                            }
+                        ],
+                        "participants": [
+                            {"id": "p-a", "name": fighter_a},
+                            {"id": "p-b", "name": fighter_b},
+                        ],
+                        "_meta": {"_page": {"_totalPages": 1}},
+                    },
+                    0,
+                )
+            if url.endswith("/markets"):
+                return (
+                    {
+                        "markets": [
+                            {
+                                "id": "mma-market-1",
+                                "published": True,
+                                "suspended": False,
+                                "event": {"_ids": ["mma-event-1"]},
+                                "marketType": {"_ids": ["WINNER"]},
+                                "name": "Fight Winner",
+                                "marketOutcomes": {"_ids": ["out-a", "out-b"]},
+                            }
+                        ],
+                        "marketOutcomes": [
+                            {"id": "out-a", "title": fighter_a},
+                            {"id": "out-b", "title": fighter_b},
+                        ],
+                        "_meta": {"_page": {"_totalPages": 1}},
+                    },
+                    0,
+                )
+            if url.endswith("/market-prices"):
+                return (
+                    {
+                        "prices": [
+                            {
+                                "marketId": "mma-market-1",
+                                "prices": [
+                                    {"outcomeId": "out-a", "side": "against", "price": 1.91, "amount": 90},
+                                    {"outcomeId": "out-b", "side": "against", "price": 1.95, "amount": 95},
+                                ],
+                            }
+                        ]
+                    },
+                    0,
+                )
+            raise AssertionError(url)
+
+        with (
+            patch.object(betdex, "get_shared_client", new=_fake_shared_client),
+            patch.object(betdex, "_request_json_async", side_effect=_fake_betdex_request),
+        ):
+            events = asyncio.run(
+                betdex.fetch_events_async(
+                    "mma_ufc",
+                    ["h2h"],
+                    ["us"],
+                    bookmakers=[betdex.PROVIDER_KEY],
+                )
+            )
+
+        outcomes = _standardized_outcomes(events, betdex.PROVIDER_KEY)
+        self.assertEqual(outcomes[fighter_a]["price"], 1.91)
+        self.assertEqual(outcomes[fighter_b]["price"], 1.95)
+
+    def test_betdex_soccer_pipeline_standardizes_full_time_result_as_h2h_3_way(self) -> None:
+        draw_name = "Draw"
+
+        async def _fake_betdex_request(
+            client,
+            url,
+            params=None,
+            access_token=None,
+            retries=0,
+            backoff_seconds=0.0,
+            timeout=20,
+        ):
+            if url.endswith("/api/session"):
+                return {"sessions": [{"accessToken": "token-1"}]}, 0
+            if url.endswith("/events"):
+                return (
+                    {
+                        "events": [
+                            {
+                                "id": "soccer-event-1",
+                                "name": f"{HOME_TEAM} vs {AWAY_TEAM}",
+                                "active": True,
+                                "expectedStartTime": COMMENCE_TIME,
+                                "eventGroup": {"_ids": ["group-soccer-1"]},
+                                "participants": {"_ids": ["p-home", "p-away"]},
+                            }
+                        ],
+                        "eventGroups": [
+                            {
+                                "id": "group-soccer-1",
+                                "name": "English Premier League",
+                                "subcategory": {"_ids": ["FOOTBALL"]},
+                            }
+                        ],
+                        "participants": [
+                            {"id": "p-home", "name": HOME_TEAM},
+                            {"id": "p-away", "name": AWAY_TEAM},
+                        ],
+                        "_meta": {"_page": {"_totalPages": 1}},
+                    },
+                    0,
+                )
+            if url.endswith("/markets"):
+                return (
+                    {
+                        "markets": [
+                            {
+                                "id": "soccer-market-1",
+                                "published": True,
+                                "suspended": False,
+                                "event": {"_ids": ["soccer-event-1"]},
+                                "marketType": {"_ids": ["FOOTBALL_FULL_TIME_RESULT"]},
+                                "name": "Full Time Result",
+                                "marketOutcomes": {"_ids": ["out-home", "out-draw", "out-away"]},
+                            }
+                        ],
+                        "marketOutcomes": [
+                            {"id": "out-home", "title": HOME_TEAM},
+                            {"id": "out-draw", "title": draw_name},
+                            {"id": "out-away", "title": AWAY_TEAM},
+                        ],
+                        "_meta": {"_page": {"_totalPages": 1}},
+                    },
+                    0,
+                )
+            if url.endswith("/market-prices"):
+                return (
+                    {
+                        "prices": [
+                            {
+                                "marketId": "soccer-market-1",
+                                "prices": [
+                                    {"outcomeId": "out-home", "side": "against", "price": 2.1, "amount": 80},
+                                    {"outcomeId": "out-draw", "side": "against", "price": 3.4, "amount": 70},
+                                    {"outcomeId": "out-away", "side": "against", "price": 3.1, "amount": 90},
+                                ],
+                            }
+                        ]
+                    },
+                    0,
+                )
+            raise AssertionError(url)
+
+        with (
+            patch.object(betdex, "get_shared_client", new=_fake_shared_client),
+            patch.object(betdex, "_request_json_async", side_effect=_fake_betdex_request),
+        ):
+            events = asyncio.run(
+                betdex.fetch_events_async(
+                    "soccer_epl",
+                    ["h2h", "h2h_3_way"],
+                    ["us"],
+                    bookmakers=[betdex.PROVIDER_KEY],
+                )
+            )
+
+        self.assertEqual(len(events), 1)
+        bookmakers = events[0].get("bookmakers") or []
+        self.assertEqual(len(bookmakers), 1)
+        markets = bookmakers[0].get("markets") or []
+        market = next(item for item in markets if item.get("key") == "h2h_3_way")
+        outcome_names = [item.get("name") for item in (market.get("outcomes") or [])]
+        self.assertEqual(outcome_names, [HOME_TEAM, draw_name, AWAY_TEAM])
+
     def test_sx_bet_pipeline_produces_standardized_h2h_and_arbitrage(self) -> None:
         fixtures = [
             {

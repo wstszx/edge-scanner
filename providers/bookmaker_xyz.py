@@ -251,6 +251,9 @@ BOOKMAKER_XYZ_SPORT_FILTERS: Dict[str, Dict[str, str]] = {
         "league_slug": "professional-boxing",
         "country_slug": "international-tournaments",
     },
+    "rugby_union": {
+        "sport_slug": "rugby-union",
+    },
     "rugby_union_six_nations": {
         "sport_slug": "rugby-union",
         "league_slug": "six-nations",
@@ -261,10 +264,18 @@ BOOKMAKER_XYZ_SPORT_FILTERS: Dict[str, Dict[str, str]] = {
         "league_slug": "national-rugby-league",
         "country_slug": "australia",
     },
+    "tennis_atp": {
+        "sport_slug": "tennis",
+        "league_slug": "atp",
+    },
     "tennis_atp_indian_wells": {
         "sport_slug": "tennis",
         "league_slug": "indian-wells",
         "country_slug": "united-states",
+    },
+    "tennis_wta": {
+        "sport_slug": "tennis",
+        "league_slug": "wta",
     },
     "tennis_wta_indian_wells": {
         "sport_slug": "tennis",
@@ -281,6 +292,9 @@ SPORT_SLUG_HINTS: Dict[str, Sequence[str]] = {
     "basketball_ncaab": ("basketball",),
     "baseball_mlb": ("baseball",),
     "icehockey_nhl": ("ice-hockey",),
+    "rugby_union": ("rugby-union",),
+    "tennis_atp": ("tennis",),
+    "tennis_wta": ("tennis",),
     "soccer_epl": ("football",),
     "soccer_spain_la_liga": ("football",),
     "soccer_germany_bundesliga": ("football",),
@@ -296,6 +310,9 @@ SPORT_LEAGUE_HINTS: Dict[str, Sequence[str]] = {
     "basketball_ncaab": ("ncaa", "college"),
     "baseball_mlb": ("mlb", "major league baseball"),
     "icehockey_nhl": ("nhl", "national hockey league"),
+    "rugby_union": ("rugby", "rugby union",),
+    "tennis_atp": ("atp",),
+    "tennis_wta": ("wta",),
     "soccer_epl": ("premier league", "english premier league", "epl"),
     "soccer_spain_la_liga": ("la liga",),
     "soccer_germany_bundesliga": ("bundesliga",),

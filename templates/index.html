@@ -104,7 +104,7 @@
                         {% for sport in sport_options %}
                         <label class="checkbox">
                           <input type="checkbox" name="sports" value="{{ sport.key }}" {% if sport.key in default_sport_keys %}checked{% endif %} />
-                          <span data-sport-key="{{ sport.key }}">{{ sport.label }}</span>
+                          <span data-sport-key="{{ sport.key }}">{{ sport.label }}{% if sport.legacy %} <small class="muted">(Legacy)</small>{% endif %}</span>
                         </label>
                         {% endfor %}
                       </div>

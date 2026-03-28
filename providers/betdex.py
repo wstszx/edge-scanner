@@ -49,14 +49,26 @@ SPORT_SUBCATEGORY_DEFAULTS: Dict[str, Sequence[str]] = {
     "americanfootball_ncaaf": ("AMFOOT",),
     "basketball_nba": ("BBALL",),
     "basketball_ncaab": ("BBALL",),
+    "basketball_euroleague": ("BBALL",),
+    "basketball_germany_bbl": ("BBALL",),
     "baseball_mlb": ("BASEBALL",),
     "icehockey_nhl": ("ICEHKY",),
     "soccer_epl": ("FOOTBALL",),
+    "soccer_england_championship": ("FOOTBALL",),
+    "soccer_england_league_one": ("FOOTBALL",),
+    "soccer_england_league_two": ("FOOTBALL",),
     "soccer_spain_la_liga": ("FOOTBALL",),
     "soccer_germany_bundesliga": ("FOOTBALL",),
     "soccer_italy_serie_a": ("FOOTBALL",),
     "soccer_france_ligue_one": ("FOOTBALL",),
+    "soccer_brazil_serie_a": ("FOOTBALL",),
+    "soccer_netherlands_eredivisie": ("FOOTBALL",),
+    "soccer_argentina_liga_profesional": ("FOOTBALL",),
     "soccer_usa_mls": ("FOOTBALL",),
+    "mma_ufc": ("MMA",),
+    "rugby_union": ("RUGBY",),
+    "tennis_atp": ("TENNIS",),
+    "tennis_wta": ("TENNIS",),
 }
 
 SPORT_LEAGUE_HINTS: Dict[str, Sequence[str]] = {
@@ -64,14 +76,26 @@ SPORT_LEAGUE_HINTS: Dict[str, Sequence[str]] = {
     "americanfootball_ncaaf": ("ncaaf", "ncaa football", "college football"),
     "basketball_nba": ("nba",),
     "basketball_ncaab": ("ncaab", "ncaa", "college"),
+    "basketball_euroleague": ("euroleague",),
+    "basketball_germany_bbl": ("germany bbl", "bbl",),
     "baseball_mlb": ("mlb",),
     "icehockey_nhl": ("nhl",),
     "soccer_epl": ("premier league", "epl"),
+    "soccer_england_championship": ("english championship", "championship"),
+    "soccer_england_league_one": ("english football league 1", "league 1"),
+    "soccer_england_league_two": ("english football league 2", "league 2"),
     "soccer_spain_la_liga": ("la liga",),
     "soccer_germany_bundesliga": ("bundesliga",),
     "soccer_italy_serie_a": ("serie a",),
     "soccer_france_ligue_one": ("ligue 1", "ligue one"),
+    "soccer_brazil_serie_a": ("brasileiro serie a", "brasileiro s?rie a",),
+    "soccer_netherlands_eredivisie": ("eredivisie",),
+    "soccer_argentina_liga_profesional": ("argentina liga profesional", "liga profesional",),
     "soccer_usa_mls": ("mls", "major league soccer"),
+    "mma_ufc": ("ufc",),
+    "rugby_union": ("rugby", "rugby union", "six nations"),
+    "tennis_atp": ("atp",),
+    "tennis_wta": ("wta",),
 }
 
 
@@ -1166,6 +1190,7 @@ def _market_aliases_for_type(market_type: str, market_name: object = None) -> Li
         "MONEYLINE" in market_type
         or "FULL_TIME_RESULT" in market_type
         or "MATCH_RESULT" in market_type
+        or "WINNER" in market_type
     ):
         aliases.append(_scoped_market_key("h2h", *period_hints))
     if "BTTS" in market_type:
@@ -1614,7 +1639,7 @@ async def fetch_events_async(
 
                 if target_h2h_key in requested_markets and len(outcomes) == 2:
                     if "HANDICAP" not in market_type and "OVER_UNDER" not in market_type:
-                        if "MONEYLINE" in market_type or "FULL_TIME_RESULT" in market_type or "MATCH_RESULT" in market_type:
+                        if "MONEYLINE" in market_type or "FULL_TIME_RESULT" in market_type or "MATCH_RESULT" in market_type or "WINNER" in market_type:
                             titles = {_normalize_token(item["title"]) for item in outcomes}
                             if "draw" not in titles:
                                 out_by_token = {_normalize_token(item["title"]): item for item in outcomes}
@@ -1662,6 +1687,45 @@ async def fetch_events_async(
                                     }
                                 if best_h2h is None or _score_market(h2h) > _score_market(best_h2h):
                                     best_h2h = h2h
+
+                target_h2h_3_way_key = _scoped_market_key("h2h_3_way", market_type, market_name)
+                if target_h2h_3_way_key in requested_markets and len(outcomes) == 3:
+                    if "FULL_TIME_RESULT" in market_type or "MATCH_RESULT" in market_type:
+                        by_token = {_normalize_token(item["title"]): item for item in outcomes}
+                        home_out = by_token.get(_normalize_token(home_team))
+                        away_out = by_token.get(_normalize_token(away_team))
+                        draw_out = next((item for item in outcomes if _normalize_token(item["title"]) == "draw"), None)
+                        if home_out and draw_out and away_out:
+                            market_3_way = {
+                                "key": target_h2h_3_way_key,
+                                "outcomes": [
+                                    {
+                                        "name": home_team,
+                                        "price": home_out["price"],
+                                        **({"last_updated": home_out["last_updated"]} if home_out.get("last_updated") else {}),
+                                        **({"observed_at": home_out["observed_at"]} if home_out.get("observed_at") not in (None, "") else {}),
+                                        **({"stake": home_out["stake"]} if _safe_float(home_out.get("stake")) else {}),
+                                    },
+                                    {
+                                        "name": draw_out["title"],
+                                        "price": draw_out["price"],
+                                        **({"last_updated": draw_out["last_updated"]} if draw_out.get("last_updated") else {}),
+                                        **({"observed_at": draw_out["observed_at"]} if draw_out.get("observed_at") not in (None, "") else {}),
+                                        **({"stake": draw_out["stake"]} if _safe_float(draw_out.get("stake")) else {}),
+                                    },
+                                    {
+                                        "name": away_team,
+                                        "price": away_out["price"],
+                                        **({"last_updated": away_out["last_updated"]} if away_out.get("last_updated") else {}),
+                                        **({"observed_at": away_out["observed_at"]} if away_out.get("observed_at") not in (None, "") else {}),
+                                        **({"stake": away_out["stake"]} if _safe_float(away_out.get("stake")) else {}),
+                                    },
+                                ],
+                            }
+                            sig = _market_signature(market_3_way)
+                            prev = by_signature.get(sig)
+                            if prev is None or _score_market(market_3_way) > _score_market(prev):
+                                by_signature[sig] = market_3_way
 
                 if target_spread_key in requested_markets and len(outcomes) == 2 and "HANDICAP" in market_type:
                     value_a, value_b = _parse_market_value_pair(market.get("marketValue"))

@@ -75,9 +75,11 @@ DEFAULT_LIVE_PROVIDER_KEYS = (
     "sx_bet",
     "betdex",
     "polymarket",
+    "bookmaker_xyz",
 )
-LIVE_SUPPORTED_PROVIDER_KEYS = DEFAULT_LIVE_PROVIDER_KEYS + ("bookmaker_xyz",)
+LIVE_SUPPORTED_PROVIDER_KEYS = DEFAULT_LIVE_PROVIDER_KEYS
 MIDDLE_MARKETS = {"spreads", "totals"}
+PREMATCH_QUOTE_MAX_AGE_SECONDS_RAW = os.getenv("PREMATCH_QUOTE_MAX_AGE_SECONDS", "0").strip()
 ODDS_API_ALL_MARKETS_RAW = os.getenv("ODDS_API_ALL_MARKETS", "").strip()
 ODDS_API_MARKET_BATCH_SIZE_RAW = os.getenv("ODDS_API_MARKET_BATCH_SIZE", "8").strip()
 ODDS_API_INVALID_MARKET_STATUS_CODES = {400, 422}
@@ -2521,23 +2523,26 @@ def _quote_freshness_timestamp_seconds(
     bookmaker: Optional[dict],
     market: Optional[dict],
     outcome: Optional[dict],
+    *,
+    prefer_observed_at: bool = True,
 ) -> Optional[float]:
     live_state = _event_live_state(game or {}) if isinstance(game, dict) else {}
     sources = (outcome, market, bookmaker, live_state, game)
-    for source in sources:
-        if not isinstance(source, dict):
-            continue
-        for key in (
-            "quote_observed_at",
-            "quoteObservedAt",
-            "observed_at",
-            "observedAt",
-            "last_seen_at",
-            "lastSeenAt",
-        ):
-            timestamp = _parse_timestamp_seconds(source.get(key))
-            if timestamp is not None:
-                return timestamp
+    if prefer_observed_at:
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            for key in (
+                "quote_observed_at",
+                "quoteObservedAt",
+                "observed_at",
+                "observedAt",
+                "last_seen_at",
+                "lastSeenAt",
+            ):
+                timestamp = _parse_timestamp_seconds(source.get(key))
+                if timestamp is not None:
+                    return timestamp
     return _quote_updated_at_seconds(game, bookmaker, market, outcome)
 
 
@@ -2547,12 +2552,27 @@ def _live_quote_age_seconds(
     market: Optional[dict],
     outcome: Optional[dict],
     now_epoch: Optional[float] = None,
+    *,
+    prefer_observed_at: bool = True,
 ) -> Optional[float]:
-    timestamp = _quote_freshness_timestamp_seconds(game, bookmaker, market, outcome)
+    timestamp = _quote_freshness_timestamp_seconds(
+        game,
+        bookmaker,
+        market,
+        outcome,
+        prefer_observed_at=prefer_observed_at,
+    )
     if timestamp is None:
         return None
     now_value = float(now_epoch if now_epoch is not None else time.time())
     return max(0.0, now_value - timestamp)
+
+
+def _prematch_quote_max_age_seconds() -> float:
+    try:
+        return max(0.0, float(PREMATCH_QUOTE_MAX_AGE_SECONDS_RAW))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _is_live_quote_fresh(
@@ -2563,12 +2583,25 @@ def _is_live_quote_fresh(
     scan_mode: str,
     now_epoch: Optional[float] = None,
 ) -> bool:
-    if _normalize_scan_mode(scan_mode) != SCAN_MODE_LIVE:
+    normalized_mode = _normalize_scan_mode(scan_mode)
+    if normalized_mode == SCAN_MODE_LIVE:
+        max_age = _live_quote_max_age_seconds()
+        prefer_observed_at = True
+    elif normalized_mode == SCAN_MODE_PREMATCH:
+        max_age = _prematch_quote_max_age_seconds()
+        prefer_observed_at = False
+    else:
         return True
-    max_age = _live_quote_max_age_seconds()
     if max_age <= 0:
         return True
-    age = _live_quote_age_seconds(game, bookmaker, market, outcome, now_epoch=now_epoch)
+    age = _live_quote_age_seconds(
+        game,
+        bookmaker,
+        market,
+        outcome,
+        now_epoch=now_epoch,
+        prefer_observed_at=prefer_observed_at,
+    )
     if age is None:
         return True
     return age <= max_age

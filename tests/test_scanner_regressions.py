@@ -259,7 +259,7 @@ class ScannerRegressionTests(unittest.TestCase):
 
     def test_default_live_provider_keys_prefers_curated_supported_list(self) -> None:
         defaults = scanner._default_live_provider_keys()
-        self.assertEqual(defaults, ["sx_bet", "betdex", "polymarket"])
+        self.assertEqual(defaults, ["sx_bet", "betdex", "polymarket", "bookmaker_xyz"])
 
     def test_registered_provider_fetchers_use_async_entrypoints_for_migrated_providers(self) -> None:
         self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["betdex"]))
@@ -927,6 +927,106 @@ class ScannerRegressionTests(unittest.TestCase):
 
         self.assertEqual(live_entries, [])
         self.assertTrue(prematch_entries)
+
+    def test_collect_market_entries_filters_stale_prematch_quotes_only_when_timestamp_exists(self) -> None:
+        game = {
+            "sport_key": "icehockey_nhl",
+            "sport_display": "NHL",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "live_state": {"status": "scheduled", "updated_at": 50},
+            "bookmakers": [
+                {
+                    "key": "book_a",
+                    "title": "Book A",
+                    "markets": [
+                        {
+                            "key": "totals",
+                            "outcomes": [
+                                {"name": "Over", "price": 2.1, "point": 6.5},
+                                {"name": "Under", "price": 1.8, "point": 6.5},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_b",
+                    "title": "Book B",
+                    "markets": [
+                        {
+                            "key": "totals",
+                            "outcomes": [
+                                {"name": "Over", "price": 1.8, "point": 6.5, "last_updated": 10},
+                                {"name": "Under", "price": 2.2, "point": 6.5, "last_updated": 10},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        with patch("scanner.time.time", return_value=100.0), patch.object(
+            scanner, "PREMATCH_QUOTE_MAX_AGE_SECONDS_RAW", "30"
+        ):
+            entries = scanner._collect_market_entries(
+                game,
+                market_key="totals",
+                stake_total=100.0,
+                commission_rate=0.0,
+                scan_mode="prematch",
+            )
+
+        self.assertEqual(entries, [])
+
+    def test_collect_market_entries_prematch_freshness_ignores_observed_at_refresh_of_stale_snapshot(self) -> None:
+        game = {
+            "sport_key": "icehockey_nhl",
+            "sport_display": "NHL",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "live_state": {"status": "scheduled"},
+            "bookmakers": [
+                {
+                    "key": "book_a",
+                    "title": "Book A",
+                    "markets": [
+                        {
+                            "key": "totals",
+                            "outcomes": [
+                                {"name": "Over", "price": 1.9, "point": 6.5},
+                                {"name": "Under", "price": 1.9, "point": 6.5},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_b",
+                    "title": "Book B",
+                    "markets": [
+                        {
+                            "key": "totals",
+                            "outcomes": [
+                                {"name": "Over", "price": 1.8, "point": 6.5, "last_updated": 10, "observed_at": 99},
+                                {"name": "Under", "price": 2.2, "point": 6.5, "last_updated": 10, "observed_at": 99},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        with patch("scanner.time.time", return_value=100.0), patch.object(
+            scanner, "PREMATCH_QUOTE_MAX_AGE_SECONDS_RAW", "30"
+        ):
+            entries = scanner._collect_market_entries(
+                game,
+                market_key="totals",
+                stake_total=100.0,
+                commission_rate=0.0,
+                scan_mode="prematch",
+            )
+
+        self.assertEqual(entries, [])
 
     def test_collect_plus_ev_filters_stale_live_quotes(self) -> None:
         game = {
