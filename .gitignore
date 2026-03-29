@@ -8,3 +8,4 @@ scanner.log
 .DS_Store
 venv/
 .venv/
+.worktrees/
