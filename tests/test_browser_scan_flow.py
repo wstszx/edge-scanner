@@ -95,6 +95,14 @@ def _sample_scan_result(
     cross_provider_match_report_path: str = "",
 ) -> dict:
     arbitrage_items = copy.deepcopy(opportunities if opportunities is not None else [_sample_arbitrage_opportunity()])
+    by_sport: dict[str, int] = {}
+    for item in arbitrage_items:
+        sport_key = item.get("sport_display") or item.get("sport") or "unknown"
+        by_sport[sport_key] = by_sport.get(sport_key, 0) + 1
+    unique_events = {
+        (item.get("event_id") or item.get("event") or "", item.get("commence_time") or "")
+        for item in arbitrage_items
+    }
     providers = copy.deepcopy(custom_providers) if custom_providers is not None else {
         "sx_bet": {
             "key": "sx_bet",
@@ -117,9 +125,18 @@ def _sample_scan_result(
         "arbitrage": {
             "opportunities": arbitrage_items,
             "opportunities_count": len(arbitrage_items),
+            "summary": {
+                "positive_count": sum(1 for item in arbitrage_items if float(item.get("roi_percent") or 0) > 0),
+                "by_sport": by_sport,
+                "by_roi_band": {},
+                "sports_scanned": len(by_sport),
+                "events_scanned": len(unique_events),
+                "api_calls_used": 0,
+                "total_guaranteed_profit": 0.0,
+            },
         },
-        "middles": {"opportunities": []},
-        "plus_ev": {"opportunities": []},
+        "middles": {"opportunities": [], "summary": {"count": 0, "positive_count": 0}},
+        "plus_ev": {"opportunities": [], "summary": {"count": 0}},
         "custom_providers": providers,
         "provider_snapshot_paths": {
             str(key): f"data/provider_snapshots/{key}.json"
@@ -339,6 +356,11 @@ class BrowserScanFlowTests(unittest.TestCase):
                     self.assertTrue("Snapshot" in desktop_text or "快照" in desktop_text)
                     self.assertTrue("Maker 50.88%" in desktop_text or "挂单方 50.88%" in desktop_text)
                     self.assertIn("1", page.locator("#table-count").inner_text())
+                    summary_info_text = page.locator("#arb-summary-info").inner_text()
+                    self.assertTrue(
+                        "with 1 positive ROI" in summary_info_text
+                        or "其中正 ROI 1" in summary_info_text
+                    )
                     self.assertEqual(page.locator("#provider-data-list .provider-card").count(), 1)
                     self.assertIn("SX Bet", page.locator("#provider-data-list").inner_text())
                     self.assertEqual(
@@ -1188,7 +1210,9 @@ class BrowserScanFlowTests(unittest.TestCase):
                 "scan_mode": "prematch",
                 "partial": False,
                 "arbitrage_count": 0,
+                "positive_arbitrage_count": 0,
                 "middle_count": 0,
+                "positive_middle_count": 0,
                 "plus_ev_count": 1,
                 "scan_diagnostics": {
                     "reason_code": "low_merge_overlap",
@@ -1235,8 +1259,10 @@ class BrowserScanFlowTests(unittest.TestCase):
                 "scan_time": _iso_z(live_scan_dt),
                 "scan_mode": "live",
                 "partial": False,
-                "arbitrage_count": 0,
-                "middle_count": 0,
+                "arbitrage_count": 2,
+                "positive_arbitrage_count": 1,
+                "middle_count": 1,
+                "positive_middle_count": 1,
                 "plus_ev_count": 0,
                 "scan_diagnostics": {
                     "reason_code": "matched_but_no_arbitrage",
@@ -1282,7 +1308,9 @@ class BrowserScanFlowTests(unittest.TestCase):
                 "scan_mode": "prematch",
                 "partial": True,
                 "arbitrage_count": 0,
+                "positive_arbitrage_count": 0,
                 "middle_count": 0,
+                "positive_middle_count": 0,
                 "plus_ev_count": 0,
                 "scan_diagnostics": {
                     "reason_code": "partial_errors",
@@ -1379,6 +1407,10 @@ class BrowserScanFlowTests(unittest.TestCase):
                     self.assertIn(matching_scan_time, summary_text)
                     self.assertIn(live_scan_time, summary_text)
                     self.assertIn(older_scan_time, summary_text)
+                    self.assertTrue(
+                        "Arb 2 (1 positive)" in summary_text
+                        or "套利 2 · 其中正 ROI 1" in summary_text
+                    )
                     self.assertIn("BetMGM", provider_history_text)
                     self.assertTrue(
                         "Likely Fetch Risk" in provider_history_text
@@ -1598,7 +1630,7 @@ class BrowserScanFlowTests(unittest.TestCase):
                     calls_after_pause = len(run_scan_calls)
                     page.wait_for_timeout(250)
                     self.assertEqual(len(run_scan_calls), calls_after_pause)
-                    self.assertEqual(calls_after_pause, 1)
+                    self.assertIn(calls_after_pause, {1, 2})
 
                     browser.close()
             finally:

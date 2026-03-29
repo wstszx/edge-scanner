@@ -1883,7 +1883,7 @@
         history_scan_summary_filter_time_7d: 'Last 7d',
         history_scan_summary_filter_time_30d: 'Last 30d',
         history_scan_summary_filter_all_providers: 'All providers',
-        history_scan_summary_results: 'Arb {arb} · Middle {middle} · +EV {ev}',
+        history_scan_summary_results: 'Arb {arb} ({positiveArb} positive) · Middle {middle} ({positiveMiddle} positive EV) · +EV {ev}',
         history_scan_summary_partial: 'Partial',
         history_scan_summary_complete: 'Complete',
         history_provider_lens_title: 'Provider History Lens',
@@ -2170,7 +2170,7 @@
         arb_summary_filtered_stake: 'Filtered Stake',
         arb_summary_best_profit: 'Best Profit',
         arb_summary_commission_label: 'Commission',
-        arb_summary_counts: 'Filtered to {count} opportunities across {events} events in {sports} sports.',
+        arb_summary_counts: 'Filtered to {count} opportunities across {events} events in {sports} sports, with {positive} positive ROI.',
         arb_summary_avg_roi: 'Average net ROI: {roi}.',
         arb_summary_top: 'Top spot: {context} | {roi} net ROI | {profit} profit.',
         arb_summary_best_roi_chip: 'Best ROI {value}',
@@ -2753,7 +2753,8 @@
       history_scan_summary_filter_time_7d: '\u6700\u8fd17\u5929',
       history_scan_summary_filter_time_30d: '\u6700\u8fd130\u5929',
       history_scan_summary_filter_all_providers: '\u6240\u6709\u5e73\u53f0',
-      history_scan_summary_results: '\u5957\u5229 {arb} \u00b7 \u4e2d\u95f4\u76d8 {middle} \u00b7 +EV {ev}',
+      history_scan_summary_results: '\u5957\u5229 {arb} \u00b7 \u5176\u4e2d\u6b63 ROI {positiveArb} \u00b7 \u4e2d\u95f4\u76d8 {middle} \u00b7 \u5176\u4e2d\u6b63 EV {positiveMiddle} \u00b7 +EV {ev}',
+      arb_summary_counts: '\u5f53\u524d\u7b5b\u9009\u540e\u5171\u6709 {count} \u4e2a\u673a\u4f1a\uff0c\u8986\u76d6 {events} \u573a\u8d5b\u4e8b\u3001{sports} \u4e2a\u9879\u76ee\uff0c\u5176\u4e2d\u6b63 ROI {positive} \u4e2a\u3002',
       history_scan_summary_partial: '\u90e8\u5206\u5931\u8d25',
       history_scan_summary_complete: '\u5b8c\u6574',
       history_provider_lens_title: '\u5e73\u53f0\u5386\u53f2\u900f\u89c6',
@@ -7259,6 +7260,7 @@
         const countText = `<strong>${stats.count}</strong>`;
         const eventsText = `<strong>${stats.event_count}</strong>`;
         const sportsText = `<strong>${stats.sport_count}</strong>`;
+        const positiveText = `<strong>${stats.positive_count}</strong>`;
         const avgRoiText = `<strong>${formatPercent(stats.average_roi_percent)}</strong>`;
         const profitText = `<strong>${formatCurrency(stats.total_profit)}</strong>`;
         const stakedText = totalStaked
@@ -7310,6 +7312,7 @@
                 count: countText,
                 events: eventsText,
                 sports: sportsText,
+                positive: positiveText,
               })}</p>
             </div>
             ${summaryChips}
@@ -10018,12 +10021,14 @@
       const byRoiBand = {};
       let exchangeCount = 0;
       let threeWayCount = 0;
+      let positiveCount = 0;
       list.forEach((entry) => {
         const opp = entry?.opp || {};
         const netRoi = Number(entry?.netRoi) || 0;
         const profit = Number(entry?.profitValue) || 0;
         roiSum += netRoi;
         totalProfit += profit;
+        if (netRoi > 0) positiveCount += 1;
         if (!best || netRoi > (Number(best?.netRoi) || 0)) {
           best = entry;
         }
@@ -10048,6 +10053,7 @@
         best_event: bestOpp.event || '',
         best_market: formatMarket(bestOpp),
         total_profit: totalProfit,
+        positive_count: positiveCount,
         by_sport: bySport,
         by_roi_band: byRoiBand,
         exchange_count: exchangeCount,
@@ -10723,7 +10729,9 @@
           const toneClass = historyLikelyToneClass(likely.kind);
           const resultText = t('history_scan_summary_results', {
             arb: Number(record?.arbitrage_count || 0),
+            positiveArb: Number(record?.positive_arbitrage_count || record?.scan_diagnostics?.positive_arbitrage_count || 0),
             middle: Number(record?.middle_count || 0),
+            positiveMiddle: Number(record?.positive_middle_count || record?.scan_diagnostics?.positive_middle_count || 0),
             ev: Number(record?.plus_ev_count || 0),
           });
           const statusText = record?.partial
