@@ -259,7 +259,7 @@ class ScannerRegressionTests(unittest.TestCase):
 
     def test_default_live_provider_keys_prefers_curated_supported_list(self) -> None:
         defaults = scanner._default_live_provider_keys()
-        self.assertEqual(defaults, ["sx_bet", "betdex", "polymarket", "bookmaker_xyz"])
+        self.assertEqual(defaults, ['sx_bet', 'betdex', 'polymarket', 'bookmaker_xyz', 'artline'])
 
     def test_registered_provider_fetchers_use_async_entrypoints_for_migrated_providers(self) -> None:
         self.assertTrue(inspect.iscoroutinefunction(scanner.PROVIDER_FETCHERS["betdex"]))

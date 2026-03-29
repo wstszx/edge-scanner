@@ -1,12 +1,43 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from io import StringIO
+from contextlib import redirect_stdout
 
 import provider_verification as pv
 
 
 class ProviderVerificationTests(unittest.TestCase):
+    def test_main_includes_live_availability_paths_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_live_paths = {
+                "json": str(Path(temp_dir) / "live_availability.json"),
+                "markdown": str(Path(temp_dir) / "live_availability.md"),
+            }
+            stdout = StringIO()
+            with (
+                patch.object(pv, "run_provider_tests", return_value={"ran": False}),
+                patch.object(pv, "run_live_scan", return_value={"success": True, "scan_diagnostics": {}}),
+                patch.object(pv, "build_report", return_value={"providers": [], "scan": {}, "tests": {"ran": False}}),
+                patch.object(pv, "write_report", return_value={"json": str(Path(temp_dir) / "provider.json"), "markdown": str(Path(temp_dir) / "provider.md")}),
+                patch.object(pv, "write_live_scan_report", return_value=fake_live_paths) as mocked_live_writer,
+                redirect_stdout(stdout),
+            ):
+                exit_code = pv.main([
+                    "--skip-tests",
+                    "--json-stdout",
+                    "--include-live-availability",
+                    "--out-dir",
+                    temp_dir,
+                ])
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(mocked_live_writer.called)
+        self.assertEqual(payload["live_availability"], fake_live_paths)
+
     def test_summarize_provider_statuses_marks_errors(self) -> None:
         result = {
             "custom_providers": {
@@ -122,6 +153,36 @@ class ProviderVerificationTests(unittest.TestCase):
 
         self.assertEqual(summary["arbitrage_count"], 1)
         self.assertIn("liquidity-limited", summary["top_arbitrage"][0]["note"])
+
+    def test_summarize_scan_exposes_positive_only_counts(self) -> None:
+        result = {
+            "success": True,
+            "partial": False,
+            "arbitrage": {
+                "opportunities_count": 3,
+                "opportunities": [
+                    {"event": "A vs B", "market": "h2h", "roi_percent": 1.5},
+                    {"event": "C vs D", "market": "h2h", "roi_percent": 0.0},
+                    {"event": "E vs F", "market": "totals", "roi_percent": -0.4},
+                ],
+            },
+            "middles": {
+                "opportunities_count": 3,
+                "opportunities": [
+                    {"event": "A vs B", "market": "totals", "ev_percent": 2.0},
+                    {"event": "C vs D", "market": "spreads", "ev_percent": 0.0},
+                    {"event": "E vs F", "market": "totals", "ev_percent": -1.1},
+                ],
+            },
+            "plus_ev": {"opportunities_count": 0, "opportunities": []},
+        }
+
+        summary = pv.summarize_scan(result, top_n=2)
+
+        self.assertEqual(summary["arbitrage_count"], 3)
+        self.assertEqual(summary["positive_arbitrage_count"], 1)
+        self.assertEqual(summary["middle_count"], 3)
+        self.assertEqual(summary["positive_middle_count"], 1)
 
     def test_write_report_creates_json_and_markdown(self) -> None:
         report = {

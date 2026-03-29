@@ -774,6 +774,14 @@ def _include_live_games(context: Optional[dict] = None) -> bool:
     return bool(BOOKMAKER_XYZ_INCLUDE_LIVE)
 
 
+def _requested_game_states(context: Optional[dict] = None) -> List[str]:
+    if isinstance(context, dict) and bool(context.get("live")):
+        return ["Live"]
+    if bool(BOOKMAKER_XYZ_INCLUDE_LIVE):
+        return ["Prematch", "Live"]
+    return ["Prematch"]
+
+
 def _market_manager_environments() -> List[str]:
     environments: List[str] = []
     for chain_id in _parse_chain_ids():
@@ -1357,7 +1365,7 @@ async def _load_market_manager_snapshot_async(
     per_page = max(10, _int_or_default(BOOKMAKER_XYZ_GAMES_PER_PAGE_RAW, 100, min_value=10))
     max_pages = _int_or_default(BOOKMAKER_XYZ_MAX_GAME_PAGES_RAW, 10, min_value=1)
     batch_size = _int_or_default(BOOKMAKER_XYZ_CONDITION_BATCH_SIZE_RAW, 50, min_value=1)
-    game_states = ["Prematch", "Live"] if _include_live_games(context) else ["Prematch"]
+    game_states = _requested_game_states(context)
     base_url = _market_manager_base()
     pages_fetched = 0
     requests_made = 0
@@ -1917,6 +1925,13 @@ def _normalize_condition_market(
     if game_period_id not in {"1", "76"}:
         return None
 
+    condition_label = _normalize_text(
+        condition.get("conditionName")
+        or condition.get("condition")
+        or condition.get("name")
+        or condition.get("title")
+    ).lower()
+
     parsed_outcomes.sort(
         key=lambda item: (
             item.get("sort_order") if item.get("sort_order") is not None else 9999.0,
@@ -1978,7 +1993,10 @@ def _normalize_condition_market(
                     ],
                 }
 
-    if ('team total' in market_name or 'player total' in market_name) and over_selection and under_selection and len(parsed_outcomes) == 2:
+    if (
+        any(token in market_name for token in ("team total", "player total", "individual total", "total points incl. ot"))
+        or any(token in condition_label for token in ("team total", "player total", "individual total", "total points incl. ot"))
+    ) and over_selection and under_selection and len(parsed_outcomes) == 2:
         return None
 
     if "totals" in requested_markets and over_selection and under_selection and len(parsed_outcomes) == 2:

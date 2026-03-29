@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from config import DEFAULT_STAKE_AMOUNT
+from live_availability import write_live_scan_report
 from scanner import run_scan
 
 DEFAULT_PROVIDERS = [
@@ -301,22 +302,38 @@ def _plus_ev_highlights(items: Sequence[dict[str, Any]], limit: int) -> list[dic
     return highlights
 
 
+def _positive_metric_count(items: Sequence[dict[str, Any]], metric_key: str) -> int:
+    count = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        metric_value = _safe_float(item.get(metric_key))
+        if metric_value is not None and metric_value > 0:
+            count += 1
+    return count
+
+
 def summarize_scan(result: dict[str, Any], top_n: int) -> dict[str, Any]:
     arbitrage = result.get("arbitrage") if isinstance(result.get("arbitrage"), dict) else {}
     middles = result.get("middles") if isinstance(result.get("middles"), dict) else {}
     plus_ev = result.get("plus_ev") if isinstance(result.get("plus_ev"), dict) else {}
+    arbitrage_items = arbitrage.get("opportunities") or []
+    middle_items = middles.get("opportunities") or []
+    plus_ev_items = plus_ev.get("opportunities") or []
     return {
         'scan_diagnostics': result.get('scan_diagnostics') or {},
         "success": bool(result.get("success")),
         "partial": bool(result.get("partial")),
         "sport_errors": result.get("sport_errors") or [],
         "arbitrage_count": int(arbitrage.get("opportunities_count", 0) or 0),
+        "positive_arbitrage_count": _positive_metric_count(arbitrage_items, "roi_percent"),
         "middle_count": int(middles.get("opportunities_count", 0) or 0),
+        "positive_middle_count": _positive_metric_count(middle_items, "ev_percent"),
         "plus_ev_count": int(plus_ev.get("opportunities_count", 0) or 0),
         "timings": result.get("timings") or {},
-        "top_arbitrage": _arb_highlights(arbitrage.get("opportunities") or [], top_n),
-        "top_middles": _middle_highlights(middles.get("opportunities") or [], top_n),
-        "top_plus_ev": _plus_ev_highlights(plus_ev.get("opportunities") or [], top_n),
+        "top_arbitrage": _arb_highlights(arbitrage_items, top_n),
+        "top_middles": _middle_highlights(middle_items, top_n),
+        "top_plus_ev": _plus_ev_highlights(plus_ev_items, top_n),
     }
 
 
@@ -459,6 +476,15 @@ def report_to_markdown(report: dict[str, Any]) -> str:
     lines.extend(_markdown_top_items("Top Arbitrage", scan.get("top_arbitrage") or [], "roi_percent"))
     lines.extend(_markdown_top_items("Top Middles", scan.get("top_middles") or [], "ev_percent"))
     lines.extend(_markdown_top_items("Top Plus EV", scan.get("top_plus_ev") or [], "edge_percent"))
+    scan_diagnostics = scan.get("scan_diagnostics") or {}
+    lines.append("## Scan Diagnostics")
+    lines.append("")
+    if not isinstance(scan_diagnostics, dict) or not scan_diagnostics:
+        lines.append("- none")
+    else:
+        for key in sorted(scan_diagnostics.keys()):
+            lines.append(f"- {key}: {scan_diagnostics.get(key)}")
+    lines.append("")
     sport_errors = scan.get("sport_errors") or []
     lines.append("## Sport Errors")
     lines.append("")
@@ -658,6 +684,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Print a concise console summary instead of the full JSON payload.",
     )
     parser.add_argument(
+        "--include-live-availability",
+        action="store_true",
+        help="Write an additional live availability JSON/Markdown report alongside the main verification report.",
+    )
+    parser.add_argument(
         "--json-stdout",
         action="store_true",
         help="Print the full JSON payload to stdout even when summary mode is preferred elsewhere.",
@@ -691,7 +722,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         scan_result=scan_result,
     )
     written = write_report(report, Path(args.out_dir))
+    live_availability = None
+    if args.include_live_availability:
+        live_availability = write_live_scan_report(scan_result, Path(args.out_dir))
     payload = {"report": report, "written": written}
+    if live_availability:
+        payload["live_availability"] = live_availability
     if args.summary_only and not args.json_stdout:
         print(build_console_summary(report, written=written))
     else:

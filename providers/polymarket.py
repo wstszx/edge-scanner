@@ -986,6 +986,59 @@ def _parse_clob_token_ids(value: object) -> List[str]:
     return token_ids
 
 
+def _parse_spread_question_candidate(
+    question: object,
+    home_team: str,
+    away_team: str,
+) -> Optional[dict]:
+    text = _normalize_text(question)
+    if not text:
+        return None
+    match = re.match(
+        r"^\s*(?:spread|handicap)\s*:\s*(.+?)\s*\(([+-]?\d+(?:\.\d+)?)\)\s*$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    team_name = _clean_team_name(match.group(1))
+    team_token = _team_token(team_name)
+    home_token = _team_token(home_team)
+    away_token = _team_token(away_team)
+    if team_token not in {home_token, away_token}:
+        return None
+    try:
+        line = float(match.group(2))
+    except (TypeError, ValueError):
+        return None
+    return {
+        "team_name": home_team if team_token == home_token else away_team,
+        "team_token": team_token,
+        "line": round(line, 6),
+        "abs_line": round(abs(line), 6),
+    }
+
+
+def _parse_total_question_candidate(question: object) -> Optional[dict]:
+    text = _normalize_text(question)
+    if not text:
+        return None
+    match = re.search(r"\bO/U\s+([+-]?\d+(?:\.\d+)?)\b", text, flags=re.IGNORECASE)
+    if not match:
+        match = re.search(
+            r"\btotal\s*[:]?\s*([+-]?\d+(?:\.\d+)?)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    if not match:
+        return None
+    try:
+        line = float(match.group(1))
+    except (TypeError, ValueError):
+        return None
+    return {"line": round(line, 6)}
+
+
 def _match_market_clob_token_ids(
     market: dict,
     home_team: str,
@@ -1017,15 +1070,38 @@ def _match_market_clob_token_ids(
     ):
         return token_ids
 
-    normalized_outcomes = [token.lower() for token in outcome_tokens]
-    if normalized_outcomes not in (["yes", "no"], ["no", "yes"]):
-        return []
-
     question = _normalize_text(market.get("question")).lower()
     if {"btts", "both_teams_to_score"} & requested_markets and (
         "both teams to score" in question or "btts" in question
     ):
+        normalized_outcomes = [token.lower() for token in outcome_tokens]
+        if normalized_outcomes not in (["yes", "no"], ["no", "yes"]):
+            return []
         return token_ids
+
+    spread_candidate = _parse_spread_question_candidate(
+        market.get("question"),
+        home_team,
+        away_team,
+    )
+    if spread_candidate and "spreads" in requested_markets:
+        return token_ids
+
+    total_candidate = _parse_total_question_candidate(market.get("question"))
+    if total_candidate and "totals" in requested_markets:
+        normalized_outcomes = [outcome.lower() for outcome in outcomes]
+        if normalized_outcomes == ["over", "under"] or normalized_outcomes == ["under", "over"]:
+            return token_ids
+        return []
+
+    normalized_outcomes = [token.lower() for token in outcome_tokens]
+    if normalized_outcomes not in (["yes", "no"], ["no", "yes"]):
+        return []
+
+    if total_candidate and "totals" in requested_markets:
+        normalized_outcome_names = [outcome.lower() for outcome in outcomes]
+        if normalized_outcome_names == ["over", "under"] or normalized_outcome_names == ["under", "over"]:
+            return token_ids
 
     if "draw" in question:
         return token_ids if "h2h_3_way" in requested_markets else []
@@ -1510,6 +1586,10 @@ def _event_live_state_payload(event: object, realtime_state: object = None) -> O
         if updated_at:
             payload["updated_at"] = updated_at
     return payload or None
+
+
+def _context_requests_live(context: Optional[dict]) -> bool:
+    return isinstance(context, dict) and bool(context.get("live"))
 
 
 def _read_json_file(path: object) -> Optional[dict]:
@@ -2959,6 +3039,8 @@ def _pick_match_markets(
     btts_yes: Optional[dict] = None
     btts_no: Optional[dict] = None
     has_draw_prompt = False
+    spread_candidates_by_line: Dict[float, Dict[str, dict]] = {}
+    totals_candidates_by_line: Dict[float, Dict[str, dict]] = {}
 
     for market in (event.get("markets") or []):
         if not isinstance(market, dict):
@@ -3009,6 +3091,48 @@ def _pick_match_markets(
         outcome_tokens = [_team_token(outcomes[0]), _team_token(outcomes[1])]
         question = _normalize_text(market.get("question")).lower()
 
+        total_candidate = _parse_total_question_candidate(market.get("question"))
+        if total_candidate is not None:
+            over_index = next((idx for idx, outcome in enumerate(outcomes) if _normalize_text(outcome).lower() == "over"), None)
+            under_index = next((idx for idx, outcome in enumerate(outcomes) if _normalize_text(outcome).lower() == "under"), None)
+            if over_index is not None and under_index is not None:
+                line_bucket = totals_candidates_by_line.setdefault(total_candidate["line"], {})
+                line_bucket["over"] = dict(quote_details[over_index])
+                line_bucket["under"] = dict(quote_details[under_index])
+                continue
+
+        spread_candidate = _parse_spread_question_candidate(
+            market.get("question"),
+            home_team,
+            away_team,
+        )
+        if spread_candidate is not None:
+            direct_team_index = None
+            for idx, outcome_token in enumerate(outcome_tokens):
+                if outcome_token == spread_candidate["team_token"]:
+                    direct_team_index = idx
+                    break
+            if direct_team_index is not None:
+                line_bucket = spread_candidates_by_line.setdefault(
+                    spread_candidate["abs_line"],
+                    {},
+                )
+                line_bucket[spread_candidate["team_token"]] = {
+                    "team_name": spread_candidate["team_name"],
+                    "line": (
+                        spread_candidate["line"]
+                        if spread_candidate["team_token"] == _team_token(home_team)
+                        else -spread_candidate["line"]
+                    ),
+                    "odds": quote_details[direct_team_index]["odds"],
+                    "stake": quote_details[direct_team_index].get("stake"),
+                    "raw_percentage_odds": quote_details[direct_team_index].get("raw_percentage_odds"),
+                    "quote_source": quote_details[direct_team_index].get("quote_source"),
+                    "observed_at": quote_details[direct_team_index].get("observed_at"),
+                    "last_updated": quote_details[direct_team_index].get("last_updated"),
+                }
+                continue
+
         if "draw" in question:
             has_draw_prompt = True
 
@@ -3051,6 +3175,27 @@ def _pick_match_markets(
             if "both teams to score" in question or "btts" in question:
                 btts_yes = dict(yes_quote)
                 btts_no = dict(no_quote)
+                continue
+            spread_candidate = _parse_spread_question_candidate(
+                market.get("question"),
+                home_team,
+                away_team,
+            )
+            if spread_candidate is not None:
+                line_bucket = spread_candidates_by_line.setdefault(
+                    spread_candidate["abs_line"],
+                    {},
+                )
+                line_bucket[spread_candidate["team_token"]] = {
+                    "team_name": spread_candidate["team_name"],
+                    "line": spread_candidate["line"],
+                    "odds": yes_quote["odds"],
+                    "stake": yes_quote.get("stake"),
+                    "raw_percentage_odds": yes_quote.get("raw_percentage_odds"),
+                    "quote_source": yes_quote.get("quote_source"),
+                    "observed_at": yes_quote.get("observed_at"),
+                    "last_updated": yes_quote.get("last_updated"),
+                }
                 continue
             if "draw" in question:
                 draw_yes = dict(yes_quote)
@@ -3207,6 +3352,84 @@ def _pick_match_markets(
                 ],
             }
         )
+
+    if "spreads" in requested_markets:
+        home_token = _team_token(home_team)
+        away_token = _team_token(away_team)
+        for line_bucket in spread_candidates_by_line.values():
+            home_spread = line_bucket.get(home_token)
+            away_spread = line_bucket.get(away_token)
+            if not isinstance(home_spread, dict) or not isinstance(away_spread, dict):
+                continue
+            collected.append(
+                {
+                    "key": "spreads",
+                    "outcomes": [
+                        {
+                            **_market_outcome_row(
+                                home_team,
+                                home_spread["odds"],
+                                _safe_float(home_spread.get("stake")),
+                                home_spread.get("raw_percentage_odds"),
+                                home_spread.get("quote_source"),
+                                home_spread.get("observed_at"),
+                                home_spread.get("last_updated"),
+                            ),
+                            "point": home_spread["line"],
+                        },
+                        {
+                            **_market_outcome_row(
+                                away_team,
+                                away_spread["odds"],
+                                _safe_float(away_spread.get("stake")),
+                                away_spread.get("raw_percentage_odds"),
+                                away_spread.get("quote_source"),
+                                away_spread.get("observed_at"),
+                                away_spread.get("last_updated"),
+                            ),
+                            "point": away_spread["line"],
+                        },
+                    ],
+                }
+            )
+
+    if "totals" in requested_markets:
+        for line, total_bucket in totals_candidates_by_line.items():
+            over_data = total_bucket.get("over")
+            under_data = total_bucket.get("under")
+            if not isinstance(over_data, dict) or not isinstance(under_data, dict):
+                continue
+            collected.append(
+                {
+                    "key": "totals",
+                    "outcomes": [
+                        {
+                            **_market_outcome_row(
+                                "Over",
+                                over_data["odds"],
+                                _safe_float(over_data.get("stake")),
+                                over_data.get("raw_percentage_odds"),
+                                over_data.get("quote_source"),
+                                over_data.get("observed_at"),
+                                over_data.get("last_updated"),
+                            ),
+                            "point": line,
+                        },
+                        {
+                            **_market_outcome_row(
+                                "Under",
+                                under_data["odds"],
+                                _safe_float(under_data.get("stake")),
+                                under_data.get("raw_percentage_odds"),
+                                under_data.get("quote_source"),
+                                under_data.get("observed_at"),
+                                under_data.get("last_updated"),
+                            ),
+                            "point": line,
+                        },
+                    ],
+                }
+            )
     return collected
 
 
@@ -3441,7 +3664,7 @@ async def fetch_events_async(
     context: Optional[dict] = None,
 ) -> List[dict]:
     _ = regions  # Reserved for future region-specific routing.
-    _ = context
+    live_context = _context_requests_live(context)
     stats = {
         "provider": PROVIDER_KEY,
         "source": POLYMARKET_SOURCE or "api",
@@ -3495,7 +3718,7 @@ async def fetch_events_async(
     _set_last_stats(stats)
 
     supported_markets = _requested_market_keys(markets)
-    if not ({"h2h", "h2h_3_way", "btts", "both_teams_to_score"} & supported_markets):
+    if not ({"h2h", "h2h_3_way", "btts", "both_teams_to_score", "spreads", "totals"} & supported_markets):
         return []
 
     if bookmakers:
@@ -3622,6 +3845,12 @@ async def fetch_events_async(
             if not matchup:
                 continue
             home_team, away_team = matchup
+            if live_context:
+                live_state_preview = _event_live_state_payload(event, realtime_state)
+                explicit_live = bool(isinstance(live_state_preview, dict) and live_state_preview.get("is_live") is True)
+                event_start = _parse_datetime_utc(event.get("startTime"))
+                if not explicit_live and event_start is not None and event_start > now_utc:
+                    continue
             stats["events_matchup_count"] += 1
             filtered_events.append((event, home_team, away_team, realtime_state))
             clob_token_ids.extend(

@@ -76,6 +76,7 @@ DEFAULT_LIVE_PROVIDER_KEYS = (
     "betdex",
     "polymarket",
     "bookmaker_xyz",
+    "artline",
 )
 LIVE_SUPPORTED_PROVIDER_KEYS = DEFAULT_LIVE_PROVIDER_KEYS
 MIDDLE_MARKETS = {"spreads", "totals"}
@@ -2231,7 +2232,9 @@ def _build_scan_diagnostics(
     cross_provider_report: Optional[dict],
     events_scanned: int,
     arbitrage_count: int,
+    positive_arbitrage_count: int,
     middle_count: int,
+    positive_middle_count: int,
     plus_ev_count: int,
     sport_errors: Sequence[dict],
     stale_event_filters: Sequence[dict],
@@ -2358,7 +2361,9 @@ def _build_scan_diagnostics(
         "total_fuzzy_matches": total_fuzzy_matches,
         "total_new_events": total_new_events,
         "arbitrage_count": int(arbitrage_count or 0),
+        "positive_arbitrage_count": int(positive_arbitrage_count or 0),
         "middle_count": int(middle_count or 0),
+        "positive_middle_count": int(positive_middle_count or 0),
         "plus_ev_count": int(plus_ev_count or 0),
         "sport_error_count": sport_error_count,
         "stale_filter_drop_total": stale_filter_drop_total,
@@ -4243,15 +4248,19 @@ def _summaries(
 ) -> dict:
     by_sport: Dict[str, int] = {}
     band_counts: Dict[str, int] = {label: 0 for *_, label in ROI_BANDS}
+    positive_count = 0
     for opp in opportunities:
         key = opp.get("sport_display") or opp.get("sport") or "unknown"
         by_sport[key] = by_sport.get(key, 0) + 1
         roi = opp.get("roi_percent", 0)
+        if _safe_float(roi) is not None and float(roi) > 0:
+            positive_count += 1
         for lower, upper, label in ROI_BANDS:
             if lower <= roi < upper:
                 band_counts[label] += 1
                 break
     return {
+        "positive_count": positive_count,
         "by_sport": by_sport,
         "by_roi_band": band_counts,
         "sports_scanned": sports_scanned,
@@ -5083,7 +5092,9 @@ async def run_scan_async(
             cross_provider_report=None,
             events_scanned=0,
             arbitrage_count=0,
+            positive_arbitrage_count=0,
             middle_count=0,
+            positive_middle_count=0,
             plus_ev_count=0,
             sport_errors=[],
             stale_event_filters=[],
@@ -5317,7 +5328,9 @@ async def run_scan_async(
         cross_provider_report=cross_provider_report,
         events_scanned=events_scanned,
         arbitrage_count=len(arb_opportunities),
+        positive_arbitrage_count=int(arb_summary.get("positive_count", 0) or 0),
         middle_count=len(middle_opportunities),
+        positive_middle_count=int(middle_summary.get("positive_count", 0) or 0),
         plus_ev_count=len(plus_ev_opportunities),
         sport_errors=sport_errors,
         stale_event_filters=stale_event_filters,

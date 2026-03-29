@@ -1348,7 +1348,7 @@ async def fetch_events_async(
     context: Optional[dict] = None,
 ) -> List[dict]:
     _ = regions
-    _ = context
+    live_context = isinstance(context, dict) and bool(context.get("live"))
     requested_markets = _requested_market_keys(markets)
 
     stats = {
@@ -1590,6 +1590,11 @@ async def fetch_events_async(
             if not commence:
                 continue
             event_live_state = _betdex_live_state_payload(event, event_markets)
+            if live_context and not (
+                isinstance(event_live_state, dict)
+                and event_live_state.get("is_live") is True
+            ):
+                continue
 
             best_h2h: Optional[dict] = None
             by_signature: Dict[str, dict] = {}

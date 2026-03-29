@@ -868,6 +868,102 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
         outcome_names = [item.get("name") for item in (market.get("outcomes") or [])]
         self.assertEqual(outcome_names, [HOME_TEAM, draw_name, AWAY_TEAM])
 
+    def test_betdex_live_context_excludes_events_without_live_state(self) -> None:
+        async def _fake_betdex_request(
+            client,
+            url,
+            params=None,
+            access_token=None,
+            retries=0,
+            backoff_seconds=0.0,
+            timeout=20,
+        ):
+            if url.endswith("/api/session"):
+                return {"sessions": [{"accessToken": "token-1"}]}, 0
+            if url.endswith("/events"):
+                return (
+                    {
+                        "events": [
+                            {
+                                "id": "live-event-1",
+                                "name": f"{HOME_TEAM} vs {AWAY_TEAM}",
+                                "active": True,
+                                "expectedStartTime": COMMENCE_TIME,
+                                "eventGroup": {"_ids": ["group-live-1"]},
+                                "participants": {"_ids": ["p-home", "p-away"]},
+                            }
+                        ],
+                        "eventGroups": [
+                            {
+                                "id": "group-live-1",
+                                "name": "NBA",
+                                "subcategory": {"_ids": ["BASKETBALL"]},
+                            }
+                        ],
+                        "participants": [
+                            {"id": "p-home", "name": HOME_TEAM},
+                            {"id": "p-away", "name": AWAY_TEAM},
+                        ],
+                        "_meta": {"_page": {"_totalPages": 1}},
+                    },
+                    0,
+                )
+            if url.endswith("/markets"):
+                return (
+                    {
+                        "markets": [
+                            {
+                                "id": "live-market-1",
+                                "published": True,
+                                "suspended": False,
+                                "status": "Open",
+                                "event": {"_ids": ["live-event-1"]},
+                                "marketType": {"_ids": ["MONEYLINE"]},
+                                "name": "Moneyline",
+                                "marketOutcomes": {"_ids": ["out-home", "out-away"]},
+                            }
+                        ],
+                        "marketOutcomes": [
+                            {"id": "out-home", "title": HOME_TEAM},
+                            {"id": "out-away", "title": AWAY_TEAM},
+                        ],
+                        "_meta": {"_page": {"_totalPages": 1}},
+                    },
+                    0,
+                )
+            if url.endswith("/market-prices"):
+                return (
+                    {
+                        "prices": [
+                            {
+                                "marketId": "live-market-1",
+                                "prices": [
+                                    {"outcomeId": "out-home", "side": "against", "price": 2.1, "amount": 80},
+                                    {"outcomeId": "out-away", "side": "against", "price": 1.8, "amount": 90},
+                                ],
+                            }
+                        ]
+                    },
+                    0,
+                )
+            raise AssertionError(url)
+
+        with (
+            patch.object(betdex, "get_shared_client", new=_fake_shared_client),
+            patch.object(betdex, "_request_json_async", side_effect=_fake_betdex_request),
+        ):
+            events = asyncio.run(
+                betdex.fetch_events_async(
+                    SPORT_KEY,
+                    ["h2h"],
+                    ["us"],
+                    bookmakers=[betdex.PROVIDER_KEY],
+                    context={"live": True},
+                )
+            )
+
+        self.assertEqual(events, [])
+
     def test_sx_bet_pipeline_produces_standardized_h2h_and_arbitrage(self) -> None:
         fixtures = [
             {

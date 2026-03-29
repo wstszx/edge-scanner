@@ -267,6 +267,28 @@ class TestFlattenRecord(unittest.TestCase):
         self.assertEqual(rec["scan_diagnostics"]["reason_code"], "partial_errors")
         self.assertEqual(rec["cross_provider_match_report_summary"]["overlap_clusters"], 4)
 
+    def test_scan_summary_record_keeps_positive_counts(self):
+        scan = {
+            "success": True,
+            "scan_mode": "prematch",
+            "partial": False,
+            "arbitrage": {
+                "opportunities_count": 3,
+                "summary": {"positive_count": 1},
+            },
+            "middles": {
+                "opportunities_count": 2,
+                "summary": {"positive_count": 1},
+            },
+            "plus_ev": {"opportunities_count": 0},
+            "scan_diagnostics": {"reason_code": "arbitrage_found"},
+        }
+
+        rec = _flatten_scan_summary(scan, "2024-01-01T12:00:00Z")
+
+        self.assertEqual(rec["positive_arbitrage_count"], 1)
+        self.assertEqual(rec["positive_middle_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

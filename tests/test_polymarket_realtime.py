@@ -422,6 +422,107 @@ class PolymarketRealtimeTests(unittest.TestCase):
 
 
 class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
+    def test_pick_match_markets_builds_spreads_market_from_yes_no_spread_questions(self) -> None:
+        event = {
+            "markets": [
+                {
+                    "question": "Spread: West Ham United FC (-1.5)",
+                    "outcomes": '["Yes", "No"]',
+                    "outcomePrices": '["0.52", "0.48"]',
+                    "clobTokenIds": '["spread-home", "spread-home-no"]',
+                    "active": True,
+                    "closed": False,
+                    "archived": False,
+                },
+                {
+                    "question": "Spread: Wolverhampton Wanderers FC (+1.5)",
+                    "outcomes": '["Yes", "No"]',
+                    "outcomePrices": '["0.49", "0.51"]',
+                    "clobTokenIds": '["spread-away", "spread-away-no"]',
+                    "active": True,
+                    "closed": False,
+                    "archived": False,
+                },
+            ]
+        }
+        markets = polymarket._pick_match_markets(
+            event,
+            "West Ham United FC",
+            "Wolverhampton Wanderers FC",
+            {"spreads"},
+            polymarket.dt.datetime.now(polymarket.dt.timezone.utc),
+        )
+        self.assertEqual(len(markets), 1)
+        self.assertEqual(markets[0]["key"], "spreads")
+        self.assertEqual(
+            [outcome["name"] for outcome in markets[0]["outcomes"]],
+            ["West Ham United FC", "Wolverhampton Wanderers FC"],
+        )
+        self.assertEqual([outcome["point"] for outcome in markets[0]["outcomes"]], [-1.5, 1.5])
+
+    def test_pick_match_markets_builds_spreads_market_from_team_outcome_spread_questions(self) -> None:
+        event = {
+            "markets": [
+                {
+                    "question": "Spread: West Ham United FC (-1.5)",
+                    "outcomes": '["West Ham United FC", "Wolverhampton Wanderers FC"]',
+                    "outcomePrices": '["0.29", "0.71"]',
+                    "clobTokenIds": '["spread-home-yes", "spread-home-no"]',
+                    "active": True,
+                    "closed": False,
+                    "archived": False,
+                },
+                {
+                    "question": "Spread: Wolverhampton Wanderers FC (-1.5)",
+                    "outcomes": '["Wolverhampton Wanderers FC", "West Ham United FC"]',
+                    "outcomePrices": '["0.5", "0.5"]',
+                    "clobTokenIds": '["spread-away-yes", "spread-away-no"]',
+                    "active": True,
+                    "closed": False,
+                    "archived": False,
+                },
+            ]
+        }
+        markets = polymarket._pick_match_markets(
+            event,
+            "West Ham United FC",
+            "Wolverhampton Wanderers FC",
+            {"spreads"},
+            polymarket.dt.datetime.now(polymarket.dt.timezone.utc),
+        )
+        self.assertEqual(len(markets), 1)
+        self.assertEqual(markets[0]["key"], "spreads")
+        self.assertEqual(
+            [outcome["name"] for outcome in markets[0]["outcomes"]],
+            ["West Ham United FC", "Wolverhampton Wanderers FC"],
+        )
+        self.assertEqual([outcome["point"] for outcome in markets[0]["outcomes"]], [-1.5, 1.5])
+
+    def test_pick_match_markets_builds_totals_market_from_yes_no_ou_questions(self) -> None:
+        event = {
+            "markets": [
+                {
+                    "question": "West Ham United FC vs. Wolverhampton Wanderers FC: O/U 2.5",
+                    "outcomes": '["Over", "Under"]',
+                    "outcomePrices": '["0.52", "0.48"]',
+                    "clobTokenIds": '["total-over", "total-under"]',
+                    "active": True,
+                    "closed": False,
+                    "archived": False,
+                }
+            ]
+        }
+        markets = polymarket._pick_match_markets(
+            event,
+            "West Ham United FC",
+            "Wolverhampton Wanderers FC",
+            {"totals"},
+            polymarket.dt.datetime.now(polymarket.dt.timezone.utc),
+        )
+        self.assertEqual(len(markets), 1)
+        self.assertEqual(markets[0]["key"], "totals")
+        self.assertEqual([outcome["name"] for outcome in markets[0]["outcomes"]], ["Over", "Under"])
+        self.assertEqual([outcome["point"] for outcome in markets[0]["outcomes"]], [2.5, 2.5])
     async def test_fetch_events_async_prefers_realtime_quotes_before_rest(self) -> None:
         manager = _FakeRealtimeManager(
             quote_map={
@@ -825,6 +926,146 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         stats = polymarket.fetch_events_async.last_stats
         self.assertEqual(stats.get("realtime_sports_state_hits"), 1)
         self.assertEqual(stats.get("realtime_sports_state_filtered_count"), 1)
+
+    async def test_fetch_events_async_returns_spreads_market_when_requested(self) -> None:
+        event = _sample_event(slug="west-ham-vs-wolves")
+        event["title"] = "West Ham United FC vs Wolverhampton Wanderers FC"
+        event["tags"] = [
+            {"id": "1", "slug": "sports"},
+            {"id": "999", "slug": "premier-league"},
+        ]
+        event["markets"] = [
+            {
+                "question": "Spread: West Ham United FC (-1.5)",
+                "outcomes": '["Yes", "No"]',
+                "outcomePrices": '["0.52", "0.48"]',
+                "clobTokenIds": '["spread-home", "spread-home-no"]',
+                "active": True,
+                "closed": False,
+                "archived": False,
+            },
+            {
+                "question": "Spread: Wolverhampton Wanderers FC (+1.5)",
+                "outcomes": '["Yes", "No"]',
+                "outcomePrices": '["0.49", "0.51"]',
+                "clobTokenIds": '["spread-away", "spread-away-no"]',
+                "active": True,
+                "closed": False,
+                "archived": False,
+            },
+        ]
+
+        with (
+            patch.object(polymarket, "_websocket_realtime_enabled", return_value=False),
+            patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={})),
+            patch.object(
+                polymarket,
+                "_load_active_game_events_async",
+                new=AsyncMock(
+                    return_value=(
+                        [event],
+                        {"cache": "miss", "pages_fetched": 1, "retries_used": 0},
+                    )
+                ),
+            ),
+            patch.object(polymarket, "_load_clob_quote_map_async", new=AsyncMock(return_value=({}, {}))),
+        ):
+            events = await polymarket.fetch_events_async(
+                "soccer_epl",
+                ["spreads"],
+                ["us"],
+                bookmakers=["polymarket"],
+            )
+
+        self.assertEqual(len(events), 1)
+        markets = events[0]["bookmakers"][0]["markets"]
+        self.assertEqual([market["key"] for market in markets], ["spreads"])
+
+    async def test_fetch_events_async_returns_totals_market_when_requested(self) -> None:
+        event = _sample_event(slug="west-ham-vs-wolves")
+        event["title"] = "West Ham United FC vs Wolverhampton Wanderers FC"
+        event["tags"] = [
+            {"id": "1", "slug": "sports"},
+            {"id": "999", "slug": "premier-league"},
+        ]
+        event["markets"] = [
+            {
+                "question": "West Ham United FC vs. Wolverhampton Wanderers FC: O/U 2.5",
+                "outcomes": '["Over", "Under"]',
+                "outcomePrices": '["0.52", "0.48"]',
+                "clobTokenIds": '["total-over", "total-under"]',
+                "active": True,
+                "closed": False,
+                "archived": False,
+            }
+        ]
+
+        with (
+            patch.object(polymarket, "_websocket_realtime_enabled", return_value=False),
+            patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={})),
+            patch.object(
+                polymarket,
+                "_load_active_game_events_async",
+                new=AsyncMock(
+                    return_value=(
+                        [event],
+                        {"cache": "miss", "pages_fetched": 1, "retries_used": 0},
+                    )
+                ),
+            ),
+            patch.object(polymarket, "_load_clob_quote_map_async", new=AsyncMock(return_value=({}, {}))),
+        ):
+            events = await polymarket.fetch_events_async(
+                "soccer_epl",
+                ["totals"],
+                ["us"],
+                bookmakers=["polymarket"],
+            )
+
+        self.assertEqual(len(events), 1)
+        markets = events[0]["bookmakers"][0]["markets"]
+        self.assertEqual([market["key"] for market in markets], ["totals"])
+
+    async def test_fetch_events_async_live_mode_skips_future_events_without_live_state(self) -> None:
+        event = _sample_event(slug="future-game")
+        event["startTime"] = "2099-01-01T00:00:00Z"
+        event["markets"] = [
+            {
+                "question": "Team A vs Team B",
+                "outcomes": '["Team A", "Team B"]',
+                "outcomePrices": '["0.4", "0.6"]',
+                "clobTokenIds": '["token-a", "token-b"]',
+                "active": True,
+                "closed": False,
+                "archived": False,
+                "acceptingOrders": True,
+            }
+        ]
+
+        with (
+            patch.object(polymarket, "_websocket_realtime_enabled", return_value=False),
+            patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={})),
+            patch.object(
+                polymarket,
+                "_load_active_game_events_async",
+                new=AsyncMock(
+                    return_value=(
+                        [event],
+                        {"cache": "miss", "pages_fetched": 1, "retries_used": 0},
+                    )
+                ),
+            ),
+            patch.object(polymarket, "_load_clob_quote_map_async", new=AsyncMock(return_value=({}, {}))),
+        ):
+            events = await polymarket.fetch_events_async(
+                "basketball_nba",
+                ["h2h"],
+                ["us"],
+                bookmakers=["polymarket"],
+                context={"live": True},
+            )
+
+        self.assertEqual(events, [])
 
 
 class PolymarketSportsResultMatchingTests(unittest.TestCase):

@@ -8,6 +8,7 @@ import time
 import tempfile
 import unittest
 from contextlib import ExitStack
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 from unittest.mock import MagicMock, patch
@@ -1098,11 +1099,17 @@ class BrowserScanFlowTests(unittest.TestCase):
             report_path.write_text(json.dumps(provider_report), encoding="utf-8")
 
             def _fake_run_scan(**kwargs):
-                return _sample_scan_result(
+                result = _sample_scan_result(
                     opportunities=[],
                     custom_providers=custom_providers,
                     cross_provider_match_report_path=str(report_path),
                 )
+                result["scan_diagnostics"] = {
+                    **(result.get("scan_diagnostics") or {}),
+                    "positive_arbitrage_count": 2,
+                    "positive_middle_count": 1,
+                }
+                return result
 
             with ExitStack() as stack:
                 stack.enter_context(patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True))
@@ -1139,6 +1146,7 @@ class BrowserScanFlowTests(unittest.TestCase):
                         )
 
                         likely_text = page.locator("#scan-diagnostics-likely").inner_text()
+                        diagnostics_summary_text = page.locator("#scan-diagnostics-summary").inner_text()
                         self.assertTrue(
                             "Likely Matching Issue" in likely_text
                             or "更像赛事匹配问题" in likely_text
@@ -1147,6 +1155,14 @@ class BrowserScanFlowTests(unittest.TestCase):
                             "Same teams, but kickoff window differs" in likely_text
                             or "队名一致，但开赛时间窗口不一致" in likely_text
                         )
+                        self.assertTrue(
+                            "Positive arbitrage: 2" in diagnostics_summary_text
+                            or "正 ROI 套利：2" in diagnostics_summary_text
+                        )
+                        self.assertTrue(
+                            "Positive middle EV: 1" in diagnostics_summary_text
+                            or "正 EV 中间盘：1" in diagnostics_summary_text
+                        )
 
                         browser.close()
                 finally:
@@ -1154,9 +1170,21 @@ class BrowserScanFlowTests(unittest.TestCase):
 
     def test_history_tab_shows_scan_summaries_and_opportunity_log(self) -> None:
         history_manager = MagicMock()
+        now_utc = datetime.now(timezone.utc).replace(microsecond=0)
+        matching_scan_dt = now_utc - timedelta(hours=1)
+        live_scan_dt = now_utc - timedelta(hours=2)
+        older_scan_dt = now_utc - timedelta(days=9)
+        local_tz = datetime.now().astimezone().tzinfo or timezone.utc
+
+        def _iso_z(value: datetime) -> str:
+            return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        def _display_time(value: datetime) -> str:
+            return value.astimezone(local_tz).strftime("%Y-%m-%d %H:%M:%S")
+
         history_manager.load_recent_scan_summaries.return_value = [
             {
-                "scan_time": "2026-03-22T12:00:00Z",
+                "scan_time": _iso_z(matching_scan_dt),
                 "scan_mode": "prematch",
                 "partial": False,
                 "arbitrage_count": 0,
@@ -1204,7 +1232,7 @@ class BrowserScanFlowTests(unittest.TestCase):
                 },
             },
             {
-                "scan_time": "2026-03-22T11:30:00Z",
+                "scan_time": _iso_z(live_scan_dt),
                 "scan_mode": "live",
                 "partial": False,
                 "arbitrage_count": 0,
@@ -1250,7 +1278,7 @@ class BrowserScanFlowTests(unittest.TestCase):
                 },
             },
             {
-                "scan_time": "2026-03-10T09:15:00Z",
+                "scan_time": _iso_z(older_scan_dt),
                 "scan_mode": "prematch",
                 "partial": True,
                 "arbitrage_count": 0,
@@ -1311,9 +1339,9 @@ class BrowserScanFlowTests(unittest.TestCase):
                 "sharp_fair": 1.95,
             }
         ]
-        matching_scan_time = "2026-03-22 20:00:00"
-        live_scan_time = "2026-03-22 19:30:00"
-        older_scan_time = "2026-03-10 17:15:00"
+        matching_scan_time = _display_time(matching_scan_dt)
+        live_scan_time = _display_time(live_scan_dt)
+        older_scan_time = _display_time(older_scan_dt)
 
         with ExitStack() as stack:
             stack.enter_context(patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True))

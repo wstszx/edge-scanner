@@ -1725,7 +1725,9 @@
         scan_diag_merged_events: 'Merged events: {count}',
         scan_diag_overlap_clusters: 'Overlap clusters: {count}',
         scan_diag_arbitrage: 'Arbitrage: {count}',
+        scan_diag_positive_arbitrage: 'Positive arbitrage: {count}',
         scan_diag_middle: 'Middles: {count}',
+        scan_diag_positive_middle: 'Positive middle EV: {count}',
         scan_diag_plus_ev: '+EV: {count}',
         scan_diag_col_provider: 'Provider',
         scan_diag_col_raw: 'Raw Events',
@@ -2692,7 +2694,9 @@
       scan_diag_merged_events: '\u5408\u5e76\u540e\u4e8b\u4ef6\uff1a{count}',
       scan_diag_overlap_clusters: '\u91cd\u53e0\u5339\u914d\u7c07\uff1a{count}',
       scan_diag_arbitrage: '\u5957\u5229\uff1a{count}',
+      scan_diag_positive_arbitrage: '\u6b63 ROI \u5957\u5229\uff1a{count}',
       scan_diag_middle: '\u4e2d\u95f4\u76d8\uff1a{count}',
+      scan_diag_positive_middle: '\u6b63 EV \u4e2d\u95f4\u76d8\uff1a{count}',
       scan_diag_plus_ev: '+EV\uff1a{count}',
       scan_diag_col_provider: '\u5e73\u53f0',
       scan_diag_col_raw: '\u539f\u59cb\u4e8b\u4ef6',
@@ -5213,7 +5217,9 @@
         total_fuzzy_matches: 0,
         total_new_events: providerBreakdown.reduce((sum, item) => sum + Number(item.appended_new || 0), 0),
         arbitrage_count: Number(payload?.arbitrage?.opportunities_count || 0),
+        positive_arbitrage_count: Number(payload?.arbitrage?.summary?.positive_count || 0),
         middle_count: Number(payload?.middles?.opportunities_count || 0),
+        positive_middle_count: Number(payload?.middles?.summary?.positive_count || 0),
         plus_ev_count: Number(payload?.plus_ev?.opportunities_count || 0),
         sport_error_count: Array.isArray(payload?.sport_errors) ? payload.sport_errors.length : 0,
         stale_filter_drop_total: 0,
@@ -5398,7 +5404,9 @@
       const mergedEvents = Number(diagnostics.merged_events_scanned || 0);
       const overlapClusters = Number(diagnostics.overlap_clusters || 0);
       const arbitrageCount = Number(diagnostics.arbitrage_count || 0);
+      const positiveArbitrageCount = Number(diagnostics.positive_arbitrage_count || 0);
       const middleCount = Number(diagnostics.middle_count || 0);
+      const positiveMiddleCount = Number(diagnostics.positive_middle_count || 0);
       const plusEvCount = Number(diagnostics.plus_ev_count || 0);
 
       scanDiagnosticsSummary.innerHTML = `
@@ -5406,7 +5414,9 @@
         <span class="provider-chip">${t('scan_diag_merged_events', { count: mergedEvents })}</span>
         <span class="provider-chip">${t('scan_diag_overlap_clusters', { count: overlapClusters })}</span>
         <span class="provider-chip">${t('scan_diag_arbitrage', { count: arbitrageCount })}</span>
+        <span class="provider-chip">${t('scan_diag_positive_arbitrage', { count: positiveArbitrageCount })}</span>
         <span class="provider-chip">${t('scan_diag_middle', { count: middleCount })}</span>
+        <span class="provider-chip">${t('scan_diag_positive_middle', { count: positiveMiddleCount })}</span>
         <span class="provider-chip">${t('scan_diag_plus_ev', { count: plusEvCount })}</span>
       `;
       renderLikelyScanDiagnosis(diagnostics);

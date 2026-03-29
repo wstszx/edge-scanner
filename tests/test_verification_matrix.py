@@ -58,6 +58,47 @@ class VerificationMatrixTests(unittest.TestCase):
         self.assertEqual(first["middle_count"], 2)
         self.assertEqual(first["plus_ev_count"], 3)
 
+    def test_run_matrix_exposes_positive_only_counts_from_summary(self) -> None:
+        fake_result = {
+            "success": True,
+            "partial": False,
+            "scan_diagnostics": {"reason_code": "ok"},
+            "arbitrage": {
+                "opportunities_count": 3,
+                "opportunities": [
+                    {"event": "A", "market": "totals", "roi_percent": 1.2},
+                    {"event": "B", "market": "h2h", "roi_percent": 0},
+                    {"event": "C", "market": "spreads", "roi_percent": -0.4},
+                ],
+            },
+            "middles": {
+                "opportunities_count": 3,
+                "opportunities": [
+                    {"event": "A", "market": "totals", "ev_percent": 2.5},
+                    {"event": "B", "market": "spreads", "ev_percent": 0},
+                    {"event": "C", "market": "totals", "ev_percent": -1.0},
+                ],
+            },
+            "plus_ev": {"opportunities_count": 1, "opportunities": []},
+            "custom_providers": {"sx_bet": {"enabled": True, "events_merged": 1}},
+        }
+
+        with patch.object(vm, "run_provider_scan", return_value=fake_result):
+            rows = vm.run_matrix(
+                sports=["basketball_nba"],
+                provider_keys=["sx_bet"],
+                scan_modes=["prematch"],
+                regions=["us"],
+                stake_amount=100.0,
+                all_markets=True,
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["arbitrage_count"], 3)
+        self.assertEqual(rows[0]["middle_count"], 3)
+        self.assertEqual(rows[0]["positive_arbitrage_count"], 1)
+        self.assertEqual(rows[0]["positive_middle_count"], 1)
+
     def test_main_prints_json_matrix_rows(self) -> None:
         fake_rows = [{"sport_key": "basketball_nba", "scan_mode": "live", "reason_code": "ok"}]
 

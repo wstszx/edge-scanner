@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import tempfile
@@ -9,6 +10,30 @@ from providers import bookmaker_xyz
 
 
 class BookmakerXyzCacheTests(unittest.TestCase):
+    def test_load_market_manager_snapshot_live_context_requests_only_live_games(self) -> None:
+        captured_states = []
+
+        async def _fake_request(*args, **kwargs):
+            params = kwargs.get("params") or {}
+            captured_states.append(params.get("gameState"))
+            return ({"games": []}, 0)
+
+        async def _run():
+            with patch.object(bookmaker_xyz, "_request_market_manager_json_async", side_effect=_fake_request):
+                await bookmaker_xyz._load_market_manager_snapshot_async(
+                    client=None,
+                    sport_key="soccer_epl",
+                    retries=0,
+                    backoff_seconds=0.0,
+                    timeout=1,
+                    context={"live": True},
+                )
+
+        asyncio.run(_run())
+
+        self.assertTrue(captured_states)
+        self.assertEqual(sorted(set(captured_states)), ["Live"])
+
     def test_normalize_condition_market_accepts_market_manager_full_game_ids(self) -> None:
         dictionaries = {
             "marketNames": {
@@ -85,6 +110,103 @@ class BookmakerXyzCacheTests(unittest.TestCase):
             {'outcomes': [{'outcomeId': '9001', 'odds': '1.91'}, {'outcomeId': '9002', 'odds': '1.91'}]},
             home_team='Home',
             away_team='Away',
+            requested_markets={'totals'},
+            dictionaries=dictionaries,
+        )
+
+        self.assertIsNone(totals_market)
+
+    def test_normalize_condition_market_rejects_segmented_team_total_points_from_totals(self) -> None:
+        dictionaries = {
+            'marketNames': {
+                '4-76-76': 'Total Points',
+            },
+            'outcomes': {
+                '9101': {'selectionId': 9, 'marketId': 4, 'gamePeriodId': 76, 'gameTypeId': 76, 'pointsId': 120, 'teamPlayerId': None},
+                '9102': {'selectionId': 10, 'marketId': 4, 'gamePeriodId': 76, 'gameTypeId': 76, 'pointsId': 120, 'teamPlayerId': None},
+            },
+            'selections': {
+                '9': 'Over',
+                '10': 'Under',
+            },
+            'teamPlayers': {},
+            'points': {'120': '123.5'},
+        }
+
+        totals_market = bookmaker_xyz._normalize_condition_market(
+            {
+                'conditionName': 'Chicago Bulls Team Total O/U 123.5',
+                'outcomes': [
+                    {'outcomeId': '9101', 'odds': '2.24'},
+                    {'outcomeId': '9102', 'odds': '1.58'},
+                ],
+            },
+            home_team='Chicago Bulls',
+            away_team='Memphis Grizzlies',
+            requested_markets={'totals'},
+            dictionaries=dictionaries,
+        )
+
+        self.assertIsNone(totals_market)
+
+    def test_normalize_condition_market_rejects_individual_total_points_from_totals(self) -> None:
+        dictionaries = {
+            'marketNames': {
+                '7-76-76-2': 'Team 2 - Total Points incl. OT',
+            },
+            'outcomes': {
+                '9201': {'selectionId': 15, 'marketId': 7, 'gamePeriodId': 76, 'gameTypeId': 76, 'pointsId': 132, 'teamPlayerId': 2},
+                '9202': {'selectionId': 16, 'marketId': 7, 'gamePeriodId': 76, 'gameTypeId': 76, 'pointsId': 132, 'teamPlayerId': 2},
+            },
+            'selections': {
+                '15': 'Over',
+                '16': 'Under',
+            },
+            'teamPlayers': {'2': 'Team 2'},
+            'points': {'132': '123.5'},
+        }
+
+        totals_market = bookmaker_xyz._normalize_condition_market(
+            {
+                'outcomes': [
+                    {'outcomeId': '9201', 'odds': '2.24'},
+                    {'outcomeId': '9202', 'odds': '1.58'},
+                ],
+            },
+            home_team='Chicago Bulls',
+            away_team='Memphis Grizzlies',
+            requested_markets={'totals'},
+            dictionaries=dictionaries,
+        )
+
+        self.assertIsNone(totals_market)
+
+    def test_normalize_condition_market_rejects_first_half_total_from_full_game_totals(self) -> None:
+        dictionaries = {
+            'marketNames': {
+                '4-50-76': '1st Half: Total',
+            },
+            'outcomes': {
+                '9301': {'selectionId': 9, 'marketId': 4, 'gamePeriodId': 50, 'gameTypeId': 76, 'pointsId': 122, 'teamPlayerId': None},
+                '9302': {'selectionId': 10, 'marketId': 4, 'gamePeriodId': 50, 'gameTypeId': 76, 'pointsId': 122, 'teamPlayerId': None},
+            },
+            'selections': {
+                '9': 'Over',
+                '10': 'Under',
+            },
+            'teamPlayers': {},
+            'points': {'122': '119.5'},
+        }
+
+        totals_market = bookmaker_xyz._normalize_condition_market(
+            {
+                'outcomes': [
+                    {'outcomeId': '9301', 'odds': '1.83'},
+                    {'outcomeId': '9302', 'odds': '1.83'},
+                ],
+            },
+            home_team='Chicago Bulls',
+            away_team='Memphis Grizzlies',
             requested_markets={'totals'},
             dictionaries=dictionaries,
         )

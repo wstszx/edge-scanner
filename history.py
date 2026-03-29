@@ -384,6 +384,10 @@ def _flatten_scan_summary(scan_result: dict, scan_time: str) -> dict:
         else {}
     )
     scan_mode = str(scan_result.get("scan_mode") or "prematch").strip().lower() or "prematch"
+    arbitrage_section = scan_result.get("arbitrage") if isinstance(scan_result.get("arbitrage"), dict) else {}
+    middle_section = scan_result.get("middles") if isinstance(scan_result.get("middles"), dict) else {}
+    arbitrage_summary = arbitrage_section.get("summary") if isinstance(arbitrage_section.get("summary"), dict) else {}
+    middle_summary = middle_section.get("summary") if isinstance(middle_section.get("summary"), dict) else {}
     return {
         "scan_time": scan_time,
         "scan_mode": scan_mode,
@@ -394,7 +398,9 @@ def _flatten_scan_summary(scan_result: dict, scan_time: str) -> dict:
             if "arbitrage" in scan_result
             else scan_result.get("opportunities")
         ),
+        "positive_arbitrage_count": max(0, int(arbitrage_summary.get("positive_count", 0) or 0)),
         "middle_count": _extract_opportunity_count(scan_result.get("middles")),
+        "positive_middle_count": max(0, int(middle_summary.get("positive_count", 0) or 0)),
         "plus_ev_count": _extract_opportunity_count(scan_result.get("plus_ev")),
         "scan_diagnostics": scan_diagnostics,
         "cross_provider_match_report_summary": cross_provider_summary,

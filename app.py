@@ -67,6 +67,7 @@ from scanner import (  # noqa: E402
     SCAN_MODE_PREMATCH,
     run_scan,
 )
+from live_availability import write_live_scan_report  # noqa: E402
 from history import get_history_manager  # noqa: E402
 from notifier import get_notifier  # noqa: E402
 
@@ -1016,6 +1017,12 @@ def _execute_scan_payload(
         )
         if isinstance(result, dict) and "scan_mode" not in result:
             result["scan_mode"] = scan_mode
+        if isinstance(result, dict) and result.get("success") and scan_mode == SCAN_MODE_LIVE:
+            try:
+                report_paths = write_live_scan_report(result)
+                result["live_availability_report"] = report_paths
+            except Exception:
+                logging.warning("Failed to write live availability report", exc_info=True)
         if result.get("success"):
             scan_time = result.get("scan_time", "")
             arbitrage_items = _extract_opportunity_list(result.get("arbitrage"))
