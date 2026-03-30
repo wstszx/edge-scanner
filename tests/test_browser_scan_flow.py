@@ -1128,8 +1128,11 @@ class BrowserScanFlowTests(unittest.TestCase):
                 )
                 result["scan_diagnostics"] = {
                     **(result.get("scan_diagnostics") or {}),
-                    "positive_arbitrage_count": 2,
-                    "positive_middle_count": 1,
+                    "reason_code": "low_merge_overlap",
+                    "arbitrage_count": 2,
+                    "positive_arbitrage_count": 0,
+                    "middle_count": 1,
+                    "positive_middle_count": 0,
                 }
                 return result
 
@@ -1178,8 +1181,186 @@ class BrowserScanFlowTests(unittest.TestCase):
                             or "队名一致，但开赛时间窗口不一致" in likely_text
                         )
                         self.assertTrue(
-                            "Positive arbitrage: 2" in diagnostics_summary_text
-                            or "正 ROI 套利：2" in diagnostics_summary_text
+                            "Arbitrage: 2" in diagnostics_summary_text
+                            or "套利：2" in diagnostics_summary_text
+                        )
+                        self.assertTrue(
+                            "Middles: 1" in diagnostics_summary_text
+                            or "中间盘：1" in diagnostics_summary_text
+                        )
+
+                        browser.close()
+                finally:
+                    server.stop()
+
+    def test_scan_diagnostics_surfaces_positive_middle_result(self) -> None:
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+        provider_report = {
+            "saved_at": "2026-03-14T09:15:00Z",
+            "summary": {
+                "providers_considered": ["sx_bet", "betdex"],
+                "provider_event_counts": {
+                    "sx_bet": 2,
+                    "betdex": 2,
+                },
+                "total_raw_records": 4,
+                "total_match_clusters": 2,
+                "overlap_clusters": 1,
+                "clusters_by_provider_count": {"2": 1, "1": 1},
+                "provider_cluster_presence": {
+                    "sx_bet": 2,
+                    "betdex": 2,
+                },
+                "pair_overlap_clusters": {"betdex|sx_bet": 1},
+                "single_provider_cluster_counts": {
+                    "sx_bet": 1,
+                    "betdex": 0,
+                },
+                "single_provider_reason_counts": {},
+                "tolerance_minutes": 180,
+                "event_match_tolerance_minutes": 15,
+                "event_match_fuzzy_threshold": 0.72,
+            },
+            "clusters": [],
+            "single_provider_samples": [],
+        }
+        custom_providers = {
+            "sx_bet": {
+                "key": "sx_bet",
+                "name": "SX Bet",
+                "enabled": True,
+                "events_merged": 2,
+                "sports": [{"sport_key": "icehockey_nhl", "events_returned": 2}],
+            },
+            "betdex": {
+                "key": "betdex",
+                "name": "BetDEX",
+                "enabled": True,
+                "events_merged": 2,
+                "sports": [{"sport_key": "icehockey_nhl", "events_returned": 2}],
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "cross_provider_match_report.json"
+            report_path.write_text(json.dumps(provider_report), encoding="utf-8")
+
+            def _fake_run_scan(**kwargs):
+                result = _sample_scan_result(
+                    opportunities=[],
+                    custom_providers=custom_providers,
+                    cross_provider_match_report_path=str(report_path),
+                )
+                result["middles"] = {
+                    "opportunities": [
+                        {
+                            "event": "New Jersey Devils vs New York Rangers",
+                            "sport": "Ice Hockey",
+                            "market": "totals",
+                            "total_line_a": 5.5,
+                            "total_line_b": 6.5,
+                            "expected_value": 0.8,
+                        }
+                    ],
+                    "opportunities_count": 1,
+                    "summary": {"count": 1, "positive_count": 1},
+                }
+                result["scan_diagnostics"] = {
+                    "reason_code": "positive_middle_found",
+                    "enabled_provider_count": 2,
+                    "providers_with_events": 2,
+                    "providers_with_errors": 0,
+                    "providers_with_match_hits": 2,
+                    "raw_provider_events": 4,
+                    "merged_events_scanned": 2,
+                    "total_match_clusters": 2,
+                    "overlap_clusters": 1,
+                    "single_provider_clusters": 1,
+                    "total_merge_hits": 2,
+                    "total_fuzzy_matches": 0,
+                    "total_new_events": 2,
+                    "arbitrage_count": 0,
+                    "positive_arbitrage_count": 0,
+                    "middle_count": 1,
+                    "positive_middle_count": 1,
+                    "plus_ev_count": 0,
+                    "sport_error_count": 0,
+                    "stale_filter_drop_total": 0,
+                    "provider_breakdown": [
+                        {
+                            "provider_key": "sx_bet",
+                            "provider_name": "SX Bet",
+                            "enabled": True,
+                            "raw_events": 2,
+                            "matched_existing": 1,
+                            "matched_fuzzy": 0,
+                            "appended_new": 1,
+                            "error_count": 0,
+                        },
+                        {
+                            "provider_key": "betdex",
+                            "provider_name": "BetDEX",
+                            "enabled": True,
+                            "raw_events": 2,
+                            "matched_existing": 1,
+                            "matched_fuzzy": 0,
+                            "appended_new": 1,
+                            "error_count": 0,
+                        },
+                    ],
+                }
+                return result
+
+            with ExitStack() as stack:
+                stack.enter_context(patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True))
+                stack.enter_context(patch.object(app_module, "_start_background_provider_services"))
+                stack.enter_context(patch.object(app_module, "get_history_manager", return_value=history_manager))
+                stack.enter_context(patch.object(app_module, "get_notifier", return_value=notifier))
+                stack.enter_context(patch.object(app_module, "_cross_provider_report_path", return_value=report_path))
+                stack.enter_context(patch.object(app_module, "run_scan", side_effect=_fake_run_scan))
+
+                server = _LiveServer(app_module.app)
+                server.start()
+                try:
+                    with sync_playwright() as playwright:
+                        browser = playwright.chromium.launch(headless=True)
+                        context = browser.new_context()
+                        page = context.new_page()
+                        page.route("https://fonts.googleapis.com/*", lambda route: route.abort())
+                        page.route("https://fonts.gstatic.com/*", lambda route: route.abort())
+                        page.goto(server.base_url, wait_until="domcontentloaded")
+
+                        self._configure_selected_provider(page)
+
+                        with page.expect_response(
+                            lambda response: response.url.endswith("/scan")
+                            and response.request.method == "POST"
+                        ):
+                            page.evaluate("document.getElementById('scan-form').requestSubmit()")
+
+                        page.click('button[data-tab="providers"]')
+                        page.wait_for_selector("#provider-match-content")
+                        self._wait_for(
+                            lambda: "Positive Middle Confirmed" in page.locator("#scan-diagnostics-likely").inner_text()
+                            or "已确认存在正 EV 中间盘" in page.locator("#scan-diagnostics-likely").inner_text()
+                        )
+
+                        likely_text = page.locator("#scan-diagnostics-likely").inner_text()
+                        message_text = page.locator("#scan-diagnostics-message").inner_text()
+                        diagnostics_summary_text = page.locator("#scan-diagnostics-summary").inner_text()
+                        self.assertTrue(
+                            "Positive Middle Confirmed" in likely_text
+                            or "已确认存在正 EV 中间盘" in likely_text
+                        )
+                        self.assertTrue(
+                            "positive-EV middle was produced" in likely_text
+                            or "至少一个正 EV 中间盘机会" in likely_text
+                        )
+                        self.assertTrue(
+                            "positive-EV middle opportunities were found" in message_text
+                            or "已经找到了正 EV 中间盘机会" in message_text
                         )
                         self.assertTrue(
                             "Positive middle EV: 1" in diagnostics_summary_text
@@ -1265,7 +1446,7 @@ class BrowserScanFlowTests(unittest.TestCase):
                 "positive_middle_count": 1,
                 "plus_ev_count": 0,
                 "scan_diagnostics": {
-                    "reason_code": "matched_but_no_arbitrage",
+                    "reason_code": "arbitrage_found",
                     "enabled_provider_count": 2,
                     "providers_with_events": 2,
                     "raw_provider_events": 6,

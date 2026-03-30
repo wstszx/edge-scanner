@@ -1512,6 +1512,128 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertIn("event_match_tolerance_minutes", summary)
         self.assertIn("event_match_fuzzy_threshold", summary)
 
+    def test_build_scan_diagnostics_requires_positive_arb_for_arbitrage_found(self) -> None:
+        diagnostics = scanner._build_scan_diagnostics(
+            provider_summaries={
+                "sx_bet": {
+                    "name": "SX Bet",
+                    "enabled": True,
+                    "events_merged": 2,
+                    "sports": [
+                        {
+                            "events_returned": 2,
+                            "merge_stats": {
+                                "matched_existing": 1,
+                                "matched_identity": 1,
+                                "matched_team": 0,
+                                "matched_reverse_team": 0,
+                                "matched_fuzzy": 0,
+                                "appended_new": 1,
+                            },
+                        }
+                    ],
+                },
+                "betdex": {
+                    "name": "BetDEX",
+                    "enabled": True,
+                    "events_merged": 2,
+                    "sports": [
+                        {
+                            "events_returned": 2,
+                            "merge_stats": {
+                                "matched_existing": 1,
+                                "matched_identity": 1,
+                                "matched_team": 0,
+                                "matched_reverse_team": 0,
+                                "matched_fuzzy": 0,
+                                "appended_new": 1,
+                            },
+                        }
+                    ],
+                },
+            },
+            cross_provider_report={
+                "summary": {
+                    "total_raw_records": 4,
+                    "total_match_clusters": 2,
+                    "overlap_clusters": 1,
+                }
+            },
+            events_scanned=2,
+            arbitrage_count=3,
+            positive_arbitrage_count=0,
+            middle_count=0,
+            positive_middle_count=0,
+            plus_ev_count=0,
+            sport_errors=[],
+            stale_event_filters=[],
+        )
+
+        self.assertEqual(diagnostics.get("arbitrage_count"), 3)
+        self.assertEqual(diagnostics.get("positive_arbitrage_count"), 0)
+        self.assertEqual(diagnostics.get("reason_code"), "matched_but_no_arbitrage")
+
+    def test_build_scan_diagnostics_surfaces_positive_middle_without_positive_arb(self) -> None:
+        diagnostics = scanner._build_scan_diagnostics(
+            provider_summaries={
+                "sx_bet": {
+                    "name": "SX Bet",
+                    "enabled": True,
+                    "events_merged": 2,
+                    "sports": [
+                        {
+                            "events_returned": 2,
+                            "merge_stats": {
+                                "matched_existing": 1,
+                                "matched_identity": 1,
+                                "matched_team": 0,
+                                "matched_reverse_team": 0,
+                                "matched_fuzzy": 0,
+                                "appended_new": 1,
+                            },
+                        }
+                    ],
+                },
+                "betdex": {
+                    "name": "BetDEX",
+                    "enabled": True,
+                    "events_merged": 2,
+                    "sports": [
+                        {
+                            "events_returned": 2,
+                            "merge_stats": {
+                                "matched_existing": 1,
+                                "matched_identity": 1,
+                                "matched_team": 0,
+                                "matched_reverse_team": 0,
+                                "matched_fuzzy": 0,
+                                "appended_new": 1,
+                            },
+                        }
+                    ],
+                },
+            },
+            cross_provider_report={
+                "summary": {
+                    "total_raw_records": 4,
+                    "total_match_clusters": 2,
+                    "overlap_clusters": 1,
+                }
+            },
+            events_scanned=2,
+            arbitrage_count=4,
+            positive_arbitrage_count=0,
+            middle_count=5,
+            positive_middle_count=2,
+            plus_ev_count=0,
+            sport_errors=[],
+            stale_event_filters=[],
+        )
+
+        self.assertEqual(diagnostics.get("positive_arbitrage_count"), 0)
+        self.assertEqual(diagnostics.get("positive_middle_count"), 2)
+        self.assertEqual(diagnostics.get("reason_code"), "positive_middle_found")
+
     def test_merge_events_merges_markets_for_same_bookmaker(self) -> None:
         base_events = [
             {

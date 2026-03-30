@@ -1705,6 +1705,8 @@
         scan_diag_likely_fetch_body: 'Check provider errors, source coverage, and time filters before trusting a "no arbitrage" result.',
         scan_diag_likely_matching_title: 'Likely Matching Issue',
         scan_diag_likely_matching_body: 'Providers returned events, but shared games were not built cleanly. Check kickoff tolerance, team aliases, and market standardization.',
+        scan_diag_likely_middle_title: 'Positive Middle Confirmed',
+        scan_diag_likely_middle_body: 'The matching pipeline is working and at least one positive-EV middle was produced, even though no positive arbitrage was available.',
         scan_diag_likely_no_arb_title: 'Likely No Arbitrage Right Now',
         scan_diag_likely_no_arb_body: 'Shared games were built and the arbitrage engine ran, but current prices did not produce a tradable edge.',
         scan_diag_likely_mixed_title: 'Scan Is Inconclusive',
@@ -1738,6 +1740,7 @@
         scan_diag_no_providers: 'No provider diagnostics were produced for this scan.',
         scan_diag_open_providers: 'Open the Providers tab for raw snapshots and overlap samples.',
         scan_diag_reason_arbitrage_found: 'Matching worked and arbitrage opportunities were found.',
+        scan_diag_reason_positive_middle_found: 'Matching worked and positive-EV middle opportunities were found, even though no positive arbitrage was available.',
         scan_diag_reason_fetch_errors: 'The scan hit upstream fetch errors before enough event data was collected.',
         scan_diag_reason_no_source_events: 'Custom providers returned no events for this scan.',
         scan_diag_reason_events_filtered_by_time: 'Events were fetched, but the current prematch/live time rules filtered them out.',
@@ -2674,6 +2677,8 @@
       scan_diag_likely_fetch_body: '\u5728\u628a\u201c\u6ca1\u6709\u5957\u5229\u201d\u5f53\u6210\u53ef\u4fe1\u7ed3\u8bba\u4e4b\u524d\uff0c\u5148\u68c0\u67e5 provider \u62a5\u9519\u3001\u6570\u636e\u8986\u76d6\u548c\u65f6\u95f4\u8fc7\u6ee4\u6761\u4ef6\u3002',
       scan_diag_likely_matching_title: '\u66f4\u50cf\u8d5b\u4e8b\u5339\u914d\u95ee\u9898',
       scan_diag_likely_matching_body: '\u5404\u5e73\u53f0\u5df2\u7ecf\u8fd4\u56de\u4e86\u8d5b\u4e8b\uff0c\u4f46\u5171\u4eab\u6bd4\u8d5b\u6784\u5efa\u4e0d\u591f\u987a\u7545\u3002\u4f18\u5148\u68c0\u67e5\u5f00\u8d5b\u65f6\u95f4\u5bb9\u5dee\u3001\u961f\u540d\u522b\u540d\u5f52\u4e00\u5316\u548c\u76d8\u53e3\u6807\u51c6\u5316\u3002',
+      scan_diag_likely_middle_title: '\u5df2\u786e\u8ba4\u5b58\u5728\u6b63 EV \u4e2d\u95f4\u76d8',
+      scan_diag_likely_middle_body: '\u8fd9\u6b21\u626b\u63cf\u7684\u5339\u914d\u94fe\u8def\u5de5\u4f5c\u6b63\u5e38\uff0c\u867d\u7136\u6ca1\u6709\u6b63 ROI \u5957\u5229\uff0c\u4f46\u5df2\u7ecf\u4ea7\u751f\u4e86\u81f3\u5c11\u4e00\u4e2a\u6b63 EV \u4e2d\u95f4\u76d8\u673a\u4f1a\u3002',
       scan_diag_likely_no_arb_title: '\u66f4\u50cf\u5f53\u524d\u786e\u5b9e\u6ca1\u6709\u5957\u5229',
       scan_diag_likely_no_arb_body: '\u5171\u4eab\u6bd4\u8d5b\u5df2\u7ecf\u6784\u5efa\u51fa\u6765\uff0c\u5957\u5229\u8ba1\u7b97\u4e5f\u5df2\u8dd1\u5b8c\uff0c\u53ea\u662f\u5f53\u524d\u4ef7\u683c\u6ca1\u6709\u5f62\u6210\u53ef\u4e0b\u624b\u7684\u7a7a\u95f4\u3002',
       scan_diag_likely_mixed_title: '\u672c\u6b21\u626b\u63cf\u7ed3\u8bba\u6682\u4e0d\u53ef\u9760',
@@ -2707,6 +2712,7 @@
       scan_diag_no_providers: '\u8fd9\u6b21\u626b\u63cf\u6ca1\u6709\u751f\u6210 provider \u8bca\u65ad\u660e\u7ec6\u3002',
       scan_diag_open_providers: '\u53ef\u4ee5\u5230 Providers \u9875\u7b7e\u67e5\u770b\u539f\u59cb\u5feb\u7167\u548c\u5339\u914d\u6837\u672c\u3002',
       scan_diag_reason_arbitrage_found: '\u5339\u914d\u6d41\u7a0b\u5de5\u4f5c\u6b63\u5e38\uff0c\u800c\u4e14\u5df2\u7ecf\u627e\u5230\u5957\u5229\u673a\u4f1a\u3002',
+      scan_diag_reason_positive_middle_found: '\u5339\u914d\u6d41\u7a0b\u5de5\u4f5c\u6b63\u5e38\uff0c\u867d\u7136\u8fd8\u6ca1\u6709\u6b63 ROI \u5957\u5229\uff0c\u4f46\u5df2\u7ecf\u627e\u5230\u4e86\u6b63 EV \u4e2d\u95f4\u76d8\u673a\u4f1a\u3002',
       scan_diag_reason_fetch_errors: '\u5728\u6536\u96c6\u5230\u8db3\u591f\u4e8b\u4ef6\u4e4b\u524d\uff0c\u4e0a\u6e38\u6570\u636e\u6293\u53d6\u5df2\u7ecf\u51fa\u9519\u3002',
       scan_diag_reason_no_source_events: '\u8fd9\u6b21\u626b\u63cf\u4e2d\uff0c\u81ea\u5b9a\u4e49 provider \u6ca1\u6709\u8fd4\u56de\u4efb\u4f55\u4e8b\u4ef6\u3002',
       scan_diag_reason_events_filtered_by_time: '\u5df2\u7ecf\u6293\u5230\u4e8b\u4ef6\uff0c\u4f46\u88ab\u5f53\u524d\u8d5b\u524d/\u8d5b\u4e2d\u65f6\u95f4\u89c4\u5219\u8fc7\u6ee4\u6389\u4e86\u3002',
@@ -5178,10 +5184,26 @@
         });
     }
 
+    function inferScanDiagnosticsReasonCode(diagnostics = {}, payload = lastScanData) {
+      const positiveArbitrageCount = Number(
+        diagnostics?.positive_arbitrage_count ?? payload?.arbitrage?.summary?.positive_count ?? 0
+      );
+      const positiveMiddleCount = Number(
+        diagnostics?.positive_middle_count ?? payload?.middles?.summary?.positive_count ?? 0
+      );
+      if (positiveArbitrageCount > 0) return 'arbitrage_found';
+      if (positiveMiddleCount > 0) return 'positive_middle_found';
+      return 'no_arbitrage_after_merge';
+    }
+
     function getScanDiagnostics(payload = lastScanData) {
       if (!payload || typeof payload !== 'object') return null;
       if (payload.scan_diagnostics && typeof payload.scan_diagnostics === 'object') {
-        return payload.scan_diagnostics;
+        const diagnostics = { ...payload.scan_diagnostics };
+        if (!String(diagnostics.reason_code || '').trim()) {
+          diagnostics.reason_code = inferScanDiagnosticsReasonCode(diagnostics, payload);
+        }
+        return diagnostics;
       }
       const summaries = getProviderSummaries(payload);
       const providerBreakdown = summaries.map((summary) => {
@@ -5202,9 +5224,7 @@
         };
       });
       return {
-        reason_code: Number(payload?.arbitrage?.opportunities_count || 0) > 0
-          ? 'arbitrage_found'
-          : 'no_arbitrage_after_merge',
+        reason_code: inferScanDiagnosticsReasonCode({}, payload),
         enabled_provider_count: summaries.filter((item) => item?.enabled).length,
         providers_with_events: providerBreakdown.filter((item) => Number(item.raw_events || 0) > 0).length,
         providers_with_errors: providerBreakdown.filter((item) => Number(item.error_count || 0) > 0).length,
@@ -5261,6 +5281,8 @@
         : Number(diagnostics?.overlap_clusters || 0);
       const mergeHits = Number(diagnostics?.total_merge_hits || 0);
       const mergedEventsScanned = Number(diagnostics?.merged_events_scanned || 0);
+      const positiveArbitrageCount = Number(diagnostics?.positive_arbitrage_count || 0);
+      const positiveMiddleCount = Number(diagnostics?.positive_middle_count || 0);
       const sportErrorCount = Number(diagnostics?.sport_error_count || 0);
       const staleFiltered = Number(diagnostics?.stale_filter_drop_total || 0);
       const providersWithEvents = Number(diagnostics?.providers_with_events || 0);
@@ -5281,8 +5303,10 @@
       ]);
 
       let kind = 'unknown';
-      if (reasonCode === 'arbitrage_found') {
+      if (positiveArbitrageCount > 0 || reasonCode === 'arbitrage_found') {
         kind = 'found';
+      } else if (positiveMiddleCount > 0 || reasonCode === 'positive_middle_found') {
+        kind = 'middle';
       } else if (['fetch_errors', 'no_source_events', 'events_filtered_by_time'].includes(reasonCode)) {
         kind = 'fetch';
       } else if (reasonCode === 'partial_errors') {
@@ -5325,6 +5349,9 @@
       if (mergeHits > 0) {
         evidence.push(t('scan_diag_likely_evidence_merge_hits', { count: mergeHits }));
       }
+      if (positiveMiddleCount > 0) {
+        evidence.push(t('scan_diag_positive_middle', { count: positiveMiddleCount }));
+      }
       if (sportErrorCount > 0) {
         evidence.push(t('scan_diag_likely_evidence_errors', { count: sportErrorCount }));
       }
@@ -5358,7 +5385,7 @@
       }
 
       const likely = likelyScanDiagnosis(diagnostics);
-      const toneClass = likely.kind === 'found'
+      const toneClass = likely.kind === 'found' || likely.kind === 'middle'
         ? 'is-ready'
         : (likely.kind === 'fetch' ? 'is-error' : (likely.kind === 'matching' || likely.kind === 'mixed' ? 'is-warning' : ''));
       const evidenceHtml = likely.evidence.length
@@ -10185,14 +10212,14 @@
       }
 
       function historyLikelyToneClass(kind) {
-        if (kind === 'found') return 'is-ready';
+        if (kind === 'found' || kind === 'middle') return 'is-ready';
         if (kind === 'fetch') return 'is-error';
         if (kind === 'matching' || kind === 'mixed') return 'is-warning';
         return '';
       }
 
       function historyLikelyFilterKinds() {
-        return ['fetch', 'matching', 'no_arb', 'mixed', 'found', 'unknown'];
+        return ['fetch', 'matching', 'middle', 'no_arb', 'mixed', 'found', 'unknown'];
       }
 
       function historyLikelyLabel(kind) {

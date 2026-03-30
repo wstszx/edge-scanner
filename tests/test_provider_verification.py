@@ -234,11 +234,13 @@ class ProviderVerificationTests(unittest.TestCase):
             'scan': {
                 'success': True,
                 'partial': False,
-                'arbitrage_count': 0,
-                'middle_count': 0,
+                'arbitrage_count': 6,
+                'positive_arbitrage_count': 0,
+                'middle_count': 34,
+                'positive_middle_count': 8,
                 'plus_ev_count': 0,
                 'scan_diagnostics': {
-                    'reason_code': 'events_filtered_by_time',
+                    'reason_code': 'positive_middle_found',
                     'raw_provider_events': 64,
                     'merged_events_scanned': 0,
                 },
@@ -251,8 +253,12 @@ class ProviderVerificationTests(unittest.TestCase):
 
         markdown = pv.report_to_markdown(report)
 
+        self.assertIn('## Scan Summary', markdown)
+        self.assertIn('- positive_arbitrage_count: 0', markdown)
+        self.assertIn('- positive_middle_count: 8', markdown)
+        self.assertIn('- reason_code: positive_middle_found', markdown)
         self.assertIn('## Scan Diagnostics', markdown)
-        self.assertIn('- reason_code: events_filtered_by_time', markdown)
+        self.assertIn('- reason_code: positive_middle_found', markdown)
         self.assertIn('- raw_provider_events: 64', markdown)
         self.assertIn('- merged_events_scanned: 0', markdown)
 
@@ -276,9 +282,14 @@ class ProviderVerificationTests(unittest.TestCase):
             "scan": {
                 "success": True,
                 "partial": True,
-                "arbitrage_count": 1,
-                "middle_count": 1,
+                "arbitrage_count": 6,
+                "positive_arbitrage_count": 0,
+                "middle_count": 34,
+                "positive_middle_count": 8,
                 "plus_ev_count": 0,
+                "scan_diagnostics": {
+                    "reason_code": "positive_middle_found",
+                },
                 "sport_errors": [{"sport_key": "basketball_nba", "error": "SX Bet: upstream 521"}],
                 "top_arbitrage": [
                     {
@@ -307,6 +318,9 @@ class ProviderVerificationTests(unittest.TestCase):
 
         self.assertIn("provider alerts:", summary)
         self.assertIn("SX Bet [error]", summary)
+        self.assertIn("reason_code=positive_middle_found", summary)
+        self.assertIn("arbitrage=6 (positive=0)", summary)
+        self.assertIn("middles=34 (positive=8)", summary)
         self.assertIn("arbitrage suspect", summary)
         self.assertIn("middle negative EV", summary)
         self.assertIn("latest_json=data/x.json", summary)

@@ -442,6 +442,7 @@ def _markdown_top_items(
 def report_to_markdown(report: dict[str, Any]) -> str:
     tests = report.get("tests") or {}
     scan = report.get("scan") or {}
+    scan_diagnostics = scan.get("scan_diagnostics") or {}
     lines = [
         "# Provider Verification Report",
         "",
@@ -468,15 +469,17 @@ def report_to_markdown(report: dict[str, Any]) -> str:
             f"- success: {scan.get('success')}",
             f"- partial: {scan.get('partial')}",
             f"- arbitrage_count: {scan.get('arbitrage_count')}",
+            f"- positive_arbitrage_count: {scan.get('positive_arbitrage_count', 0)}",
             f"- middle_count: {scan.get('middle_count')}",
+            f"- positive_middle_count: {scan.get('positive_middle_count', 0)}",
             f"- plus_ev_count: {scan.get('plus_ev_count')}",
+            f"- reason_code: {scan_diagnostics.get('reason_code')}",
             "",
         ]
     )
     lines.extend(_markdown_top_items("Top Arbitrage", scan.get("top_arbitrage") or [], "roi_percent"))
     lines.extend(_markdown_top_items("Top Middles", scan.get("top_middles") or [], "ev_percent"))
     lines.extend(_markdown_top_items("Top Plus EV", scan.get("top_plus_ev") or [], "edge_percent"))
-    scan_diagnostics = scan.get("scan_diagnostics") or {}
     lines.append("## Scan Diagnostics")
     lines.append("")
     if not isinstance(scan_diagnostics, dict) or not scan_diagnostics:
@@ -569,15 +572,22 @@ def collect_result_alerts(
 
 def build_console_summary(report: dict[str, Any], written: Optional[dict[str, str]] = None) -> str:
     scan = report.get("scan") or {}
+    scan_diagnostics = scan.get("scan_diagnostics") or {}
+    reason_code = _compact_text(scan_diagnostics.get("reason_code"))
     lines = [
         "Provider Verification Summary",
         f"sport={report.get('sport_key')} regions={','.join(report.get('regions') or [])} "
         f"success={scan.get('success')} partial={scan.get('partial')}",
         (
             f"counts: arbitrage={scan.get('arbitrage_count')} "
-            f"middles={scan.get('middle_count')} plus_ev={scan.get('plus_ev_count')}"
+            f"(positive={scan.get('positive_arbitrage_count', 0)}) "
+            f"middles={scan.get('middle_count')} "
+            f"(positive={scan.get('positive_middle_count', 0)}) "
+            f"plus_ev={scan.get('plus_ev_count')}"
         ),
     ]
+    if reason_code:
+        lines.append(f"reason_code={reason_code}")
     provider_alerts = collect_provider_alerts(report)
     result_alerts = collect_result_alerts(report)
     if provider_alerts:

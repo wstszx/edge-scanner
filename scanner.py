@@ -2327,8 +2327,10 @@ def _build_scan_diagnostics(
     )
     stale_filter_drop_total = _sum_stale_filter_counts(stale_event_filters)
     sport_error_count = len([item for item in sport_errors or [] if isinstance(item, dict)])
-    if arbitrage_count > 0:
+    if positive_arbitrage_count > 0:
         reason_code = "arbitrage_found"
+    elif positive_middle_count > 0:
+        reason_code = "positive_middle_found"
     elif sport_error_count and events_scanned == 0 and total_raw_records == 0:
         reason_code = "fetch_errors"
     elif total_raw_records == 0 and enabled_provider_count > 0:
