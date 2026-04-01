@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import datetime as dt
 import inspect
 import os
 import tempfile
@@ -15,6 +16,33 @@ class ScannerRegressionTests(unittest.TestCase):
         scanner._set_current_request_logger(None)
         with scanner._REQUEST_TRACE_LOCK:
             scanner._REQUEST_TRACE_ACTIVE.clear()
+
+    def _make_provider_event(self, event_id: str, commence_ts: int, live_state=None) -> dict:
+        event = {
+            "id": event_id,
+            "sport_key": "basketball_nba",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "commence_time": dt.datetime.fromtimestamp(commence_ts, dt.timezone.utc).isoformat(),
+            "bookmakers": [
+                {
+                    "key": "sx_bet",
+                    "title": "SX Bet",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.0},
+                                {"name": "Away Team", "price": 1.9},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+        if live_state is not None:
+            event["live_state"] = live_state
+        return event
 
     def test_normalize_bookmakers_filters_non_supported_soft_books(self) -> None:
         self.assertEqual(
@@ -459,6 +487,184 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertEqual(len(sx_events[0]["bookmakers"]), 1)
         self.assertEqual(bookmaker_events[0]["bookmakers"][0]["key"], "bookmaker_xyz")
         self.assertEqual(sx_events[0]["bookmakers"][0]["key"], "sx_bet")
+
+    def test_scan_single_sport_live_filter_stats_exposed(self) -> None:
+        base_epoch = 1700000000
+
+        async def _fetcher(sport_key, markets, regions, bookmakers=None):
+            return [
+                self._make_provider_event("live-event", base_epoch + 120, {"status": "live"}),
+                self._make_provider_event("scheduled-event", base_epoch + 60, {"status": "scheduled"}),
+                self._make_provider_event("past-event", base_epoch - 3600),
+            ]
+
+        _fetcher.last_stats = {}
+
+        with (
+            patch.dict(scanner.PROVIDER_FETCHERS, {"sx_bet": _fetcher}),
+            patch.dict(scanner.PROVIDER_TITLES, {"sx_bet": "SX Bet"}),
+            patch.object(scanner.time, "time", return_value=base_epoch),
+            patch.object(scanner, "EVENT_MAX_PAST_MINUTES_RAW", "30"),
+            patch.object(scanner, "LIVE_EVENT_MAX_FUTURE_SECONDS_RAW", "600"),
+        ):
+            result = asyncio.run(
+                scanner._scan_single_sport(
+                    sport={"key": "basketball_nba", "title": "NBA"},
+                    scan_mode="live",
+                    all_markets=False,
+                    should_fetch_api=False,
+                    api_pool=scanner.ApiKeyPool([]),
+                    normalized_regions=["us"],
+                    api_bookmakers=[],
+                    provider_target_sport_keys=["basketball_nba"],
+                    enabled_provider_keys=["sx_bet"],
+                    normalized_bookmakers=["sx_bet"],
+                    stake_amount=100.0,
+                    commission_rate=0.0,
+                    sharp_priority=scanner._sharp_priority("pinnacle"),
+                    min_edge_percent=0.0,
+                    bankroll=1000.0,
+                    kelly_fraction=0.25,
+                )
+            )
+
+        provider_updates = result.get("provider_updates") or {}
+        self.assertIn("sx_bet", provider_updates)
+        provider_sports = provider_updates["sx_bet"].get("sports") or []
+        self.assertTrue(provider_sports)
+        sport_row = provider_sports[0]
+        self.assertEqual(sport_row.get("events_fetched_raw"), 3)
+        self.assertEqual(sport_row.get("events_returned"), sport_row.get("events_fetched_raw"))
+        self.assertEqual(sport_row.get("events_after_live_filter"), 1)
+        snapshot_updates = result.get("provider_snapshot_updates") or {}
+        self.assertEqual(
+            sport_row.get("live_filter_stats"),
+            {
+                "dropped_not_live_state": 1,
+                "dropped_terminal_state": 0,
+                "dropped_past": 1,
+                "dropped_future": 0,
+                "dropped_missing_time": 0,
+                "suspicious_explicit_live_future": 0,
+            },
+        )
+        self.assertEqual(
+            len(snapshot_updates.get("sx_bet", {}).get("events", [])),
+            sport_row.get("events_fetched_raw"),
+        )
+
+    def test_scan_single_sport_live_filter_stats_retry_recaptured(self) -> None:
+        base_epoch = 1700000000
+        calls = {"count": 0}
+        retry_events = [
+            self._make_provider_event("live-event", base_epoch + 120, {"status": "live"}),
+            self._make_provider_event("scheduled-event", base_epoch + 60, {"status": "scheduled"}),
+        ]
+
+        async def _fetcher(sport_key, markets, regions, bookmakers=None):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("timed out")
+            return retry_events
+
+        _fetcher.last_stats = {}
+
+        with (
+            patch.dict(scanner.PROVIDER_FETCHERS, {"sx_bet": _fetcher}),
+            patch.dict(scanner.PROVIDER_TITLES, {"sx_bet": "SX Bet"}),
+            patch.object(scanner.time, "time", return_value=base_epoch),
+            patch.object(scanner, "EVENT_MAX_PAST_MINUTES_RAW", "30"),
+            patch.object(scanner, "LIVE_EVENT_MAX_FUTURE_SECONDS_RAW", "600"),
+            patch.object(scanner, "_provider_network_retry_delay_seconds", return_value=0.0),
+        ):
+            result = asyncio.run(
+                scanner._scan_single_sport(
+                    sport={"key": "basketball_nba", "title": "NBA"},
+                    scan_mode="live",
+                    all_markets=False,
+                    should_fetch_api=False,
+                    api_pool=scanner.ApiKeyPool([]),
+                    normalized_regions=["us"],
+                    api_bookmakers=[],
+                    provider_target_sport_keys=["basketball_nba"],
+                    enabled_provider_keys=["sx_bet"],
+                    normalized_bookmakers=["sx_bet"],
+                    stake_amount=100.0,
+                    commission_rate=0.0,
+                    sharp_priority=scanner._sharp_priority("pinnacle"),
+                    min_edge_percent=0.0,
+                    bankroll=1000.0,
+                    kelly_fraction=0.25,
+                )
+            )
+
+        provider_updates = result.get("provider_updates") or {}
+        self.assertIn("sx_bet", provider_updates)
+        provider_sports = provider_updates["sx_bet"].get("sports") or []
+        self.assertTrue(provider_sports)
+        sport_row = provider_sports[0]
+        self.assertEqual(sport_row.get("events_fetched_raw"), 2)
+        self.assertEqual(sport_row.get("events_after_live_filter"), 1)
+        self.assertEqual(provider_updates["sx_bet"].get("events_merged"), 1)
+        self.assertEqual(
+            sport_row.get("live_filter_stats"),
+            {
+                "dropped_not_live_state": 1,
+                "dropped_terminal_state": 0,
+                "dropped_past": 0,
+                "dropped_future": 0,
+                "dropped_missing_time": 0,
+                "suspicious_explicit_live_future": 0,
+            },
+        )
+        snapshot_updates = result.get("provider_snapshot_updates") or {}
+        self.assertEqual(
+            len(snapshot_updates.get("sx_bet", {}).get("events", [])),
+            len(retry_events),
+        )
+        self.assertEqual(sport_row.get("events_returned"), sport_row.get("events_fetched_raw"))
+    def test_scan_single_sport_prematch_rows_skip_live_funnel_fields(self) -> None:
+        base_epoch = 1700000000
+
+        async def _fetcher(sport_key, markets, regions, bookmakers=None):
+            return [self._make_provider_event("live-event", base_epoch + 120, {"status": "live"})]
+
+        _fetcher.last_stats = {}
+
+        with (
+            patch.dict(scanner.PROVIDER_FETCHERS, {"sx_bet": _fetcher}),
+            patch.dict(scanner.PROVIDER_TITLES, {"sx_bet": "SX Bet"}),
+            patch.object(scanner.time, "time", return_value=base_epoch),
+            patch.object(scanner, "EVENT_MAX_PAST_MINUTES_RAW", "30"),
+            patch.object(scanner, "LIVE_EVENT_MAX_FUTURE_SECONDS_RAW", "600"),
+        ):
+            result = asyncio.run(
+                scanner._scan_single_sport(
+                    sport={"key": "basketball_nba", "title": "NBA"},
+                    scan_mode="prematch",
+                    all_markets=False,
+                    should_fetch_api=False,
+                    api_pool=scanner.ApiKeyPool([]),
+                    normalized_regions=["us"],
+                    api_bookmakers=[],
+                    provider_target_sport_keys=["basketball_nba"],
+                    enabled_provider_keys=["sx_bet"],
+                    normalized_bookmakers=["sx_bet"],
+                    stake_amount=100.0,
+                    commission_rate=0.0,
+                    sharp_priority=scanner._sharp_priority("pinnacle"),
+                    min_edge_percent=0.0,
+                    bankroll=1000.0,
+                    kelly_fraction=0.25,
+                )
+            )
+
+        provider_updates = result.get("provider_updates") or {}
+        self.assertIn("sx_bet", provider_updates)
+        sport_row = provider_updates["sx_bet"].get("sports", [])[0]
+        self.assertNotIn("events_fetched_raw", sport_row)
+        self.assertNotIn("events_after_live_filter", sport_row)
+        self.assertNotIn("live_filter_stats", sport_row)
 
     def test_collect_market_entries_accepts_three_way_h2h(self) -> None:
         game = {

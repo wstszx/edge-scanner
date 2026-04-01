@@ -259,6 +259,41 @@ class ArtlineProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(artline.fetch_events_async.last_stats.get("payload_shape"), "list")
         self.assertTrue(artline.fetch_events_async.last_stats.get("live_feed_empty"))
 
+    async def test_fetch_events_async_records_live_all_sports_when_live_sport_is_empty(self) -> None:
+        requested_payload = {'data': []}
+        live_all_payload = {
+            'data': {
+                'basketball': {'games': [{'id': '1'}, {'id': '2'}]},
+                'football': {'games': [{'id': '3'}]},
+                'tennis': {'games': [{'id': '4'}]},
+                'hockey': {'games': []},
+            }
+        }
+        responses = [(_deepcopy(requested_payload), 0), (_deepcopy(live_all_payload), 0)]
+
+        async def _fake_request_json_async(*args, **kwargs):
+            return responses.pop(0)
+
+        with (
+            patch.object(artline, 'get_shared_client', new=_fake_shared_client),
+            patch.object(artline, '_request_json_async', side_effect=_fake_request_json_async),
+        ):
+            events = await artline.fetch_events_async(
+                'icehockey_nhl',
+                ['h2h', 'spreads', 'totals'],
+                ['us'],
+                bookmakers=['artline'],
+                context={'live': True, 'scan_mode': 'live'},
+            )
+
+        self.assertEqual(events, [])
+        self.assertTrue(artline.fetch_events_async.last_stats.get('live_feed_empty'))
+        self.assertEqual(
+            artline.fetch_events_async.last_stats.get('live_all_sports_available'),
+            {'basketball': 2, 'football': 1, 'tennis': 1},
+        )
+        self.assertEqual(artline.fetch_events_async.last_stats.get('live_all_total_games'), 4)
+
     async def test_fetch_events_async_enriches_team_totals_from_game_detail(self) -> None:
         lines_payload = {
             "data": {

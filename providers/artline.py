@@ -595,6 +595,37 @@ async def fetch_events_async(
     stats["payload_games_count"] = len(games)
     stats["live_feed_empty"] = games_type == "live" and len(games) == 0
 
+    if stats['live_feed_empty']:
+        try:
+            live_all_payload, _ = await _request_json_async(
+                client,
+                'POST',
+                'lines',
+                json_payload={'games_type': 'live'},
+                retries=retries,
+                backoff_seconds=backoff,
+            )
+        except ProviderError:
+            live_all_payload = None
+        live_all_data = _payload_data(live_all_payload)
+        if isinstance(live_all_data, dict):
+            live_all_sports_available: Dict[str, int] = {}
+            for live_sport_key, live_sport_block in live_all_data.items():
+                if not isinstance(live_sport_block, dict):
+                    continue
+                live_sport_games = live_sport_block.get('games')
+                if not isinstance(live_sport_games, list):
+                    continue
+                live_game_count = len(live_sport_games)
+                if live_game_count <= 0:
+                    continue
+                normalized_live_sport = _normalize_text(live_sport_key)
+                if not normalized_live_sport:
+                    continue
+                live_all_sports_available[normalized_live_sport] = live_game_count
+            stats['live_all_sports_available'] = live_all_sports_available
+            stats['live_all_total_games'] = sum(live_all_sports_available.values())
+
     detailed_events_by_id: Dict[str, List[dict]] = {}
     if games and _market_needs_detail_fetch(requested_markets):
         semaphore = asyncio.Semaphore(_detail_max_concurrency())

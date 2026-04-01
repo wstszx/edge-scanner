@@ -122,6 +122,89 @@ class ProviderVerificationTests(unittest.TestCase):
             any("Live endpoint was reachable but returned zero events at check time." in note for note in statuses[0].notes)
         )
 
+    def test_summarize_provider_statuses_marks_artline_live_all_evidence_as_note(self) -> None:
+        result = {
+            'custom_providers': {
+                'artline': {
+                    'enabled': True,
+                    'events_merged': 0,
+                    'sports': [
+                        {
+                            'sport_key': 'icehockey_nhl',
+                            'events_returned': 0,
+                            'stats': {
+                                'games_type': 'live',
+                                'live_feed_empty': True,
+                                'live_all_total_games': 4,
+                                'live_all_sports_available': {
+                                    'basketball': 2,
+                                    'football': 1,
+                                    'tennis': 1,
+                                },
+                            },
+                        }
+                    ],
+                }
+            }
+        }
+
+        statuses = pv.summarize_provider_statuses(
+            result,
+            provider_keys=['artline'],
+            stake_amount=100.0,
+        )
+
+        self.assertTrue(
+            any(
+                'Requested live sport is empty, but Artline live feed currently has other sports: basketball=2, football=1, tennis=1.'
+                in note
+                for note in statuses[0].notes
+            )
+        )
+
+    def test_summarize_provider_statuses_marks_sx_bet_active_preplay_leakage_note(self) -> None:
+        result = {
+            'custom_providers': {
+                'sx_bet': {
+                    'enabled': True,
+                    'events_merged': 0,
+                    'sports': [
+                        {
+                            'sport_key': 'icehockey_nhl',
+                            'events_returned': 10,
+                            'events_fetched_raw': 10,
+                            'events_after_live_filter': 0,
+                            'live_filter_stats': {
+                                'dropped_not_live_state': 10,
+                                'dropped_terminal_state': 0,
+                                'dropped_past': 0,
+                                'dropped_future': 0,
+                                'dropped_missing_time': 0,
+                                'suspicious_explicit_live_future': 0,
+                            },
+                            'stats': {
+                                'fixture_source_mode': 'markets_active',
+                                'fixture_source_used': 'markets_active',
+                            },
+                        }
+                    ],
+                }
+            }
+        }
+
+        statuses = pv.summarize_provider_statuses(
+            result,
+            provider_keys=['sx_bet'],
+            stake_amount=100.0,
+        )
+
+        self.assertTrue(
+            any(
+                'Live-mode source returned active SX Bet markets, but all candidate events were filtered as not live.' in note
+                for note in statuses[0].notes
+            )
+        )
+
     def test_summarize_scan_flags_liquidity_limited_arbitrage(self) -> None:
         result = {
             "success": True,
@@ -256,6 +339,50 @@ class ProviderVerificationTests(unittest.TestCase):
         self.assertIn('- raw_provider_events: 64', markdown)
         self.assertIn('- merged_events_scanned: 0', markdown)
 
+    def test_report_to_markdown_live_funnel_evidence(self) -> None:
+        scan_result = {
+            "success": True,
+            "partial": False,
+            "custom_providers": {
+                "sx_bet": {
+                    "enabled": True,
+                    "events_merged": 1,
+                    "sports": [
+                        {
+                            "sport_key": "icehockey_nhl",
+                            "events_returned": 3,
+                            "events_fetched_raw": 3,
+                            "events_after_live_filter": 1,
+                            "live_filter_stats": {
+                                "dropped_not_live_state": 1,
+                                "dropped_past": 1,
+                            },
+                        }
+                    ],
+                }
+            },
+            "arbitrage": {"opportunities_count": 0, "opportunities": []},
+            "middles": {"opportunities_count": 0, "opportunities": []},
+            "plus_ev": {"opportunities_count": 0, "opportunities": []},
+        }
+
+        report = pv.build_report(
+            sport_key="icehockey_nhl",
+            provider_keys=["sx_bet"],
+            regions=["us"],
+            stake_amount=100.0,
+            top_n=1,
+            tests_result={"ran": False},
+            scan_result=scan_result,
+        )
+
+        markdown = pv.report_to_markdown(report)
+
+        self.assertIn("raw=3", markdown)
+        self.assertIn("after_filter=1", markdown)
+        self.assertIn("dropped_not_live_state=1", markdown)
+        self.assertIn("dropped_past=1", markdown)
+
     def test_build_console_summary_surfaces_provider_and_result_alerts(self) -> None:
         report = {
             "sport_key": "basketball_nba",
@@ -310,6 +437,49 @@ class ProviderVerificationTests(unittest.TestCase):
         self.assertIn("arbitrage suspect", summary)
         self.assertIn("middle negative EV", summary)
         self.assertIn("latest_json=data/x.json", summary)
+
+    def test_build_console_summary_live_funnel_evidence(self) -> None:
+        scan_result = {
+            "success": True,
+            "partial": False,
+            "custom_providers": {
+                "sx_bet": {
+                    "enabled": True,
+                    "events_merged": 1,
+                    "sports": [
+                        {
+                            "sport_key": "icehockey_nhl",
+                            "events_returned": 3,
+                            "events_fetched_raw": 3,
+                            "events_after_live_filter": 1,
+                            "live_filter_stats": {
+                                "dropped_not_live_state": 1,
+                                "dropped_past": 1,
+                            },
+                        }
+                    ],
+                }
+            },
+            "arbitrage": {"opportunities_count": 0, "opportunities": []},
+            "middles": {"opportunities_count": 0, "opportunities": []},
+            "plus_ev": {"opportunities_count": 0, "opportunities": []},
+        }
+
+        report = pv.build_report(
+            sport_key="icehockey_nhl",
+            provider_keys=["sx_bet"],
+            regions=["us"],
+            stake_amount=100.0,
+            top_n=1,
+            tests_result={"ran": False},
+            scan_result=scan_result,
+        )
+        summary = pv.build_console_summary(report)
+
+        self.assertIn("raw=3", summary)
+        self.assertIn("after_filter=1", summary)
+        self.assertIn("dropped_not_live_state=1", summary)
+        self.assertIn("dropped_past=1", summary)
 
     def test_report_has_alerts_false_for_clean_report(self) -> None:
         report = {

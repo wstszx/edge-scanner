@@ -4500,6 +4500,13 @@ async def _scan_single_sport(
 
     sport_name = sport.get("title") or SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
     normalized_scan_mode = _normalize_scan_mode(scan_mode)
+    def _prepare_provider_live_funnel(events_payload: Sequence[dict]) -> Tuple[List[dict], List[dict], int, int, dict]:
+        raw_events = list(events_payload)
+        filtered_events = raw_events
+        stats: dict = {}
+        if normalized_scan_mode == SCAN_MODE_LIVE:
+            filtered_events, stats = _filter_live_events_for_scan(raw_events)
+        return raw_events, filtered_events, len(raw_events), len(filtered_events), stats
     sport_timing = {
         "sport_key": sport_key,
         "sport": sport_name,
@@ -4630,6 +4637,10 @@ async def _scan_single_sport(
         provider_events = provider_result.get("events")
         if not isinstance(provider_events, list):
             provider_events = []
+        raw_provider_events, filtered_provider_events, events_fetched_raw, events_after_live_filter, live_filter_stats = (
+            _prepare_provider_live_funnel(provider_events)
+        )
+        provider_events = filtered_provider_events
         stats = provider_result.get("stats")
         if not isinstance(stats, dict):
             stats = {}
@@ -4659,6 +4670,14 @@ async def _scan_single_sport(
                 provider_events = []
             retry_stats = retry_result.get("stats")
             stats = retry_stats if isinstance(retry_stats, dict) else {}
+            (
+                raw_provider_events,
+                filtered_provider_events,
+                events_fetched_raw,
+                events_after_live_filter,
+                live_filter_stats,
+            ) = _prepare_provider_live_funnel(provider_events)
+            provider_events = filtered_provider_events
             retry_error = _normalize_text(retry_result.get("error")) or None
             if retry_error:
                 provider_error = f"{provider_error}; retry failed: {retry_error}"
@@ -4704,20 +4723,37 @@ async def _scan_single_sport(
             if provider_events:
                 events = _merge_events_with_stats(events, provider_events, stats=merge_stats)
             events_after_merge = len(events)
-            provider_update["sports"].append(
-                {
-                    "sport_key": sport_key,
-                    "events_returned": len(provider_events),
-                    "stats": stats,
-                    "requested_markets": list(provider_markets),
-                    "events_before_merge": events_before_merge,
-                    "events_after_merge": events_after_merge,
-                    "merge_stats": merge_stats,
-                }
-            )
+            sport_summary = {
+                "sport_key": sport_key,
+                "events_returned": events_fetched_raw,
+                "stats": stats,
+                "requested_markets": list(provider_markets),
+                "events_before_merge": events_before_merge,
+                "events_after_merge": events_after_merge,
+                "merge_stats": merge_stats,
+            }
+            if normalized_scan_mode == SCAN_MODE_LIVE:
+                sport_summary.update(
+                    {
+                        "events_fetched_raw": events_fetched_raw,
+                        "events_after_live_filter": events_after_live_filter,
+                        "live_filter_stats": {
+                            key: int(live_filter_stats.get(key, 0) or 0)
+                            for key in (
+                                "dropped_not_live_state",
+                                "dropped_terminal_state",
+                                "dropped_past",
+                                "dropped_future",
+                                "dropped_missing_time",
+                                "suspicious_explicit_live_future",
+                            )
+                        },
+                    }
+                )
+            provider_update["sports"].append(sport_summary)
             sport_snapshot.update(
                 {
-                    "events_returned": len(provider_events),
+                    "events_returned": events_fetched_raw,
                     "stats": stats,
                     "events_before_merge": events_before_merge,
                     "events_after_merge": events_after_merge,
@@ -4725,9 +4761,9 @@ async def _scan_single_sport(
                 }
             )
             provider_snapshot_update["sports"].append(sport_snapshot)
-            if provider_events:
+            if raw_provider_events:
                 # Keep raw provider snapshots isolated from later event merges.
-                provider_snapshot_update["events"].extend(copy.deepcopy(provider_events))
+                provider_snapshot_update["events"].extend(copy.deepcopy(raw_provider_events))
             if provider_events:
                 provider_update["events_merged"] += len(provider_events)
 
@@ -4736,7 +4772,7 @@ async def _scan_single_sport(
             "key": provider_key,
             "name": provider_title,
             "ms": provider_fetch_ms,
-            "events_returned": len(provider_events),
+            "events_returned": events_fetched_raw,
         }
         if provider_error:
             provider_timing["error"] = provider_error
@@ -4748,7 +4784,7 @@ async def _scan_single_sport(
             "provider_key": provider_key,
             "provider": provider_title,
             "ms": provider_fetch_ms,
-            "events_returned": len(provider_events),
+            "events_returned": events_fetched_raw,
         }
         if provider_error:
             provider_step["error"] = provider_error
