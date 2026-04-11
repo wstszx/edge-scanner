@@ -407,5 +407,115 @@ module.exports = { dictionaries };
         self.assertEqual(meta.get("cache"), "miss")
 
 
+    def test_extract_x_object_literal_supports_current_const_bundle_marker(self) -> None:
+        js_source = 'prefix B={marketNames:{"4-1-2":"Team Total Goals","3-1-2":"Handicap"},outcomes:{"17252":{selectionId:8}}};suffix'
+
+        payload = bookmaker_xyz._extract_x_object_literal(js_source)
+
+        self.assertEqual(
+            payload,
+            '{marketNames:{"4-1-2":"Team Total Goals","3-1-2":"Handicap"},outcomes:{"17252":{selectionId:8}}}',
+        )
+
+    def test_load_dictionaries_auto_merges_site_market_names_when_official_package_is_missing_keys(self) -> None:
+        official_dictionaries = {
+            "marketNames": {"4-1-1": "Total Goals"},
+            "outcomes": {"23": {"marketId": 4}},
+            "selections": {},
+            "teamPlayers": {},
+            "points": {},
+        }
+        site_dictionaries = {
+            "marketNames": {"4-1-1": "Total Goals", "4-1-2": "Team Total Goals", "3-1-2": "Handicap"},
+            "outcomes": {"23": {"marketId": 4}, "17252": {"marketId": 3}},
+            "selections": {},
+            "teamPlayers": {},
+            "points": {},
+        }
+        home_html = '<script src="/assets/const-test.js"></script>'
+        const_js = 'prefix B={marketNames:{"4-1-1":"Total Goals","4-1-2":"Team Total Goals","3-1-2":"Handicap"},outcomes:{"23":{marketId:4},"17252":{marketId:3}},selections:{},teamPlayers:{},points:{}};suffix'
+
+        original_cache = dict(bookmaker_xyz.DICTIONARY_CACHE)
+        try:
+            bookmaker_xyz.DICTIONARY_CACHE["expires_at"] = 0.0
+            bookmaker_xyz.DICTIONARY_CACHE["data"] = None
+            bookmaker_xyz.DICTIONARY_CACHE["source"] = ""
+            with (
+                patch.object(
+                    bookmaker_xyz,
+                    "_load_dictionaries_from_official_package",
+                    return_value=(
+                        official_dictionaries,
+                        {
+                            "cache": "miss",
+                            "source": "https://registry.npmjs.org/@azuro-org/dictionaries/-/dictionaries-3.0.28.tgz",
+                            "source_strategy": "official_package",
+                        },
+                    ),
+                ),
+                patch.object(bookmaker_xyz, "_retrying_get", side_effect=[(home_html, 0), (const_js, 0)]),
+                patch.object(bookmaker_xyz, "_parse_dictionaries_via_node", return_value=site_dictionaries),
+            ):
+                loaded, meta = bookmaker_xyz._load_dictionaries(
+                    retries=0,
+                    backoff_seconds=0.0,
+                    timeout=1,
+                )
+        finally:
+            bookmaker_xyz.DICTIONARY_CACHE.clear()
+            bookmaker_xyz.DICTIONARY_CACHE.update(original_cache)
+
+        self.assertEqual(loaded["marketNames"].get("4-1-2"), "Team Total Goals")
+        self.assertEqual(loaded["marketNames"].get("3-1-2"), "Handicap")
+        self.assertEqual(loaded["outcomes"].get("17252"), {"marketId": 3})
+        self.assertEqual(meta.get("source_strategy"), "official_package")
+
+
+    def test_normalize_snapshot_to_events_does_not_fallback_h2h_for_untyped_two_way_condition(self) -> None:
+        conditions = [
+            {
+                "__chain_id": "137",
+                "state": "Active",
+                "game": {
+                    "gameId": "game-nyr-dal",
+                    "slug": "rangers-vs-stars",
+                    "title": "New York Rangers vs Dallas Stars",
+                    "startsAt": "2026-04-11T20:59:00Z",
+                    "participants": [
+                        {"name": "New York Rangers"},
+                        {"name": "Dallas Stars"},
+                    ],
+                    "sport": {"slug": "ice-hockey", "name": "Ice Hockey"},
+                    "league": {"slug": "nhl", "name": "NHL"},
+                    "country": {"slug": "united-states", "name": "United States"},
+                },
+                "outcomes": [
+                    {"outcomeId": "177", "odds": "1.18", "sortOrder": 1},
+                    {"outcomeId": "178", "odds": "4.35", "sortOrder": 2},
+                ],
+            }
+        ]
+        dictionaries = {
+            "marketNames": {"4-1-1": "Total Goals"},
+            "outcomes": {
+                "177": {"selectionId": 9, "marketId": 4, "gamePeriodId": 1, "gameTypeId": 1, "pointsId": 299, "teamPlayerId": None},
+                "178": {"selectionId": 10, "marketId": 4, "gamePeriodId": 1, "gameTypeId": 1, "pointsId": 299, "teamPlayerId": None},
+            },
+            "selections": {"9": "Over", "10": "Under"},
+            "teamPlayers": {},
+            "points": {"299": "4"},
+        }
+
+        events, stats = bookmaker_xyz._normalize_snapshot_to_events(
+            conditions=conditions,
+            sport_key="icehockey_nhl",
+            requested_markets={"h2h"},
+            dictionaries=dictionaries,
+        )
+
+        self.assertEqual(events, [])
+        self.assertEqual(stats.get("fallback_h2h_used_count"), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

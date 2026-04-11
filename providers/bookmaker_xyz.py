@@ -852,8 +852,12 @@ def _extract_const_asset_path(home_html: str) -> Optional[str]:
 
 
 def _extract_x_object_literal(js_source: str) -> str:
-    marker = "var Y=Ch,X="
-    start = js_source.find(marker)
+    markers = ("var Y=Ch,X=", "B={marketNames:")
+    start = -1
+    for marker in markers:
+        start = js_source.find(marker)
+        if start >= 0:
+            break
     if start < 0:
         raise ProviderError("Failed to locate bookmaker.xyz dictionaries object marker")
     brace_start = js_source.find("{", start)
@@ -1091,6 +1095,85 @@ def _persist_dictionaries_to_disk_cache(source_url: object, dictionaries: dict) 
         return
 
 
+def _merge_dictionaries(primary: Optional[dict], fallback: Optional[dict]) -> Optional[dict]:
+    if not isinstance(primary, dict):
+        return fallback if isinstance(fallback, dict) else None
+    if not isinstance(fallback, dict):
+        return primary
+    merged = dict(primary)
+    for key in ("marketNames", "marketDescriptions", "outcomes", "selections", "teamPlayers", "points"):
+        primary_map = primary.get(key)
+        fallback_map = fallback.get(key)
+        if isinstance(primary_map, dict) and isinstance(fallback_map, dict):
+            merged[key] = {**fallback_map, **primary_map}
+        elif isinstance(primary_map, dict):
+            merged[key] = dict(primary_map)
+        elif isinstance(fallback_map, dict):
+            merged[key] = dict(fallback_map)
+    return merged
+
+
+def _load_site_dictionaries(retries: int, backoff_seconds: float, timeout: int) -> Tuple[Optional[dict], dict]:
+    meta = {"cache": "miss", "source": "", "error": "", "source_strategy": "site_bundle"}
+    retries_used = 0
+    home_html, attempt = _retrying_get(_home_url(), retries, backoff_seconds, timeout)
+    retries_used += attempt
+    asset_path = _extract_const_asset_path(home_html)
+    if not asset_path:
+        raise ProviderError("Failed to detect bookmaker.xyz const asset path")
+    const_url = _public_base().rstrip("/") + asset_path
+    cached_disk = _load_dictionaries_from_disk_cache(const_url)
+    if isinstance(cached_disk, dict):
+        meta.update({"cache": "disk_hit", "source": const_url, "retries_used": retries_used})
+        return cached_disk, meta
+    const_js, attempt = _retrying_get(const_url, retries, backoff_seconds, timeout)
+    retries_used += attempt
+    x_object_literal = _extract_x_object_literal(const_js)
+    dictionaries = _parse_dictionaries_via_node(x_object_literal, timeout=timeout)
+    _persist_dictionaries_to_disk_cache(const_url, dictionaries)
+    meta.update({"source": const_url, "retries_used": retries_used})
+    return dictionaries, meta
+
+
+async def _load_site_dictionaries_async(
+    client: httpx.AsyncClient,
+    retries: int,
+    backoff_seconds: float,
+    timeout: int,
+) -> Tuple[Optional[dict], dict]:
+    meta = {"cache": "miss", "source": "", "error": "", "source_strategy": "site_bundle"}
+    retries_used = 0
+    home_html, attempt = await _retrying_get_async(
+        client,
+        _home_url(),
+        retries,
+        backoff_seconds,
+        timeout,
+    )
+    retries_used += attempt
+    asset_path = _extract_const_asset_path(home_html)
+    if not asset_path:
+        raise ProviderError("Failed to detect bookmaker.xyz const asset path")
+    const_url = _public_base().rstrip("/") + asset_path
+    cached_disk = await asyncio.to_thread(_load_dictionaries_from_disk_cache, const_url)
+    if isinstance(cached_disk, dict):
+        meta.update({"cache": "disk_hit", "source": const_url, "retries_used": retries_used})
+        return cached_disk, meta
+    const_js, attempt = await _retrying_get_async(
+        client,
+        const_url,
+        retries,
+        backoff_seconds,
+        timeout,
+    )
+    retries_used += attempt
+    x_object_literal = _extract_x_object_literal(const_js)
+    dictionaries = await asyncio.to_thread(_parse_dictionaries_via_node, x_object_literal, timeout)
+    await asyncio.to_thread(_persist_dictionaries_to_disk_cache, const_url, dictionaries)
+    meta.update({"source": const_url, "retries_used": retries_used})
+    return dictionaries, meta
+
+
 def _load_dictionaries(
     retries: int,
     backoff_seconds: float,
@@ -1106,17 +1189,19 @@ def _load_dictionaries(
     meta = {"cache": "miss", "source": "", "error": ""}
     retries_used = 0
     source_mode = (BOOKMAKER_XYZ_DICTIONARY_SOURCE or "auto").lower()
+    official_dictionaries = None
+    official_meta = {"cache": "miss", "source": "", "error": "", "source_strategy": "official_package"}
     if source_mode in {"auto", "official", "npm", "azuro", "package"}:
-        dictionaries, official_meta = _load_dictionaries_from_official_package(
+        official_dictionaries, official_meta = _load_dictionaries_from_official_package(
             retries=retries,
             backoff_seconds=backoff_seconds,
             timeout=timeout,
         )
-        if isinstance(dictionaries, dict):
-            DICTIONARY_CACHE["data"] = dictionaries
+        if isinstance(official_dictionaries, dict) and source_mode in {"official", "npm", "azuro", "package"}:
+            DICTIONARY_CACHE["data"] = official_dictionaries
             DICTIONARY_CACHE["expires_at"] = now + ttl if ttl > 0 else now
             DICTIONARY_CACHE["source"] = _normalize_text(official_meta.get("source"))
-            return dictionaries, official_meta
+            return official_dictionaries, official_meta
         if source_mode in {"official", "npm", "azuro", "package"}:
             cached = DICTIONARY_CACHE.get("data")
             if isinstance(cached, dict):
@@ -1129,30 +1214,37 @@ def _load_dictionaries(
                 return cached, official_meta
             return None, official_meta
     try:
-        home_html, attempt = _retrying_get(_home_url(), retries, backoff_seconds, timeout)
-        retries_used += attempt
-        asset_path = _extract_const_asset_path(home_html)
-        if not asset_path:
-            raise ProviderError("Failed to detect bookmaker.xyz const asset path")
-        const_url = _public_base().rstrip("/") + asset_path
-        cached_disk = _load_dictionaries_from_disk_cache(const_url)
-        if isinstance(cached_disk, dict):
-            DICTIONARY_CACHE["data"] = cached_disk
+        site_dictionaries, site_meta = _load_site_dictionaries(
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+            timeout=timeout,
+        )
+        retries_used += int(site_meta.get("retries_used", 0) or 0)
+        dictionaries = _merge_dictionaries(official_dictionaries, site_dictionaries)
+        if not isinstance(dictionaries, dict):
+            dictionaries = official_dictionaries or site_dictionaries
+        if isinstance(dictionaries, dict):
+            source = _normalize_text(official_meta.get("source")) or _normalize_text(site_meta.get("source"))
+            DICTIONARY_CACHE["data"] = dictionaries
             DICTIONARY_CACHE["expires_at"] = now + ttl if ttl > 0 else now
-            DICTIONARY_CACHE["source"] = const_url
-            meta.update({"cache": "disk_hit", "source": const_url, "retries_used": retries_used})
-            return cached_disk, meta
-        const_js, attempt = _retrying_get(const_url, retries, backoff_seconds, timeout)
-        retries_used += attempt
-        x_object_literal = _extract_x_object_literal(const_js)
-        dictionaries = _parse_dictionaries_via_node(x_object_literal, timeout=timeout)
-        _persist_dictionaries_to_disk_cache(const_url, dictionaries)
-        DICTIONARY_CACHE["data"] = dictionaries
-        DICTIONARY_CACHE["expires_at"] = now + ttl if ttl > 0 else now
-        DICTIONARY_CACHE["source"] = const_url
-        meta.update({"source": const_url, "retries_used": retries_used})
-        return dictionaries, meta
+            DICTIONARY_CACHE["source"] = source
+            meta.update(
+                {
+                    "cache": site_meta.get("cache") or meta.get("cache"),
+                    "source": source,
+                    "retries_used": retries_used,
+                    "source_strategy": official_meta.get("source_strategy") or site_meta.get("source_strategy"),
+                }
+            )
+            return dictionaries, meta
+        raise ProviderError("bookmaker.xyz dictionaries payload is invalid")
     except Exception as exc:
+        if isinstance(official_dictionaries, dict):
+            DICTIONARY_CACHE["data"] = official_dictionaries
+            DICTIONARY_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+            DICTIONARY_CACHE["source"] = _normalize_text(official_meta.get("source"))
+            official_meta.update({"error": str(exc), "retries_used": retries_used})
+            return official_dictionaries, official_meta
         cached = DICTIONARY_CACHE.get("data")
         if isinstance(cached, dict):
             meta.update(
@@ -1184,18 +1276,20 @@ async def _load_dictionaries_async(
     meta = {"cache": "miss", "source": "", "error": ""}
     retries_used = 0
     source_mode = (BOOKMAKER_XYZ_DICTIONARY_SOURCE or "auto").lower()
+    official_dictionaries = None
+    official_meta = {"cache": "miss", "source": "", "error": "", "source_strategy": "official_package"}
     if source_mode in {"auto", "official", "npm", "azuro", "package"}:
-        dictionaries, official_meta = await asyncio.to_thread(
+        official_dictionaries, official_meta = await asyncio.to_thread(
             _load_dictionaries_from_official_package,
             retries,
             backoff_seconds,
             timeout,
         )
-        if isinstance(dictionaries, dict):
-            DICTIONARY_CACHE["data"] = dictionaries
+        if isinstance(official_dictionaries, dict) and source_mode in {"official", "npm", "azuro", "package"}:
+            DICTIONARY_CACHE["data"] = official_dictionaries
             DICTIONARY_CACHE["expires_at"] = now + ttl if ttl > 0 else now
             DICTIONARY_CACHE["source"] = _normalize_text(official_meta.get("source"))
-            return dictionaries, official_meta
+            return official_dictionaries, official_meta
         if source_mode in {"official", "npm", "azuro", "package"}:
             cached = DICTIONARY_CACHE.get("data")
             if isinstance(cached, dict):
@@ -1208,46 +1302,38 @@ async def _load_dictionaries_async(
                 return cached, official_meta
             return None, official_meta
     try:
-        home_html, attempt = await _retrying_get_async(
-            client,
-            _home_url(),
-            retries,
-            backoff_seconds,
-            timeout,
+        site_dictionaries, site_meta = await _load_site_dictionaries_async(
+            client=client,
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+            timeout=timeout,
         )
-        retries_used += attempt
-        asset_path = _extract_const_asset_path(home_html)
-        if not asset_path:
-            raise ProviderError("Failed to detect bookmaker.xyz const asset path")
-        const_url = _public_base().rstrip("/") + asset_path
-        cached_disk = await asyncio.to_thread(_load_dictionaries_from_disk_cache, const_url)
-        if isinstance(cached_disk, dict):
-            DICTIONARY_CACHE["data"] = cached_disk
+        retries_used += int(site_meta.get("retries_used", 0) or 0)
+        dictionaries = _merge_dictionaries(official_dictionaries, site_dictionaries)
+        if not isinstance(dictionaries, dict):
+            dictionaries = official_dictionaries or site_dictionaries
+        if isinstance(dictionaries, dict):
+            source = _normalize_text(official_meta.get("source")) or _normalize_text(site_meta.get("source"))
+            DICTIONARY_CACHE["data"] = dictionaries
             DICTIONARY_CACHE["expires_at"] = now + ttl if ttl > 0 else now
-            DICTIONARY_CACHE["source"] = const_url
-            meta.update({"cache": "disk_hit", "source": const_url, "retries_used": retries_used})
-            return cached_disk, meta
-        const_js, attempt = await _retrying_get_async(
-            client,
-            const_url,
-            retries,
-            backoff_seconds,
-            timeout,
-        )
-        retries_used += attempt
-        x_object_literal = _extract_x_object_literal(const_js)
-        dictionaries = await asyncio.to_thread(
-            _parse_dictionaries_via_node,
-            x_object_literal,
-            timeout,
-        )
-        await asyncio.to_thread(_persist_dictionaries_to_disk_cache, const_url, dictionaries)
-        DICTIONARY_CACHE["data"] = dictionaries
-        DICTIONARY_CACHE["expires_at"] = now + ttl if ttl > 0 else now
-        DICTIONARY_CACHE["source"] = const_url
-        meta.update({"source": const_url, "retries_used": retries_used})
-        return dictionaries, meta
+            DICTIONARY_CACHE["source"] = source
+            meta.update(
+                {
+                    "cache": site_meta.get("cache") or meta.get("cache"),
+                    "source": source,
+                    "retries_used": retries_used,
+                    "source_strategy": official_meta.get("source_strategy") or site_meta.get("source_strategy"),
+                }
+            )
+            return dictionaries, meta
+        raise ProviderError("bookmaker.xyz dictionaries payload is invalid")
     except Exception as exc:
+        if isinstance(official_dictionaries, dict):
+            DICTIONARY_CACHE["data"] = official_dictionaries
+            DICTIONARY_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+            DICTIONARY_CACHE["source"] = _normalize_text(official_meta.get("source"))
+            official_meta.update({"error": str(exc), "retries_used": retries_used})
+            return official_dictionaries, official_meta
         cached = DICTIONARY_CACHE.get("data")
         if isinstance(cached, dict):
             meta.update(
@@ -2064,12 +2150,23 @@ def _normalize_condition_market(
 def _fallback_h2h_market(condition: dict, home_team: str, away_team: str) -> Optional[dict]:
     if _condition_is_segmented(condition):
         return None
+    condition_label = _normalize_text(
+        condition.get("conditionName")
+        or condition.get("condition")
+        or condition.get("name")
+        or condition.get("title")
+    ).lower()
+    if any(token in condition_label for token in ("total", "over/under", "over under", "handicap", "spread", "both teams to score", "btts")):
+        return None
     outcomes = condition.get("outcomes")
     if not isinstance(outcomes, list) or len(outcomes) != 2:
         return None
     parsed = []
     for index, raw in enumerate(outcomes):
         if not isinstance(raw, dict):
+            return None
+        label = _normalize_text(raw.get("title") or raw.get("name") or raw.get("label")).strip().lower()
+        if label in {"over", "under", "yes", "no", "x", "draw"}:
             return None
         price = _safe_float(raw.get("currentOdds"))
         if price is None:
@@ -2206,8 +2303,17 @@ def _normalize_snapshot_to_events(
                 entry["markets_by_sig"][sig] = market
             stats["dictionary_market_count"] += 1
         else:
+            fallback_label = _normalize_text(
+                condition.get("conditionName")
+                or condition.get("condition")
+                or condition.get("name")
+                or condition.get("title")
+            ).lower()
+            allow_h2h_fallback = any(
+                token in fallback_label for token in ("winner", "full time result", "match winner")
+            )
             fallback_market = _fallback_h2h_market(condition, home_team, away_team)
-            if fallback_market and "h2h" in requested_markets:
+            if fallback_market and "h2h" in requested_markets and allow_h2h_fallback:
                 current = entry.get("fallback_candidate")
                 turnover = _turnover_value(condition)
                 if current is None or turnover > float(current.get("turnover") or 0.0):

@@ -569,6 +569,17 @@ class TestBookmakerFallbackSegmentation(unittest.TestCase):
         market = bookmaker_xyz._fallback_h2h_market(condition, "Home", "Away")
         self.assertIsNone(market)
 
+    def test_totals_like_fallback_h2h_is_rejected(self) -> None:
+        condition = {
+            "name": "Total Goals",
+            "outcomes": [
+                {"currentOdds": 1.18, "sortOrder": 1, "title": "Over"},
+                {"currentOdds": 4.35, "sortOrder": 2, "title": "Under"},
+            ],
+        }
+        market = bookmaker_xyz._fallback_h2h_market(condition, "New York Rangers", "Dallas Stars")
+        self.assertIsNone(market)
+
     def test_full_time_fallback_h2h_allowed(self) -> None:
         condition = {
             "name": "Match Winner",
