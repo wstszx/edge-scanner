@@ -1296,11 +1296,18 @@ def _normalized_clob_token_ids(
         dict.fromkeys(_normalize_text(token_id) for token_id in token_ids if _normalize_text(token_id))
     )
     total_requested = len(unique_token_ids)
+    return unique_token_ids, total_requested, 0
+
+
+def _clob_token_id_batches(token_ids: Sequence[str]) -> List[List[str]]:
+    normalized_token_ids, _, _ = _normalized_clob_token_ids(token_ids)
     max_books = _int_or_default(POLYMARKET_CLOB_MAX_BOOKS_RAW, 300, min_value=1)
-    if len(unique_token_ids) > max_books:
-        unique_token_ids = unique_token_ids[:max_books]
-    truncated_count = max(0, total_requested - len(unique_token_ids))
-    return unique_token_ids, total_requested, truncated_count
+    if not normalized_token_ids:
+        return []
+    return [
+        normalized_token_ids[index:index + max_books]
+        for index in range(0, len(normalized_token_ids), max_books)
+    ]
 
 
 def _sports_result_slug(payload: object) -> str:
@@ -3357,6 +3364,47 @@ def _pick_match_markets(
                     }
                 )
 
+
+    if "spreads" in requested_markets:
+        for abs_line, spread_bucket in spread_candidates_by_line.items():
+            home_data = spread_bucket.get(home_token)
+            away_data = spread_bucket.get(away_token)
+            if not isinstance(home_data, dict) or not isinstance(away_data, dict):
+                continue
+            canonical_line = _safe_float(home_data.get("line"))
+            if canonical_line is None:
+                canonical_line = -float(abs_line)
+            collected.append(
+                {
+                    "key": "spreads",
+                    "outcomes": [
+                        {
+                            **_market_outcome_row(
+                                home_team,
+                                home_data["odds"],
+                                _safe_float(home_data.get("stake")),
+                                home_data.get("raw_percentage_odds"),
+                                home_data.get("quote_source"),
+                                home_data.get("observed_at"),
+                                home_data.get("last_updated"),
+                            ),
+                            "point": round(float(canonical_line), 6),
+                        },
+                        {
+                            **_market_outcome_row(
+                                away_team,
+                                away_data["odds"],
+                                _safe_float(away_data.get("stake")),
+                                away_data.get("raw_percentage_odds"),
+                                away_data.get("quote_source"),
+                                away_data.get("observed_at"),
+                                away_data.get("last_updated"),
+                            ),
+                            "point": round(-float(canonical_line), 6),
+                        },
+                    ],
+                }
+            )
     if (
         {"btts", "both_teams_to_score"} & requested_markets
         and isinstance(btts_yes, dict)
@@ -3428,6 +3476,24 @@ def _pick_match_markets(
                 }
             )
     return collected
+
+
+def _market_has_tradeable_outcomes(market: object) -> bool:
+    if not isinstance(market, dict):
+        return False
+    outcomes = market.get("outcomes")
+    if not isinstance(outcomes, list) or not outcomes:
+        return False
+    for outcome in outcomes:
+        if not isinstance(outcome, dict):
+            return False
+        price = _safe_float(outcome.get("price"))
+        source = _normalize_text(outcome.get("quote_source"))
+        if price is None or price <= 1:
+            return False
+        if source not in {"clob_book_best_ask", "ws_book_best_ask"}:
+            return False
+    return True
 
 
 def _event_url(event: dict) -> str:
@@ -3901,10 +3967,11 @@ async def fetch_events_async(
                     now_utc,
                 )
             )
-
         clob_quote_map: Dict[str, dict] = {}
+
         if clob_token_ids:
             normalized_token_ids, total_requested, truncated_count = _normalized_clob_token_ids(clob_token_ids)
+            token_batches = _clob_token_id_batches(clob_token_ids)
             stats["clob_tokens_requested"] = total_requested
             stats["clob_tokens_considered"] = len(normalized_token_ids)
             stats["clob_tokens_truncated"] = truncated_count
@@ -3932,21 +3999,26 @@ async def fetch_events_async(
                 stats["realtime_market_books_pending"] = len(unresolved_token_ids)
                 _apply_realtime_stats(stats, realtime_manager.snapshot())
             if unresolved_token_ids:
-                rest_quote_map, clob_meta = await _load_clob_quote_map_async(
-                    client=client,
-                    token_ids=unresolved_token_ids,
-                    retries=retries,
-                    backoff_seconds=backoff,
-                )
-                clob_quote_map.update(rest_quote_map)
-                stats["retries_used"] += int(clob_meta.get("retries_used", 0) or 0)
-                stats["clob_books_fetched"] = int(clob_meta.get("books_fetched", 0) or 0)
-                stats["clob_book_errors"] = int(clob_meta.get("book_errors", 0) or 0)
-            stats["clob_http_fallback_skipped"] = sum(
-                1
-                for token_id in normalized_token_ids
-                if token_id not in clob_quote_map
-            )
+                for token_batch in token_batches:
+                    batch_unresolved_token_ids = [
+                        token_id for token_id in token_batch if token_id in unresolved_token_ids
+                    ]
+                    if not batch_unresolved_token_ids:
+                        continue
+                    rest_quote_map, clob_meta = await _load_clob_quote_map_async(
+                        client=client,
+                        token_ids=batch_unresolved_token_ids,
+                        retries=retries,
+                        backoff_seconds=backoff,
+                    )
+                    clob_quote_map.update(rest_quote_map)
+                    stats["retries_used"] += int(clob_meta.get("retries_used", 0) or 0)
+                    stats["clob_books_fetched"] += int(clob_meta.get("books_fetched", 0) or 0)
+                    stats["clob_book_errors"] += int(clob_meta.get("book_errors", 0) or 0)
+                unresolved_token_ids = [
+                    token_id for token_id in normalized_token_ids if token_id not in clob_quote_map
+                ]
+            stats["clob_http_fallback_skipped"] = len(unresolved_token_ids)
             stats["clob_books_with_quotes"] = sum(
                 1
                 for token_id in normalized_token_ids
@@ -3963,6 +4035,7 @@ async def fetch_events_async(
                 now_utc,
                 clob_quote_map=clob_quote_map,
             )
+            market_list = [market for market in market_list if _market_has_tradeable_outcomes(market)]
             if not market_list:
                 continue
             stats["events_with_market_count"] += 1

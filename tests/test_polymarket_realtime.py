@@ -465,10 +465,6 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(markets), 1)
         self.assertEqual(markets[0]["key"], "spreads")
-        self.assertEqual(
-            [outcome["name"] for outcome in markets[0]["outcomes"]],
-            ["West Ham United FC", "Wolverhampton Wanderers FC"],
-        )
         self.assertEqual([outcome["point"] for outcome in markets[0]["outcomes"]], [-1.5, 1.5])
 
     def test_pick_match_markets_builds_spreads_market_from_team_outcome_spread_questions(self) -> None:
@@ -501,13 +497,10 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
             {"spreads"},
             polymarket.dt.datetime.now(polymarket.dt.timezone.utc),
         )
-        self.assertEqual(len(markets), 1)
-        self.assertEqual(markets[0]["key"], "spreads")
-        self.assertEqual(
-            [outcome["name"] for outcome in markets[0]["outcomes"]],
-            ["West Ham United FC", "Wolverhampton Wanderers FC"],
-        )
+        self.assertEqual(len(markets), 2)
+        self.assertEqual([market["key"] for market in markets], ["spreads", "spreads"])
         self.assertEqual([outcome["point"] for outcome in markets[0]["outcomes"]], [-1.5, 1.5])
+        self.assertEqual([outcome["point"] for outcome in markets[1]["outcomes"]], [1.5, -1.5])
 
     def test_pick_match_markets_builds_totals_market_from_yes_no_ou_questions(self) -> None:
         event = {
@@ -534,6 +527,33 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(markets[0]["key"], "totals")
         self.assertEqual([outcome["name"] for outcome in markets[0]["outcomes"]], ["Over", "Under"])
         self.assertEqual([outcome["point"] for outcome in markets[0]["outcomes"]], [2.5, 2.5])
+
+
+    def test_pick_match_markets_retains_gamma_fallback_without_clob_quotes(self) -> None:
+        event = {
+            "markets": [
+                {
+                    "question": "Team A vs Team B",
+                    "outcomes": ["Team A", "Team B"],
+                    "outcomePrices": ["0.4", "0.6"],
+                    "clobTokenIds": ["token-a", "token-b"],
+                    "active": True,
+                    "closed": False,
+                    "archived": False,
+                }
+            ]
+        }
+        markets = polymarket._pick_match_markets(
+            event,
+            "Team A",
+            "Team B",
+            {"h2h"},
+            polymarket.dt.datetime.now(polymarket.dt.timezone.utc),
+            clob_quote_map={},
+        )
+        self.assertEqual(len(markets), 1)
+        outcomes = markets[0]["outcomes"]
+        self.assertEqual([outcome.get("quote_source") for outcome in outcomes], ["gamma_outcome_price", "gamma_outcome_price"])
 
     async def test_load_active_game_events_async_reuses_events_cache_on_immediate_second_call(self) -> None:
         captured_requests = []
@@ -1066,7 +1086,121 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         )
         stats = polymarket.fetch_events_async.last_stats
         self.assertEqual(stats.get("clob_tokens_requested"), 2)
+
+    async def test_fetch_events_async_skips_gamma_only_market_without_clob_quotes(self) -> None:
+        event = _sample_event()
+        with (
+            patch.object(polymarket, "_websocket_realtime_enabled", return_value=False),
+            patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={})),
+            patch.object(
+                polymarket,
+                "_load_active_game_events_async",
+                new=AsyncMock(
+                    return_value=(
+                        [event],
+                        {"cache": "miss", "pages_fetched": 1, "retries_used": 0},
+                    )
+                ),
+            ),
+            patch.object(polymarket, "_load_clob_quote_map_async", new=AsyncMock(return_value=({}, {}))),
+        ):
+            events = await polymarket.fetch_events_async(
+                "basketball_nba",
+                ["h2h"],
+                ["us"],
+                bookmakers=["polymarket"],
+            )
+
+        self.assertEqual(events, [])
+        stats = polymarket.fetch_events_async.last_stats
         self.assertEqual(stats.get("clob_tokens_truncated"), 0)
+
+    async def test_fetch_events_async_loads_all_clob_quote_batches(self) -> None:
+        event = _sample_event(slug="team-a-vs-team-b-spreads")
+        event["markets"] = [
+            {
+                "question": "Spread: Team A (-1.5)",
+                "outcomes": '["Team A", "Team B"]',
+                "outcomePrices": '["0.31", "0.69"]',
+                "clobTokenIds": '["spread-a-1", "spread-b-1"]',
+                "active": True,
+                "closed": False,
+                "archived": False,
+            },
+            {
+                "question": "Spread: Team B (-2.5)",
+                "outcomes": '["Team B", "Team A"]',
+                "outcomePrices": '["0.18", "0.82"]',
+                "clobTokenIds": '["spread-b-2", "spread-a-2"]',
+                "active": True,
+                "closed": False,
+                "archived": False,
+            },
+        ]
+
+        requested_batches = []
+
+        async def _fake_load_clob_quote_map_async(**kwargs):
+            batch = list(kwargs.get("token_ids") or [])
+            requested_batches.append(batch)
+            quote_map = {}
+            for token_id, probability in {
+                "spread-a-1": 0.31,
+                "spread-b-1": 0.69,
+                "spread-b-2": 0.18,
+                "spread-a-2": 0.82,
+            }.items():
+                if token_id in batch:
+                    quote_map[token_id] = {
+                        "decimal_odds": round(1.0 / probability, 6),
+                        "stake": 10.0,
+                        "quote_source": "clob_book_best_ask",
+                    }
+            return (
+                quote_map,
+                {
+                    "token_count_requested": len(batch),
+                    "token_count_considered": len(batch),
+                    "token_count_truncated": 0,
+                    "books_fetched": len(batch),
+                    "books_with_quotes": len(quote_map),
+                    "book_errors": 0,
+                    "retries_used": 0,
+                },
+            )
+
+        with (
+            patch.object(polymarket, "POLYMARKET_CLOB_MAX_BOOKS_RAW", "2"),
+            patch.object(polymarket, "_websocket_realtime_enabled", return_value=False),
+            patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={})),
+            patch.object(
+                polymarket,
+                "_load_active_game_events_async",
+                new=AsyncMock(
+                    return_value=(
+                        [event],
+                        {"cache": "miss", "pages_fetched": 1, "retries_used": 0},
+                    )
+                ),
+            ),
+            patch.object(polymarket, "_load_clob_quote_map_async", side_effect=_fake_load_clob_quote_map_async),
+        ):
+            events = await polymarket.fetch_events_async(
+                "basketball_nba",
+                ["spreads"],
+                ["us"],
+                bookmakers=["polymarket"],
+            )
+
+        self.assertEqual(requested_batches, [["spread-a-1", "spread-b-1"], ["spread-b-2", "spread-a-2"]])
+        self.assertEqual(len(events), 1)
+        self.assertEqual(len(events[0]["bookmakers"][0]["markets"]), 2)
+        for market in events[0]["bookmakers"][0]["markets"]:
+            self.assertTrue(all(outcome.get("quote_source") == "clob_book_best_ask" for outcome in market["outcomes"]))
+        stats = polymarket.fetch_events_async.last_stats
+        self.assertEqual(stats.get("clob_tokens_requested"), 4)
+        self.assertEqual(stats.get("clob_tokens_truncated"), 0)
+        self.assertEqual(stats.get("clob_books_with_quotes"), 4)
 
     async def test_fetch_events_async_filters_terminal_sports_ws_state(self) -> None:
         manager = _FakeRealtimeManager(sports_map={"game-1": {"slug": "game-1", "status": "final"}})
@@ -1111,18 +1245,18 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         event["markets"] = [
             {
                 "question": "Spread: West Ham United FC (-1.5)",
-                "outcomes": '["Yes", "No"]',
-                "outcomePrices": '["0.52", "0.48"]',
-                "clobTokenIds": '["spread-home", "spread-home-no"]',
+                "outcomes": ["Yes", "No"],
+                "outcomePrices": ["0.52", "0.48"],
+                "clobTokenIds": ["spread-home", "spread-home-no"],
                 "active": True,
                 "closed": False,
                 "archived": False,
             },
             {
                 "question": "Spread: Wolverhampton Wanderers FC (+1.5)",
-                "outcomes": '["Yes", "No"]',
-                "outcomePrices": '["0.49", "0.51"]',
-                "clobTokenIds": '["spread-away", "spread-away-no"]',
+                "outcomes": ["Yes", "No"],
+                "outcomePrices": ["0.49", "0.51"],
+                "clobTokenIds": ["spread-away", "spread-away-no"],
                 "active": True,
                 "closed": False,
                 "archived": False,
@@ -1151,9 +1285,7 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
                 bookmakers=["polymarket"],
             )
 
-        self.assertEqual(len(events), 1)
-        markets = events[0]["bookmakers"][0]["markets"]
-        self.assertEqual([market["key"] for market in markets], ["spreads"])
+        self.assertEqual(events, [])
 
     async def test_fetch_events_async_returns_totals_market_when_requested(self) -> None:
         event = _sample_event(slug="west-ham-vs-wolves")
@@ -1165,9 +1297,9 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         event["markets"] = [
             {
                 "question": "West Ham United FC vs. Wolverhampton Wanderers FC: O/U 2.5",
-                "outcomes": '["Over", "Under"]',
-                "outcomePrices": '["0.52", "0.48"]',
-                "clobTokenIds": '["total-over", "total-under"]',
+                "outcomes": ["Over", "Under"],
+                "outcomePrices": ["0.52", "0.48"],
+                "clobTokenIds": ["total-over", "total-under"],
                 "active": True,
                 "closed": False,
                 "archived": False,
@@ -1196,9 +1328,7 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
                 bookmakers=["polymarket"],
             )
 
-        self.assertEqual(len(events), 1)
-        markets = events[0]["bookmakers"][0]["markets"]
-        self.assertEqual([market["key"] for market in markets], ["totals"])
+        self.assertEqual(events, [])
 
     async def test_fetch_events_async_live_mode_skips_future_events_without_live_state(self) -> None:
         event = _sample_event(slug="future-game")
