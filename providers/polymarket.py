@@ -3056,6 +3056,7 @@ def _pick_match_markets(
     has_draw_prompt = False
     spread_candidates_by_line: Dict[float, Dict[str, dict]] = {}
     totals_candidates_by_line: Dict[float, Dict[str, dict]] = {}
+    collected: List[dict] = []
 
     for market in (event.get("markets") or []):
         if not isinstance(market, dict):
@@ -3121,31 +3122,52 @@ def _pick_match_markets(
             home_team,
             away_team,
         )
-        if spread_candidate is not None:
+        if spread_candidate is not None and "spreads" in requested_markets:
             direct_team_index = None
+            opposite_team_index = None
             for idx, outcome_token in enumerate(outcome_tokens):
                 if outcome_token == spread_candidate["team_token"]:
                     direct_team_index = idx
-                    break
-            if direct_team_index is not None:
-                line_bucket = spread_candidates_by_line.setdefault(
-                    spread_candidate["abs_line"],
-                    {},
-                )
-                line_bucket[spread_candidate["team_token"]] = {
-                    "team_name": spread_candidate["team_name"],
-                    "line": (
-                        spread_candidate["line"]
-                        if spread_candidate["team_token"] == _team_token(home_team)
-                        else -spread_candidate["line"]
+                elif outcome_token in {home_token, away_token}:
+                    opposite_team_index = idx
+            if direct_team_index is not None and opposite_team_index is not None:
+                direct_team_name = spread_candidate["team_name"]
+                opposite_team_token = outcome_tokens[opposite_team_index]
+                opposite_team_name = home_team if opposite_team_token == home_token else away_team
+                direct_outcome = {
+                    **_market_outcome_row(
+                        direct_team_name,
+                        quote_details[direct_team_index]["odds"],
+                        quote_details[direct_team_index].get("stake"),
+                        quote_details[direct_team_index].get("raw_percentage_odds"),
+                        quote_details[direct_team_index].get("quote_source"),
+                        quote_details[direct_team_index].get("observed_at"),
+                        quote_details[direct_team_index].get("last_updated"),
                     ),
-                    "odds": quote_details[direct_team_index]["odds"],
-                    "stake": quote_details[direct_team_index].get("stake"),
-                    "raw_percentage_odds": quote_details[direct_team_index].get("raw_percentage_odds"),
-                    "quote_source": quote_details[direct_team_index].get("quote_source"),
-                    "observed_at": quote_details[direct_team_index].get("observed_at"),
-                    "last_updated": quote_details[direct_team_index].get("last_updated"),
+                    "point": spread_candidate["line"],
                 }
+                opposite_outcome = {
+                    **_market_outcome_row(
+                        opposite_team_name,
+                        quote_details[opposite_team_index]["odds"],
+                        quote_details[opposite_team_index].get("stake"),
+                        quote_details[opposite_team_index].get("raw_percentage_odds"),
+                        quote_details[opposite_team_index].get("quote_source"),
+                        quote_details[opposite_team_index].get("observed_at"),
+                        quote_details[opposite_team_index].get("last_updated"),
+                    ),
+                    "point": round(-spread_candidate["line"], 6),
+                }
+                ordered_outcomes = [direct_outcome, opposite_outcome]
+                if ordered_outcomes[0]["name"] != home_team:
+                    ordered_outcomes.reverse()
+                collected.append(
+                    {
+                        "key": "spreads",
+                        "outcomes": ordered_outcomes,
+                        "volume": _safe_float(market.get("volumeNum") or market.get("volume")) or 0.0,
+                    }
+                )
                 continue
 
         if "draw" in question:
@@ -3227,7 +3249,6 @@ def _pick_match_markets(
                 elif team_token == away_token:
                     yes_by_team[away_token] = dict(yes_quote)
 
-    collected: List[dict] = []
     if direct_candidates:
         best = max(direct_candidates, key=lambda item: item.get("volume", 0.0))
         outcomes = best["outcomes"]
@@ -3368,45 +3389,6 @@ def _pick_match_markets(
             }
         )
 
-    if "spreads" in requested_markets:
-        home_token = _team_token(home_team)
-        away_token = _team_token(away_team)
-        for line_bucket in spread_candidates_by_line.values():
-            home_spread = line_bucket.get(home_token)
-            away_spread = line_bucket.get(away_token)
-            if not isinstance(home_spread, dict) or not isinstance(away_spread, dict):
-                continue
-            collected.append(
-                {
-                    "key": "spreads",
-                    "outcomes": [
-                        {
-                            **_market_outcome_row(
-                                home_team,
-                                home_spread["odds"],
-                                _safe_float(home_spread.get("stake")),
-                                home_spread.get("raw_percentage_odds"),
-                                home_spread.get("quote_source"),
-                                home_spread.get("observed_at"),
-                                home_spread.get("last_updated"),
-                            ),
-                            "point": home_spread["line"],
-                        },
-                        {
-                            **_market_outcome_row(
-                                away_team,
-                                away_spread["odds"],
-                                _safe_float(away_spread.get("stake")),
-                                away_spread.get("raw_percentage_odds"),
-                                away_spread.get("quote_source"),
-                                away_spread.get("observed_at"),
-                                away_spread.get("last_updated"),
-                            ),
-                            "point": away_spread["line"],
-                        },
-                    ],
-                }
-            )
 
     if "totals" in requested_markets:
         for line, total_bucket in totals_candidates_by_line.items():

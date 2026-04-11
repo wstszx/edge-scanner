@@ -37,6 +37,78 @@ class TestBetdexSegmentation(unittest.TestCase):
         self.assertEqual(prices["o2"]["observed_at"], 1773593002.0)
 
 
+class TestPolymarketSegmentation(unittest.TestCase):
+    def test_spread_markets_do_not_flip_opposite_side_probability(self) -> None:
+        event = {
+            "id": "273325",
+            "slug": "mls-clt-nas-2026-04-11-more-markets",
+            "title": "Charlotte FC vs. Nashville SC - More Markets",
+            "active": True,
+            "closed": False,
+            "archived": False,
+            "startTime": "2026-04-11T23:30:00Z",
+            "tags": [
+                {"id": "1", "slug": "sports"},
+                {"id": "999", "slug": "mls"},
+            ],
+            "markets": [
+                {
+                    "question": "Spread: Charlotte FC (-2.5)",
+                    "outcomes": '["Charlotte FC", "Nashville SC"]',
+                    "outcomePrices": '["0.06", "0.94"]',
+                    "clobTokenIds": '["tok-home-yes", "tok-home-no"]',
+                    "volumeNum": 216.759001,
+                    "active": True,
+                    "closed": False,
+                    "archived": False,
+                    "acceptingOrders": True,
+                },
+                {
+                    "question": "Spread: Nashville SC (-2.5)",
+                    "outcomes": '["Nashville SC", "Charlotte FC"]',
+                    "outcomePrices": '["0.0455", "0.9545"]',
+                    "clobTokenIds": '["tok-away-yes", "tok-away-no"]',
+                    "volumeNum": 183.189888,
+                    "active": True,
+                    "closed": False,
+                    "archived": False,
+                    "acceptingOrders": True,
+                },
+            ],
+        }
+
+        market_list = polymarket._pick_match_markets(
+            event,
+            home_team="Charlotte FC",
+            away_team="Nashville SC",
+            requested_markets={"spreads"},
+            now_utc=dt.datetime(2026, 4, 11, 12, 0, tzinfo=dt.timezone.utc),
+            clob_quote_map={},
+        )
+
+        spreads = [market for market in market_list if market.get("key") == "spreads"]
+        self.assertEqual(len(spreads), 2)
+
+        by_line = {
+            tuple((outcome.get("name"), outcome.get("point"), outcome.get("price")) for outcome in market.get("outcomes") or []): market
+            for market in spreads
+        }
+        self.assertIn(
+            (
+                ("Charlotte FC", -2.5, 16.666667),
+                ("Nashville SC", 2.5, 1.06383),
+            ),
+            by_line,
+        )
+        self.assertIn(
+            (
+                ("Charlotte FC", 2.5, 1.047669),
+                ("Nashville SC", -2.5, 21.978022),
+            ),
+            by_line,
+        )
+
+
 class TestSxBetSegmentation(unittest.TestCase):
     def test_summary_scaled_implied_odds_are_converted(self) -> None:
         odds = sx_bet._moneyline_decimal_from_summary("53125000000000000000")
@@ -508,3 +580,4 @@ class TestBookmakerFallbackSegmentation(unittest.TestCase):
         market = bookmaker_xyz._fallback_h2h_market(condition, "Home", "Away")
         self.assertIsNotNone(market)
         self.assertEqual(market["key"], "h2h")
+
