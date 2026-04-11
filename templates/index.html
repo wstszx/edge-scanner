@@ -7490,7 +7490,6 @@
 
     function buildArbOpportunityRestoreToken(opp) {
       if (!opp || typeof opp !== 'object') return '';
-      const eventLabel = normalizeArbLegToken(opp.event);
       const commenceTime = `${opp.commence_time || ''}`.trim();
       const market = normalizeArbLegToken(opp.market);
       const marketPoint =
@@ -7498,14 +7497,18 @@
           ? ''
           : normalizeArbLegToken(opp.market_point);
       const sport = normalizeArbLegToken(opp.sport_display || opp.sport);
-      return [eventLabel, commenceTime, sport, market, marketPoint].join('::');
+      return [commenceTime, sport, market, marketPoint].join('::');
     }
 
     function buildArbOpportunityStableKey(opp) {
       if (!opp || typeof opp !== 'object') return '';
       const odds = Array.isArray(opp.best_odds) ? opp.best_odds.slice(0, 3) : [];
       const legSignature = odds
-        .map((item) => buildArbLegIdentity(item?.outcome, item?.point))
+        .map((item) => {
+          const bookmaker = normalizeArbLegToken(item?.bookmaker_key || item?.bookmaker);
+          const legIdentity = buildArbLegIdentity(item?.outcome, item?.point);
+          return bookmaker || legIdentity ? `${bookmaker}::${legIdentity}` : '';
+        })
         .filter(Boolean)
         .sort()
         .join('|');

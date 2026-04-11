@@ -1954,6 +1954,72 @@ class BrowserScanFlowTests(unittest.TestCase):
 
         self.assertEqual(len(run_scan_calls), 2)
 
+    def test_browser_calculator_selection_survives_refresh_when_event_metadata_shifts(self) -> None:
+        run_scan_calls: list[dict] = []
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+
+        refreshed_opp = _sample_arbitrage_opportunity(over_price=2.63)
+        refreshed_opp['event_id'] = 'evt-1-refresh'
+        refreshed_opp['event'] = 'Vancouver Canucks vs Seattle Kraken'
+
+        scan_results = [
+            _sample_scan_result(opportunities=[_sample_arbitrage_opportunity(over_price=2.37)]),
+            _sample_scan_result(opportunities=[refreshed_opp]),
+        ]
+
+        def _fake_run_scan(**kwargs):
+            run_scan_calls.append(copy.deepcopy(kwargs))
+            idx = min(len(run_scan_calls) - 1, len(scan_results) - 1)
+            return copy.deepcopy(scan_results[idx])
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(app_module, 'ENV_PROVIDER_ONLY_MODE', True))
+            stack.enter_context(patch.object(app_module, '_start_background_provider_services'))
+            stack.enter_context(patch.object(app_module, 'get_history_manager', return_value=history_manager))
+            stack.enter_context(patch.object(app_module, 'get_notifier', return_value=notifier))
+            stack.enter_context(patch.object(app_module, 'run_scan', side_effect=_fake_run_scan))
+
+            server = _LiveServer(app_module.app)
+            server.start()
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(headless=True)
+                    context = browser.new_context()
+                    page = context.new_page()
+                    page.route('https://fonts.googleapis.com/*', lambda route: route.abort())
+                    page.route('https://fonts.gstatic.com/*', lambda route: route.abort())
+                    page.goto(server.base_url, wait_until='domcontentloaded')
+
+                    self._configure_selected_provider(page)
+
+                    with page.expect_response(lambda response: response.url.endswith('/scan') and response.request.method == 'POST'):
+                        page.evaluate('document.getElementById(\'scan-form\').requestSubmit()')
+
+                    page.wait_for_selector('#arb-desktop-list .arb-opportunity-card')
+                    page.click('#arb-desktop-list .arb-opportunity-card')
+                    page.wait_for_selector('#arb-calc-body:not(.hidden)')
+
+                    page.fill('#arb-calc-stake-a', '41.25')
+                    page.dispatch_event('#arb-calc-stake-a', 'input')
+                    page.dispatch_event('#arb-calc-stake-a', 'change')
+                    page.check('#arb-calc-live-odds-toggle')
+
+                    with page.expect_response(lambda response: response.url.endswith('/scan') and response.request.method == 'POST'):
+                        page.evaluate('document.getElementById(\'scan-form\').requestSubmit()')
+
+                    self._wait_for(lambda: len(run_scan_calls) >= 2)
+                    self.assertFalse(page.locator('#arb-calc-body').evaluate('el => el.classList.contains(\'hidden\')'))
+                    self.assertAlmostEqual(float(page.input_value('#arb-calc-stake-a')), 41.25, places=2)
+                    self._wait_for(lambda: abs(float(page.input_value('#arb-calc-odds-a')) - 2.63) < 0.01)
+
+                    browser.close()
+            finally:
+                server.stop()
+
+        self.assertEqual(len(run_scan_calls), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
