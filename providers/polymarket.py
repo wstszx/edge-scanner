@@ -127,6 +127,7 @@ SPORT_TAG_CACHE: Dict[str, object] = {
 EVENTS_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
     "events": [],
+    "cache_key": "",
 }
 CLOB_BOOK_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
@@ -140,6 +141,7 @@ SCAN_CACHE_CONTEXT: Dict[str, object] = {
     "active": False,
     "events": None,
     "events_meta": {},
+    "events_cache_key": "",
     "clob_entries": {},
     "clob_quotes": {},
 }
@@ -223,6 +225,7 @@ def enable_scan_cache() -> None:
         SCAN_CACHE_CONTEXT["active"] = True
         SCAN_CACHE_CONTEXT["events"] = None
         SCAN_CACHE_CONTEXT["events_meta"] = {}
+        SCAN_CACHE_CONTEXT["events_cache_key"] = ""
         SCAN_CACHE_CONTEXT["clob_entries"] = {}
         SCAN_CACHE_CONTEXT["clob_quotes"] = {}
 
@@ -232,8 +235,20 @@ def disable_scan_cache() -> None:
         SCAN_CACHE_CONTEXT["active"] = False
         SCAN_CACHE_CONTEXT["events"] = None
         SCAN_CACHE_CONTEXT["events_meta"] = {}
+        SCAN_CACHE_CONTEXT["events_cache_key"] = ""
         SCAN_CACHE_CONTEXT["clob_entries"] = {}
         SCAN_CACHE_CONTEXT["clob_quotes"] = {}
+
+
+def _events_cache_key(tag_ids: Optional[Sequence[object]] = None) -> str:
+    normalized = [
+        _normalize_text(tag_id)
+        for tag_id in (tag_ids or [])
+        if _normalize_text(tag_id)
+    ]
+    if normalized:
+        return "tags:" + ",".join(sorted(set(normalized)))
+    return f"tags:{POLYMARKET_GAME_TAG_ID or '100639'}"
 
 
 def _websocket_realtime_enabled() -> bool:
@@ -3448,16 +3463,23 @@ def _load_active_game_events(
     backoff_seconds: float,
     page_size: int,
     max_pages: int,
+    tag_ids: Optional[Sequence[object]] = None,
 ) -> Tuple[List[dict], dict]:
+    cache_key = _events_cache_key(tag_ids)
     if _scan_cache_active():
         with SCAN_CACHE_LOCK:
             cached_events = SCAN_CACHE_CONTEXT.get("events")
             cached_meta = dict(SCAN_CACHE_CONTEXT.get("events_meta") or {})
-        if isinstance(cached_events, list):
+            cached_key = _normalize_text(SCAN_CACHE_CONTEXT.get("events_cache_key"))
+        if isinstance(cached_events, list) and cached_key == cache_key:
             return cached_events, {**cached_meta, "pages_fetched": 0, "retries_used": 0, "cache": "scan_hit"}
     ttl = _int_or_default(POLYMARKET_EVENTS_CACHE_TTL_RAW, 12, min_value=0)
     now = time.time()
-    cache_valid = ttl > 0 and now < float(EVENTS_CACHE.get("expires_at", 0.0))
+    cache_valid = (
+        ttl > 0
+        and now < float(EVENTS_CACHE.get("expires_at", 0.0))
+        and _normalize_text(EVENTS_CACHE.get("cache_key")) == cache_key
+    )
     cached_events = EVENTS_CACHE.get("events")
     if cache_valid and isinstance(cached_events, list):
         return cached_events, {"pages_fetched": 0, "retries_used": 0, "cache": "hit"}
@@ -3467,11 +3489,16 @@ def _load_active_game_events(
     pages_fetched = 0
     offset = 0
     now_iso = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    requested_tag_ids = [
+        _normalize_text(tag_id)
+        for tag_id in (tag_ids or [])
+        if _normalize_text(tag_id)
+    ] or [POLYMARKET_GAME_TAG_ID or "100639"]
     for _page in range(max_pages):
         payload, retries_used = _request_json(
             "events",
             {
-                "tag_id": POLYMARKET_GAME_TAG_ID or "100639",
+                "tag_id": requested_tag_ids[0],
                 "active": "true",
                 "closed": "false",
                 "archived": "false",
@@ -3495,13 +3522,16 @@ def _load_active_game_events(
             break
         offset += page_size
 
-    EVENTS_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+    expires_base = time.time()
+    EVENTS_CACHE["expires_at"] = expires_base + ttl if ttl > 0 else expires_base
     EVENTS_CACHE["events"] = all_events
+    EVENTS_CACHE["cache_key"] = cache_key
     meta = {"pages_fetched": pages_fetched, "retries_used": total_retries, "cache": "miss"}
     if _scan_cache_active():
         with SCAN_CACHE_LOCK:
             SCAN_CACHE_CONTEXT["events"] = list(all_events)
             SCAN_CACHE_CONTEXT["events_meta"] = dict(meta)
+            SCAN_CACHE_CONTEXT["events_cache_key"] = cache_key
     return all_events, meta
 
 
@@ -3511,16 +3541,23 @@ async def _load_active_game_events_async(
     backoff_seconds: float,
     page_size: int,
     max_pages: int,
+    tag_ids: Optional[Sequence[object]] = None,
 ) -> Tuple[List[dict], dict]:
+    cache_key = _events_cache_key(tag_ids)
     if _scan_cache_active():
         with SCAN_CACHE_LOCK:
             cached_events = SCAN_CACHE_CONTEXT.get("events")
             cached_meta = dict(SCAN_CACHE_CONTEXT.get("events_meta") or {})
-        if isinstance(cached_events, list):
+            cached_key = _normalize_text(SCAN_CACHE_CONTEXT.get("events_cache_key"))
+        if isinstance(cached_events, list) and cached_key == cache_key:
             return cached_events, {**cached_meta, "pages_fetched": 0, "retries_used": 0, "cache": "scan_hit"}
     ttl = _int_or_default(POLYMARKET_EVENTS_CACHE_TTL_RAW, 12, min_value=0)
     now = time.time()
-    cache_valid = ttl > 0 and now < float(EVENTS_CACHE.get("expires_at", 0.0))
+    cache_valid = (
+        ttl > 0
+        and now < float(EVENTS_CACHE.get("expires_at", 0.0))
+        and _normalize_text(EVENTS_CACHE.get("cache_key")) == cache_key
+    )
     cached_events = EVENTS_CACHE.get("events")
     if cache_valid and isinstance(cached_events, list):
         return cached_events, {"pages_fetched": 0, "retries_used": 0, "cache": "hit"}
@@ -3530,11 +3567,16 @@ async def _load_active_game_events_async(
             with SCAN_CACHE_LOCK:
                 cached_events = SCAN_CACHE_CONTEXT.get("events")
                 cached_meta = dict(SCAN_CACHE_CONTEXT.get("events_meta") or {})
-            if isinstance(cached_events, list):
+                cached_key = _normalize_text(SCAN_CACHE_CONTEXT.get("events_cache_key"))
+            if isinstance(cached_events, list) and cached_key == cache_key:
                 return cached_events, {**cached_meta, "pages_fetched": 0, "retries_used": 0, "cache": "scan_hit"}
     async with _events_cache_async_lock():
         now = time.time()
-        cache_valid = ttl > 0 and now < float(EVENTS_CACHE.get("expires_at", 0.0))
+        cache_valid = (
+            ttl > 0
+            and now < float(EVENTS_CACHE.get("expires_at", 0.0))
+            and _normalize_text(EVENTS_CACHE.get("cache_key")) == cache_key
+        )
         cached_events = EVENTS_CACHE.get("events")
         if cache_valid and isinstance(cached_events, list):
             return cached_events, {"pages_fetched": 0, "retries_used": 0, "cache": "hit"}
@@ -3544,12 +3586,17 @@ async def _load_active_game_events_async(
         pages_fetched = 0
         offset = 0
         now_iso = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        requested_tag_ids = [
+            _normalize_text(tag_id)
+            for tag_id in (tag_ids or [])
+            if _normalize_text(tag_id)
+        ] or [POLYMARKET_GAME_TAG_ID or "100639"]
         for _page in range(max_pages):
             payload, retries_used = await _request_json_async(
                 client,
                 "events",
                 {
-                    "tag_id": POLYMARKET_GAME_TAG_ID or "100639",
+                    "tag_id": requested_tag_ids[0],
                     "active": "true",
                     "closed": "false",
                     "archived": "false",
@@ -3573,8 +3620,10 @@ async def _load_active_game_events_async(
                 break
             offset += page_size
 
-        EVENTS_CACHE["expires_at"] = now + ttl if ttl > 0 else now
+        expires_base = time.time()
+        EVENTS_CACHE["expires_at"] = expires_base + ttl if ttl > 0 else expires_base
         EVENTS_CACHE["events"] = all_events
+        EVENTS_CACHE["cache_key"] = cache_key
         meta = {
             "pages_fetched": pages_fetched,
             "retries_used": total_retries,
@@ -3584,6 +3633,7 @@ async def _load_active_game_events_async(
             with SCAN_CACHE_LOCK:
                 SCAN_CACHE_CONTEXT["events"] = list(all_events)
                 SCAN_CACHE_CONTEXT["events_meta"] = dict(meta)
+                SCAN_CACHE_CONTEXT["events_cache_key"] = cache_key
         return all_events, meta
 
 
@@ -3745,19 +3795,26 @@ async def fetch_events_async(
         _apply_realtime_stats(stats, realtime_manager.snapshot())
 
     client = await get_shared_client(PROVIDER_KEY, timeout=float(timeout), follow_redirects=True)
-    sport_tag_mapping, payload_bundle = await asyncio.gather(
-        _load_sport_tag_mapping_async(
-            client=client,
-            retries=retries,
-            backoff_seconds=backoff,
-        ),
-        _load_active_game_events_async(
-            client=client,
-            retries=retries,
-            backoff_seconds=backoff,
-            page_size=page_size,
-            max_pages=max_pages,
-        ),
+    sport_tag_mapping = await _load_sport_tag_mapping_async(
+        client=client,
+        retries=retries,
+        backoff_seconds=backoff,
+    )
+    requested_event_tag_ids = []
+    for alias in SPORT_ALIASES.get(sport_key, ()):
+        requested_event_tag_ids.extend(sorted(sport_tag_mapping.get(_normalize_token(alias), set())))
+    normalized_requested_event_tag_ids = [
+        _normalize_text(tag_id)
+        for tag_id in requested_event_tag_ids
+        if _normalize_text(tag_id)
+    ]
+    payload_bundle = await _load_active_game_events_async(
+        client=client,
+        retries=retries,
+        backoff_seconds=backoff,
+        page_size=page_size,
+        max_pages=max_pages,
+        tag_ids=normalized_requested_event_tag_ids or None,
     )
     payload, payload_meta = payload_bundle
     stats["payload_cache"] = payload_meta.get("cache", "miss")

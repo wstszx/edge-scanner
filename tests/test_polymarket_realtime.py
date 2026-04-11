@@ -422,6 +422,17 @@ class PolymarketRealtimeTests(unittest.TestCase):
 
 
 class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        polymarket.disable_scan_cache()
+        polymarket.EVENTS_CACHE["expires_at"] = 0.0
+        polymarket.EVENTS_CACHE["events"] = []
+        polymarket.SPORT_TAG_CACHE["expires_at"] = 0.0
+        polymarket.SPORT_TAG_CACHE["mapping"] = {}
+        polymarket.CLOB_BOOK_CACHE["expires_at"] = 0.0
+        polymarket.CLOB_BOOK_CACHE["entries"] = {}
+        polymarket.CLOB_QUOTE_CACHE["expires_at"] = 0.0
+        polymarket.CLOB_QUOTE_CACHE["entries"] = {}
+
     def test_pick_match_markets_builds_spreads_market_from_yes_no_spread_questions(self) -> None:
         event = {
             "markets": [
@@ -523,6 +534,169 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(markets[0]["key"], "totals")
         self.assertEqual([outcome["name"] for outcome in markets[0]["outcomes"]], ["Over", "Under"])
         self.assertEqual([outcome["point"] for outcome in markets[0]["outcomes"]], [2.5, 2.5])
+
+    async def test_load_active_game_events_async_reuses_events_cache_on_immediate_second_call(self) -> None:
+        captured_requests = []
+
+        async def _fake_request_json_async(client, path, params=None, retries=0, backoff_seconds=0.0):
+            captured_requests.append({
+                "path": path,
+                "params": dict(params or {}),
+            })
+            await asyncio.sleep(0.01)
+            return ([_sample_event()], 0)
+
+        with (
+            patch.object(polymarket, "POLYMARKET_EVENTS_CACHE_TTL_RAW", "12"),
+            patch.object(polymarket, "_request_json_async", side_effect=_fake_request_json_async),
+        ):
+            first_events, first_meta = await polymarket._load_active_game_events_async(
+                client=object(),
+                retries=0,
+                backoff_seconds=0.0,
+                page_size=200,
+                max_pages=8,
+            )
+            second_events, second_meta = await polymarket._load_active_game_events_async(
+                client=object(),
+                retries=0,
+                backoff_seconds=0.0,
+                page_size=200,
+                max_pages=8,
+            )
+
+        self.assertEqual(len(first_events), 1)
+        self.assertEqual(len(second_events), 1)
+        self.assertEqual(first_meta.get("cache"), "miss")
+        self.assertEqual(second_meta.get("cache"), "hit")
+        self.assertEqual(len(captured_requests), 1)
+
+    async def test_load_active_game_events_async_cache_ttl_starts_after_fetch_completes(self) -> None:
+        captured_requests = []
+        time_values = iter([100.0, 100.0, 115.0, 115.0])
+
+        async def _fake_request_json_async(client, path, params=None, retries=0, backoff_seconds=0.0):
+            captured_requests.append({
+                "path": path,
+                "params": dict(params or {}),
+            })
+            return ([_sample_event("slow-game")], 0)
+
+        def _fake_time():
+            return next(time_values)
+
+        with (
+            patch.object(polymarket, "POLYMARKET_EVENTS_CACHE_TTL_RAW", "12"),
+            patch.object(polymarket, "_request_json_async", side_effect=_fake_request_json_async),
+            patch.object(polymarket.time, "time", side_effect=_fake_time),
+        ):
+            first_events, first_meta = await polymarket._load_active_game_events_async(
+                client=object(),
+                retries=0,
+                backoff_seconds=0.0,
+                page_size=200,
+                max_pages=8,
+            )
+            second_events, second_meta = await polymarket._load_active_game_events_async(
+                client=object(),
+                retries=0,
+                backoff_seconds=0.0,
+                page_size=200,
+                max_pages=8,
+            )
+
+        self.assertEqual(len(first_events), 1)
+        self.assertEqual(len(second_events), 1)
+        self.assertEqual(first_meta.get("cache"), "miss")
+        self.assertEqual(second_meta.get("cache"), "hit")
+        self.assertEqual(len(captured_requests), 1)
+
+    async def test_load_active_game_events_async_uses_requested_sport_tag_ids(self) -> None:
+        captured_requests = []
+
+        async def _fake_request_json_async(client, path, params=None, retries=0, backoff_seconds=0.0):
+            captured_requests.append({
+                "path": path,
+                "params": dict(params or {}),
+            })
+            return ([_sample_event("nba-game")], 0)
+
+        with (
+            patch.object(polymarket, "POLYMARKET_EVENTS_CACHE_TTL_RAW", "12"),
+            patch.object(polymarket, "_request_json_async", side_effect=_fake_request_json_async),
+        ):
+            events, meta = await polymarket._load_active_game_events_async(
+                client=object(),
+                retries=0,
+                backoff_seconds=0.0,
+                page_size=200,
+                max_pages=8,
+                tag_ids=["745"],
+            )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(meta.get("cache"), "miss")
+        self.assertEqual(captured_requests[0]["params"].get("tag_id"), "745")
+
+    async def test_load_active_game_events_async_keeps_cache_separate_per_tag_query(self) -> None:
+        captured_requests = []
+
+        async def _fake_request_json_async(client, path, params=None, retries=0, backoff_seconds=0.0):
+            request_tag = str((params or {}).get("tag_id") or "")
+            captured_requests.append(request_tag)
+            return ([ _sample_event(f"game-{request_tag}") ], 0)
+
+        with (
+            patch.object(polymarket, "POLYMARKET_EVENTS_CACHE_TTL_RAW", "12"),
+            patch.object(polymarket, "_request_json_async", side_effect=_fake_request_json_async),
+        ):
+            first_events, first_meta = await polymarket._load_active_game_events_async(
+                client=object(),
+                retries=0,
+                backoff_seconds=0.0,
+                page_size=200,
+                max_pages=8,
+                tag_ids=["745"],
+            )
+            second_events, second_meta = await polymarket._load_active_game_events_async(
+                client=object(),
+                retries=0,
+                backoff_seconds=0.0,
+                page_size=200,
+                max_pages=8,
+                tag_ids=["899"],
+            )
+
+        self.assertEqual(first_meta.get("cache"), "miss")
+        self.assertEqual(second_meta.get("cache"), "miss")
+        self.assertEqual(captured_requests, ["745", "899"])
+        self.assertEqual(first_events[0].get("slug"), "game-745")
+        self.assertEqual(second_events[0].get("slug"), "game-899")
+
+    async def test_fetch_events_async_uses_sport_specific_tag_query_without_global_prefetch(self) -> None:
+        requested_tag_ids = []
+
+        async def _fake_load_active_game_events_async(**kwargs):
+            tag_ids = kwargs.get("tag_ids")
+            requested_tag_ids.append(list(tag_ids or []))
+            return ([_sample_event("nba-only")], {"cache": "miss", "pages_fetched": 1, "retries_used": 0})
+
+        with (
+            patch.object(polymarket, "_websocket_realtime_enabled", return_value=False),
+            patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={"nba": {"745"}})),
+            patch.object(polymarket, "_load_active_game_events_async", side_effect=_fake_load_active_game_events_async),
+            patch.object(polymarket, "_load_clob_quote_map_async", new=AsyncMock(return_value=({}, {"books_fetched": 0, "book_errors": 0, "retries_used": 0}))),
+            patch.object(polymarket, "get_shared_client", new=AsyncMock(return_value=object())),
+        ):
+            await polymarket.fetch_events_async(
+                "basketball_nba",
+                ["h2h"],
+                ["us"],
+                bookmakers=["polymarket"],
+            )
+
+        self.assertEqual(requested_tag_ids, [["745"]])
+
     async def test_fetch_events_async_prefers_realtime_quotes_before_rest(self) -> None:
         manager = _FakeRealtimeManager(
             quote_map={
