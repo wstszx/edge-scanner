@@ -61,6 +61,7 @@ SX_BET_WS_ENABLED = os.getenv("SX_BET_WS_ENABLED", "1").strip().lower() not in {
 }
 SX_BET_WS_STARTUP_WAIT_SECONDS_RAW = os.getenv("SX_BET_WS_STARTUP_WAIT_SECONDS", "1.5").strip()
 SX_BET_WS_QUOTE_MAX_AGE_SECONDS_RAW = os.getenv("SX_BET_WS_QUOTE_MAX_AGE_SECONDS", "5").strip()
+SX_BET_FIXTURE_STATE_BATCH_SIZE = 20
 
 SX_SPORT_ID_MAP: Dict[str, int] = {
     "basketball_nba": 1,
@@ -438,6 +439,99 @@ def _sx_live_state_payload(*payloads: object) -> Optional[dict]:
             current["updated_at"] = updated_at
         merged = _merge_live_state_payload(merged, current)
     return merged
+
+
+def _sx_fixture_status_live_state_payload(status_code: object) -> Optional[dict]:
+    normalized = _as_int(status_code)
+    if normalized == 2:
+        return {'is_live': True, 'status': 'live'}
+    if normalized in {1, 9}:
+        return {'is_live': False, 'status': 'scheduled'}
+    if normalized in {3, 4, 5, 6, 7, 8}:
+        return {'is_live': False, 'status': 'final'}
+    return None
+
+
+def _sx_live_scores_live_state_payload(payload: object) -> Optional[dict]:
+    if not isinstance(payload, dict):
+        return None
+    current_period = _normalize_text(payload.get('currentPeriod'))
+    period_time = _normalize_text(payload.get('periodTime'))
+    if not current_period and not period_time:
+        return None
+    live_state = {'is_live': True, 'status': 'live'}
+    if current_period:
+        live_state['period'] = current_period
+    if period_time:
+        live_state['clock'] = period_time
+    return live_state
+
+
+async def _load_fixture_status_map_async(
+    client: httpx.AsyncClient,
+    event_ids: Sequence[str],
+    retries: int,
+    backoff_seconds: float,
+) -> Dict[str, dict]:
+    normalized_ids = list(
+        dict.fromkeys(
+            item for item in (_normalize_text(event_id) for event_id in event_ids) if item
+        )
+    )
+    if not normalized_ids:
+        return {}
+    merged: Dict[str, dict] = {}
+    for chunk in _chunked(normalized_ids, SX_BET_FIXTURE_STATE_BATCH_SIZE):
+        payload, _ = await _request_json_async(
+            client,
+            'fixture/status',
+            params={'sportXEventIds': ','.join(chunk)},
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+        )
+        if not isinstance(payload, dict):
+            continue
+        data = payload.get('data')
+        if isinstance(data, dict):
+            merged.update(dict(data))
+    return merged
+
+
+async def _load_live_scores_map_async(
+    client: httpx.AsyncClient,
+    event_ids: Sequence[str],
+    retries: int,
+    backoff_seconds: float,
+) -> Dict[str, dict]:
+    normalized_ids = list(
+        dict.fromkeys(
+            item for item in (_normalize_text(event_id) for event_id in event_ids) if item
+        )
+    )
+    if not normalized_ids:
+        return {}
+    mapped: Dict[str, dict] = {}
+    for chunk in _chunked(normalized_ids, SX_BET_FIXTURE_STATE_BATCH_SIZE):
+        payload, _ = await _request_json_async(
+            client,
+            'live-scores',
+            params={'sportXEventIds': ','.join(chunk)},
+            retries=retries,
+            backoff_seconds=backoff_seconds,
+        )
+        if not isinstance(payload, dict):
+            continue
+        data = payload.get('data')
+        if not isinstance(data, list):
+            continue
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            event_id = _normalize_text(row.get('sportXEventId'))
+            if not event_id:
+                continue
+            mapped[event_id] = dict(row)
+    return mapped
 
 
 def _safe_float(value) -> Optional[float]:
@@ -2780,6 +2874,37 @@ async def fetch_events_async(
     stats["markets_rows_missing_team"] = int(meta.get("markets_rows_missing_team", 0) or 0)
     stats["fixtures_payload_count"] = len(fixtures)
 
+    if live_context and _normalize_text(stats.get('fixture_source_used')) == 'markets_active':
+        fixture_status_map = await _load_fixture_status_map_async(
+            client,
+            [fixture.get('eventId') or fixture.get('id') for fixture in fixtures if isinstance(fixture, dict)],
+            retries=retries,
+            backoff_seconds=backoff,
+        )
+        live_scores_map = await _load_live_scores_map_async(
+            client,
+            [fixture.get('eventId') or fixture.get('id') for fixture in fixtures if isinstance(fixture, dict)],
+            retries=retries,
+            backoff_seconds=backoff,
+        )
+        for fixture in fixtures:
+            if not isinstance(fixture, dict):
+                continue
+            fixture_event_id = _normalize_text(fixture.get('eventId') or fixture.get('id'))
+            if not fixture_event_id:
+                continue
+            fixture_status_row = fixture_status_map.get(fixture_event_id)
+            if not isinstance(fixture_status_row, dict):
+                fixture_status_row = {}
+            fixture['live_state'] = _merge_live_state_payload(
+                fixture.get('live_state') if isinstance(fixture.get('live_state'), dict) else None,
+                _sx_fixture_status_live_state_payload(fixture_status_row.get('status')),
+            )
+            fixture['live_state'] = _merge_live_state_payload(
+                fixture.get('live_state') if isinstance(fixture.get('live_state'), dict) else None,
+                _sx_live_scores_live_state_payload(live_scores_map.get(fixture_event_id)),
+            )
+
     candidates: List[dict] = []
     unresolved_hashes: List[str] = []
     candidate_hashes: List[str] = []
@@ -2829,6 +2954,10 @@ async def fetch_events_async(
                     and market_hash
                 ):
                     unresolved_hashes.append(str(market_hash))
+                candidate_live_state = _merge_live_state_payload(
+                    fixture.get('live_state') if isinstance(fixture.get('live_state'), dict) else None,
+                    _sx_live_state_payload(market),
+                )
                 candidates.append(
                     {
                         "id": fixture_id or str(market_hash or ""),
@@ -2843,6 +2972,7 @@ async def fetch_events_async(
                         **normalized_market,
                     }
                 )
+                candidates[-1]['live_state'] = candidate_live_state
 
     if True:
         odds_map: Dict[str, dict] = {}

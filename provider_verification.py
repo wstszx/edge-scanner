@@ -73,6 +73,7 @@ class ProviderStatus:
     errors: list[str]
     notes: list[str]
     docs: list[str]
+    sports: list[dict[str, Any]]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -84,6 +85,7 @@ class ProviderStatus:
             "errors": list(self.errors),
             "notes": list(self.notes),
             "docs": list(self.docs),
+            "sports": [dict(item) for item in self.sports if isinstance(item, dict)],
         }
 
 
@@ -130,6 +132,17 @@ def _provider_error_list(summary: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _provider_sports(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    sports = summary.get("sports")
+    if not isinstance(sports, list):
+        return rows
+    for item in sports:
+        if isinstance(item, dict):
+            rows.append(dict(item))
+    return rows
+
+
 def _provider_upstream_summary(provider_key: str, summary: dict[str, Any]) -> dict[str, Any]:
     return summary
 
@@ -157,6 +170,37 @@ def _provider_notes(provider_key: str, summary: dict[str, Any], stake_amount: fl
     sports = summary.get("sports")
     if isinstance(sports, list):
         for sport_row in sports:
+            if provider_key == 'artline' and isinstance(sport_row, dict):
+                artline_stats = sport_row.get('stats')
+                if isinstance(artline_stats, dict):
+                    live_all_sports_available = artline_stats.get('live_all_sports_available')
+                    live_all_total_games = int(artline_stats.get('live_all_total_games', 0) or 0)
+                    if bool(artline_stats.get('live_feed_empty')) and live_all_total_games > 0 and isinstance(live_all_sports_available, dict):
+                        sport_counts = ', '.join(
+                            f'{_compact_text(sport_name)}={int(count or 0)}'
+                            for sport_name, count in live_all_sports_available.items()
+                            if _compact_text(sport_name) and int(count or 0) > 0
+                        )
+                        if sport_counts:
+                            notes.append(f'Requested live sport is empty, but Artline live feed currently has other sports: {sport_counts}.')
+                            break
+            if provider_key == 'sx_bet' and isinstance(sport_row, dict):
+                sx_stats = sport_row.get('stats')
+                live_filter_stats = sport_row.get('live_filter_stats')
+                events_fetched_raw = int(sport_row.get('events_fetched_raw', 0) or 0)
+                events_after_live_filter = int(sport_row.get('events_after_live_filter', 0) or 0)
+                dropped_not_live_state = 0
+                if isinstance(live_filter_stats, dict):
+                    dropped_not_live_state = int(live_filter_stats.get('dropped_not_live_state', 0) or 0)
+                if (
+                    isinstance(sx_stats, dict)
+                    and _compact_text(sx_stats.get('fixture_source_used')) == 'markets_active'
+                    and events_fetched_raw > 0
+                    and events_after_live_filter == 0
+                    and dropped_not_live_state > 0
+                ):
+                    notes.append('Live-mode source returned active SX Bet markets, but all candidate events were filtered as not live.')
+                    break
             if not isinstance(sport_row, dict):
                 continue
             stats = sport_row.get("stats")
@@ -208,6 +252,7 @@ def summarize_provider_statuses(
                 errors=errors,
                 notes=notes,
                 docs=OFFICIAL_DOCS.get(provider_key, []),
+                sports=_provider_sports(summary),
             )
         )
     return statuses
@@ -416,6 +461,41 @@ def _markdown_provider_table(provider_rows: Sequence[dict[str, Any]]) -> list[st
     return lines
 
 
+def _provider_live_funnel_lines(provider_rows: Sequence[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for row in provider_rows:
+        if not isinstance(row, dict):
+            continue
+        sports = row.get("sports")
+        if not isinstance(sports, list):
+            continue
+        provider_name = _compact_text(row.get("name") or row.get("key") or "unknown_provider")
+        for sport in sports:
+            if not isinstance(sport, dict):
+                continue
+            raw_count = sport.get("events_fetched_raw")
+            after_filter_count = sport.get("events_after_live_filter")
+            stats = sport.get("live_filter_stats")
+            if raw_count is None and after_filter_count is None and not isinstance(stats, dict):
+                continue
+            sport_key = _compact_text(sport.get("sport_key") or "unknown_sport")
+            parts: list[str] = []
+            if raw_count is not None:
+                parts.append(f"raw={raw_count}")
+            if after_filter_count is not None:
+                parts.append(f"after_filter={after_filter_count}")
+            if isinstance(stats, dict):
+                dropped_not_live_state = stats.get("dropped_not_live_state")
+                dropped_past = stats.get("dropped_past")
+                if dropped_not_live_state is not None:
+                    parts.append(f"dropped_not_live_state={dropped_not_live_state}")
+                if dropped_past is not None:
+                    parts.append(f"dropped_past={dropped_past}")
+            if parts:
+                lines.append(f"{provider_name} [{sport_key}] {' '.join(parts)}")
+    return lines
+
+
 def _markdown_top_items(
     title: str,
     rows: Sequence[dict[str, Any]],
@@ -461,6 +541,18 @@ def report_to_markdown(report: dict[str, Any]) -> str:
         "",
     ]
     lines.extend(_markdown_provider_table(report.get("providers") or []))
+    live_funnel_lines = _provider_live_funnel_lines(report.get("providers") or [])
+    lines.extend(
+        [
+            "",
+            "## Live Funnel Evidence",
+            "",
+        ]
+    )
+    if not live_funnel_lines:
+        lines.append("- none")
+    else:
+        lines.extend(f"- {item}" for item in live_funnel_lines)
     lines.extend(
         [
             "",
@@ -588,6 +680,10 @@ def build_console_summary(report: dict[str, Any], written: Optional[dict[str, st
     ]
     if reason_code:
         lines.append(f"reason_code={reason_code}")
+    live_funnel_lines = _provider_live_funnel_lines(report.get("providers") or [])
+    if live_funnel_lines:
+        lines.append("live funnel:")
+        lines.extend(f"- {item}" for item in live_funnel_lines)
     provider_alerts = collect_provider_alerts(report)
     result_alerts = collect_result_alerts(report)
     if provider_alerts:
