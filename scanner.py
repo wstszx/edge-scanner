@@ -437,6 +437,60 @@ def _normalize_match_team_token(value: object) -> str:
     return text
 
 
+SPORT_TEAM_ALIASES: Dict[str, Dict[str, str]] = {
+    "basketball_nba": {
+        "hawks": "atlanta hawks",
+        "celtics": "boston celtics",
+        "nets": "brooklyn nets",
+        "hornets": "charlotte hornets",
+        "bulls": "chicago bulls",
+        "cavaliers": "cleveland cavaliers",
+        "mavericks": "dallas mavericks",
+        "nuggets": "denver nuggets",
+        "pistons": "detroit pistons",
+        "warriors": "golden state warriors",
+        "rockets": "houston rockets",
+        "pacers": "indiana pacers",
+        "clippers": "los angeles clippers",
+        "lakers": "los angeles lakers",
+        "grizzlies": "memphis grizzlies",
+        "heat": "miami heat",
+        "bucks": "milwaukee bucks",
+        "timberwolves": "minnesota timberwolves",
+        "pelicans": "new orleans pelicans",
+        "knicks": "new york knicks",
+        "thunder": "oklahoma city thunder",
+        "magic": "orlando magic",
+        "76ers": "philadelphia 76ers",
+        "sixers": "philadelphia 76ers",
+        "suns": "phoenix suns",
+        "blazers": "portland trail blazers",
+        "trail blazers": "portland trail blazers",
+        "kings": "sacramento kings",
+        "spurs": "san antonio spurs",
+        "raptors": "toronto raptors",
+        "jazz": "utah jazz",
+        "wizards": "washington wizards",
+    }
+}
+
+
+def _canonicalize_team_name(value: Optional[str], sport_key: Optional[str] = None) -> str:
+    normalized = _normalize_team_name(value)
+    if not normalized:
+        return ""
+    aliases = SPORT_TEAM_ALIASES.get(_normalize_line_component(sport_key)) or {}
+    return aliases.get(normalized, normalized)
+
+
+def _canonicalize_outcome_name(value: object, sport_key: Optional[str] = None) -> str:
+    normalized = _normalize_line_component(value)
+    if not normalized:
+        return ""
+    aliases = SPORT_TEAM_ALIASES.get(_normalize_line_component(sport_key)) or {}
+    return aliases.get(normalized, normalized)
+
+
 def _cross_provider_pair_norm(home_team: object, away_team: object) -> str:
     home = _normalize_match_team_token(home_team)
     away = _normalize_match_team_token(away_team)
@@ -511,8 +565,9 @@ def _nearest_cross_provider_candidate(
         and str(record.get("provider") or "").strip()
         and str(record.get("provider") or "").strip() != str(source.get("provider") or "").strip()
     ]
-    source_home_norm = _normalize_team_name(source.get("home_team"))
-    source_away_norm = _normalize_team_name(source.get("away_team"))
+    sport_key = _normalize_line_component(source.get("sport_key"))
+    source_home_norm = _canonicalize_team_name(source.get("home_team"), sport_key)
+    source_away_norm = _canonicalize_team_name(source.get("away_team"), sport_key)
     source_pair_norm = str(source.get("pair_norm") or "").strip()
     source_ts = source.get("commence_ts")
     source_time = str(source.get("commence_time") or "").strip()
@@ -520,8 +575,9 @@ def _nearest_cross_provider_candidate(
     best_candidate: Optional[dict] = None
     best_rank: Optional[Tuple[int, int, float, float]] = None
     for record in other_records:
-        home_norm = _normalize_team_name(record.get("home_team"))
-        away_norm = _normalize_team_name(record.get("away_team"))
+        record_sport_key = _normalize_line_component(record.get("sport_key")) or sport_key
+        home_norm = _canonicalize_team_name(record.get("home_team"), record_sport_key)
+        away_norm = _canonicalize_team_name(record.get("away_team"), record_sport_key)
         if not home_norm and not away_norm:
             continue
         direct_home = _team_similarity(source_home_norm, home_norm)
@@ -1817,8 +1873,8 @@ def _event_team_key(event: dict) -> Optional[Tuple[str, str, str]]:
 
 def _event_team_key_normalized(event: dict) -> Optional[Tuple[str, str, str]]:
     sport = (event.get("sport_key") or "").strip().lower()
-    home = _normalize_team_name(event.get("home_team"))
-    away = _normalize_team_name(event.get("away_team"))
+    home = _canonicalize_team_name(event.get("home_team"), sport)
+    away = _canonicalize_team_name(event.get("away_team"), sport)
     if not (sport and home and away):
         return None
     return (sport, home, away)
@@ -3050,6 +3106,7 @@ def _two_way_outcomes(
 ) -> Dict[Tuple[str, str], List[dict]]:
     line_map: Dict[Tuple[str, str], List[dict]] = {}
     now_epoch = time.time()
+    sport_key = _normalize_line_component(game.get("sport_key")) if isinstance(game, dict) else ""
     bookmaker_live_state = _selected_live_state_payload(
         [_bookmaker_live_state(game, bookmaker)],
         fallback=_event_live_state(game or {}) if isinstance(game, dict) else None,
@@ -3074,7 +3131,7 @@ def _two_way_outcomes(
             line_key = _line_key(market_key, outcome)
             if not line_key:
                 continue
-            name_norm = _normalize_line_component(outcome.get("name"))
+            name_norm = _canonicalize_outcome_name(outcome.get("name"), sport_key)
             if not name_norm:
                 continue
             line_map.setdefault((market_key, line_key), []).append(
@@ -3407,6 +3464,7 @@ def _record_line_offers(
 ) -> LineOfferMap:
     lines: LineOfferMap = {}
     now_epoch = time.time()
+    sport_key = _normalize_line_component(game.get("sport_key")) if isinstance(game, dict) else ""
     for book in markets:
         bookmaker = book.get("title") or book.get("key")
         bookmaker_key = str(book.get("key") or bookmaker or "").strip()
@@ -3445,7 +3503,7 @@ def _record_line_offers(
                 )
                 entry = lines.setdefault(key, {})
                 name = str(outcome.get("name") or "").strip()
-                outcome_key = _normalize_line_component(name)
+                outcome_key = _canonicalize_outcome_name(name, sport_key)
                 if not outcome_key:
                     continue
                 display_name = _outcome_display_name(outcome)
@@ -4478,6 +4536,7 @@ async def _scan_single_sport(
     min_edge_percent: float,
     bankroll: float,
     kelly_fraction: float,
+    progress_callback=None,
 ) -> dict:
     sport_started_at = time.perf_counter()
     sport_key = sport.get("key")
@@ -4530,6 +4589,15 @@ async def _scan_single_sport(
         requested_markets,
         all_markets=all_markets,
     )
+
+    def _build_partial_sport_result() -> dict:
+        return {
+            "sport_key": sport_key,
+            "arb_opportunities": list(arb_opportunities),
+            "middle_opportunities": list(middle_opportunities),
+            "plus_ev_opportunities": list(plus_ev_opportunities),
+        }
+
     events: List[dict] = []
     if should_fetch_api:
         api_fetch_started_at = time.perf_counter()
@@ -4576,58 +4644,33 @@ async def _scan_single_sport(
     if sport_key not in set(provider_target_sport_keys):
         provider_markets = []
 
-    provider_results: Dict[str, dict] = {}
     provider_keys_to_fetch = [
         key for key in enabled_provider_keys if callable(PROVIDER_FETCHERS.get(key))
     ]
     provider_context = {"scan_mode": normalized_scan_mode, "live": normalized_scan_mode == SCAN_MODE_LIVE}
-    if provider_markets and provider_keys_to_fetch:
-        max_workers = min(_provider_fetch_max_workers(), len(provider_keys_to_fetch))
-        async def _provider_job(provider_key: str) -> Tuple[str, dict]:
-            try:
-                result = await _fetch_provider_events_for_sport(
-                    provider_key=provider_key,
-                    sport_key=sport_key,
-                    provider_markets=provider_markets,
-                    regions=normalized_regions,
-                    bookmakers=normalized_bookmakers,
-                    provider_context=provider_context,
-                )
-            except Exception as exc:  # pragma: no cover - defensive
-                result = {
-                    "key": provider_key,
-                    "name": PROVIDER_TITLES.get(provider_key, provider_key),
-                    "events": [],
-                    "stats": {},
-                    "error": str(exc),
-                    "ms": 0.0,
-                }
-            return provider_key, result
+    async def _provider_job(provider_key: str) -> Tuple[str, dict]:
+        try:
+            result = await _fetch_provider_events_for_sport(
+                provider_key=provider_key,
+                sport_key=sport_key,
+                provider_markets=provider_markets,
+                regions=normalized_regions,
+                bookmakers=normalized_bookmakers,
+                provider_context=provider_context,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            result = {
+                "key": provider_key,
+                "name": PROVIDER_TITLES.get(provider_key, provider_key),
+                "events": [],
+                "stats": {},
+                "error": str(exc),
+                "ms": 0.0,
+            }
+        return provider_key, result
 
-        if max_workers <= 1:
-            for provider_key in provider_keys_to_fetch:
-                resolved_key, result = await _provider_job(provider_key)
-                provider_results[resolved_key] = result
-        else:
-            provider_semaphore = asyncio.Semaphore(max_workers)
-
-            async def _limited_provider_job(provider_key: str) -> Tuple[str, dict]:
-                async with provider_semaphore:
-                    return await _provider_job(provider_key)
-
-            provider_tasks = [
-                asyncio.create_task(_limited_provider_job(provider_key))
-                for provider_key in provider_keys_to_fetch
-            ]
-            for task in asyncio.as_completed(provider_tasks):
-                resolved_key, result = await task
-                provider_results[resolved_key] = result
-    for provider_key in enabled_provider_keys:
-        if not provider_markets:
-            break
-        provider_result = provider_results.get(provider_key)
-        if not provider_result:
-            continue
+    async def _process_provider_result(provider_key: str, provider_result: dict) -> None:
+        nonlocal events
         provider_title = str(provider_result.get("name") or PROVIDER_TITLES.get(provider_key, provider_key))
         provider_events = provider_result.get("events")
         if not isinstance(provider_events, list):
@@ -4755,6 +4798,90 @@ async def _scan_single_sport(
         if provider_error:
             provider_step["error"] = provider_error
         timing_steps.append(provider_step)
+        if callable(progress_callback):
+            partial_provider_arb: List[dict] = []
+            partial_provider_middle: List[dict] = []
+            partial_provider_plus_ev: List[dict] = []
+            progress_events, _ = _filter_events_for_scan_mode(copy.deepcopy(events), normalized_scan_mode)
+            for game in progress_events:
+                game["sport_key"] = sport_key
+                game["sport_title"] = sport.get("title")
+                game["sport_display"] = SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
+                if normalized_scan_mode == SCAN_MODE_LIVE:
+                    current_markets = _available_markets(game)
+                else:
+                    current_markets = _available_markets(game) if all_markets else base_markets
+                for market_key in current_markets:
+                    partial_provider_arb.extend(
+                        _collect_market_entries(
+                            game,
+                            market_key,
+                            stake_amount,
+                            commission_rate,
+                            scan_mode=scan_mode,
+                        )
+                    )
+                    if market_key in MIDDLE_MARKETS:
+                        partial_provider_middle.extend(
+                            _collect_middle_opportunities(
+                                game,
+                                market_key,
+                                stake_amount,
+                                commission_rate,
+                                scan_mode=scan_mode,
+                            )
+                        )
+                partial_provider_plus_ev.extend(
+                    _collect_plus_ev_opportunities(
+                        game,
+                        current_markets,
+                        sharp_priority,
+                        commission_rate,
+                        min_edge_percent,
+                        bankroll,
+                        kelly_fraction,
+                        scan_mode=scan_mode,
+                    )
+                )
+            progress_callback(
+                {
+                    "type": "provider_completed",
+                    "sport_key": sport_key,
+                    "sport": sport_name,
+                    "provider_key": provider_key,
+                    "provider": provider_title,
+                    "ms": provider_fetch_ms,
+                    "events_returned": len(provider_events),
+                    "error": provider_error,
+                    "result": {
+                        "sport_key": sport_key,
+                        "arb_opportunities": partial_provider_arb,
+                        "middle_opportunities": partial_provider_middle,
+                        "plus_ev_opportunities": partial_provider_plus_ev,
+                    },
+                }
+            )
+
+    if provider_markets and provider_keys_to_fetch:
+        max_workers = min(_provider_fetch_max_workers(), len(provider_keys_to_fetch))
+        if max_workers <= 1:
+            for provider_key in provider_keys_to_fetch:
+                resolved_key, result = await _provider_job(provider_key)
+                await _process_provider_result(resolved_key, result)
+        else:
+            provider_semaphore = asyncio.Semaphore(max_workers)
+
+            async def _limited_provider_job(provider_key: str) -> Tuple[str, dict]:
+                async with provider_semaphore:
+                    return await _provider_job(provider_key)
+
+            provider_tasks = [
+                asyncio.create_task(_limited_provider_job(provider_key))
+                for provider_key in provider_keys_to_fetch
+            ]
+            for task in asyncio.as_completed(provider_tasks):
+                resolved_key, result = await task
+                await _process_provider_result(resolved_key, result)
 
     stale_event_filters: List[dict] = []
     events, time_filter_stats = _filter_events_for_scan_mode(events, normalized_scan_mode)
@@ -4881,6 +5008,7 @@ async def run_scan_async(
     bankroll: float = DEFAULT_BANKROLL,
     kelly_fraction: float = DEFAULT_KELLY_FRACTION,
     include_providers: Optional[Sequence[str]] = None,
+    progress_callback=None,
 ) -> dict:
     scan_started_at = time.perf_counter()
     timing_steps: List[dict] = []
@@ -4945,6 +5073,15 @@ async def run_scan_async(
         normalized_bookmakers = live_bookmaker_filter or list(enabled_provider_keys)
         provider_bookmaker_keys = _normalize_provider_keys(normalized_bookmakers) or list(enabled_provider_keys)
         api_bookmakers = []
+    if callable(progress_callback):
+        progress_callback(
+            {
+                "type": "scan_started",
+                "scan_mode": normalized_scan_mode,
+                "sports_total": len(sports or []),
+                "providers_total": len(enabled_provider_keys),
+            }
+        )
     active_provider_scan_caches = _activate_provider_scan_caches(enabled_provider_keys)
     provider_target_sport_keys = set(requested_sport_keys) if enabled_provider_keys else set()
     provider_only_via_bookmakers = bool(normalized_bookmakers) and not api_bookmakers
@@ -5101,7 +5238,7 @@ async def run_scan_async(
             sport_errors=[],
             stale_event_filters=[],
         )
-        return _finish({
+        empty_result = {
             "success": True,
             "scan_mode": normalized_scan_mode,
             "scan_time": _iso_now(),
@@ -5146,7 +5283,10 @@ async def run_scan_async(
             "custom_providers": provider_summaries,
             "scan_diagnostics": scan_diagnostics,
             "timings": _build_scan_timings(scan_started_at, timing_steps, sport_timings),
-        })
+        }
+        if callable(progress_callback):
+            progress_callback({"type": "scan_completed", "result": empty_result})
+        return _finish(empty_result)
 
     arb_opportunities: List[dict] = []
     middle_opportunities: List[dict] = []
@@ -5172,7 +5312,7 @@ async def run_scan_async(
     sport_workers = min(_sport_scan_max_workers(), len(filtered)) if filtered else 1
     if sport_workers <= 1:
         for idx, sport in enumerate(filtered):
-            sport_results_by_index[idx] = await _await_if_needed(
+            sport_result = await _await_if_needed(
                 _scan_single_sport(
                     sport=sport,
                     scan_mode=normalized_scan_mode,
@@ -5190,8 +5330,18 @@ async def run_scan_async(
                     min_edge_percent=min_edge_percent,
                     bankroll=bankroll,
                     kelly_fraction=kelly_fraction,
+                    progress_callback=progress_callback,
                 )
             )
+            sport_results_by_index[idx] = sport_result
+            if callable(progress_callback) and isinstance(sport_result, dict) and not sport_result.get("skipped"):
+                progress_callback(
+                    {
+                        "type": "sport_completed",
+                        "sport_key": sport_result.get("sport_key"),
+                        "result": sport_result,
+                    }
+                )
     else:
         sport_semaphore = asyncio.Semaphore(sport_workers)
 
@@ -5216,6 +5366,7 @@ async def run_scan_async(
                             min_edge_percent=min_edge_percent,
                             bankroll=bankroll,
                             kelly_fraction=kelly_fraction,
+                            progress_callback=progress_callback,
                         )
                     )
                     return idx, result, None
@@ -5231,6 +5382,14 @@ async def run_scan_async(
             sport = filtered[idx]
             if error is None and isinstance(result, dict):
                 sport_results_by_index[idx] = result
+                if callable(progress_callback) and not result.get("skipped"):
+                    progress_callback(
+                        {
+                            "type": "sport_completed",
+                            "sport_key": result.get("sport_key"),
+                            "result": result,
+                        }
+                    )
                 continue
             sport_key = _normalize_line_component(sport.get("key"))
             sport_name = sport.get("title") or SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
@@ -5259,7 +5418,6 @@ async def run_scan_async(
         if isinstance(sport_timing, dict):
             sport_timings.append(sport_timing)
         timing_steps.extend(result.get("timing_steps") or [])
-
         provider_updates = result.get("provider_updates") or {}
         for provider_key, update in provider_updates.items():
             if not isinstance(update, dict):
@@ -5337,7 +5495,7 @@ async def run_scan_async(
         sport_errors=sport_errors,
         stale_event_filters=stale_event_filters,
     )
-    return _finish({
+    final_result = {
         "success": True,
         "scan_mode": normalized_scan_mode,
         "scan_time": scan_time,
@@ -5383,7 +5541,15 @@ async def run_scan_async(
         "custom_providers": provider_summaries,
         "scan_diagnostics": scan_diagnostics,
         "timings": timings,
-    })
+    }
+    if callable(progress_callback):
+        progress_callback(
+            {
+                "type": "scan_completed",
+                "result": final_result,
+            }
+        )
+    return _finish(final_result)
 
 
 def run_scan(
@@ -5401,6 +5567,7 @@ def run_scan(
     bankroll: float = DEFAULT_BANKROLL,
     kelly_fraction: float = DEFAULT_KELLY_FRACTION,
     include_providers: Optional[Sequence[str]] = None,
+    progress_callback=None,
 ) -> dict:
     try:
         asyncio.get_running_loop()
@@ -5421,6 +5588,7 @@ def run_scan(
                 bankroll=bankroll,
                 kelly_fraction=kelly_fraction,
                 include_providers=include_providers,
+                progress_callback=progress_callback,
             )
         )
     raise RuntimeError("run_scan() cannot be used inside an active event loop; use await run_scan_async()")

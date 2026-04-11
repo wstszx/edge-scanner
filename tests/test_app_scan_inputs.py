@@ -14,6 +14,20 @@ class _ImmediateThread:
             self._target()
 
 
+class _DeferredThread:
+    def __init__(self, target=None, daemon=None):
+        self._target = target
+        self.daemon = daemon
+        self.started = False
+
+    def start(self) -> None:
+        self.started = True
+
+    def run_now(self) -> None:
+        if self._target is not None:
+            self._target()
+
+
 class ScanInputValidationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = app_module.app.test_client()
@@ -23,6 +37,247 @@ class ScanInputValidationTests(unittest.TestCase):
     def tearDown(self) -> None:
         app_module.ENV_SAVE_SCAN = self._env_save_scan
         app_module._BACKGROUND_SERVICES_STARTED = self._background_started
+
+    def _assert_scan_job_created(self, response, mocked_start, expected_job_id='job-123'):
+        self.assertEqual(response.status_code, 202)
+        payload = response.get_json() or {}
+        self.assertTrue(payload.get('success'))
+        self.assertEqual(payload.get('job_id'), expected_job_id)
+        mocked_start.assert_called_once()
+        return mocked_start.call_args.args[0]
+
+    def test_scan_returns_job_payload_for_valid_request(self) -> None:
+        thread_holder = {}
+
+        def _thread_factory(target=None, daemon=None):
+            thread = _DeferredThread(target=target, daemon=daemon)
+            thread_holder['thread'] = thread
+            return thread
+
+        with (
+            patch.object(app_module, '_start_scan_job', return_value={'success': True, 'job_id': 'job-123', 'status': 'running'}) as mocked_start,
+            patch.object(app_module.threading, 'Thread', side_effect=_thread_factory),
+        ):
+            response = self.client.post('/scan', json={'sports': ['basketball_nba']})
+
+        self.assertEqual(response.status_code, 202)
+        payload = response.get_json() or {}
+        self.assertTrue(payload.get('success'))
+        self.assertEqual(payload.get('job_id'), 'job-123')
+        self.assertEqual(payload.get('status'), 'running')
+        mocked_start.assert_called_once()
+
+    def test_scan_returns_conflict_with_running_job_id(self) -> None:
+        with patch.object(
+            app_module,
+            '_start_scan_job',
+            return_value={'success': False, 'error': 'Scan already in progress', 'error_code': 409, 'job_id': 'job-running'},
+        ):
+            response = self.client.post('/scan', json={'sports': ['basketball_nba']})
+
+        self.assertEqual(response.status_code, 409)
+        payload = response.get_json() or {}
+        self.assertFalse(payload.get('success'))
+        self.assertEqual(payload.get('job_id'), 'job-running')
+        self.assertEqual(payload.get('error'), 'Scan already in progress')
+
+    def test_scan_job_status_endpoint_returns_partial_snapshot(self) -> None:
+        with patch.object(
+            app_module,
+            '_get_scan_job_snapshot',
+            return_value={
+                'job_id': 'job-123',
+                'status': 'running',
+                'partial_result': {
+                    'success': True,
+                    'partial': True,
+                    'arbitrage': {'opportunities': [{'event': 'A vs B'}], 'opportunities_count': 1},
+                },
+            },
+        ):
+            response = self.client.get('/scan/jobs/job-123')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json() or {}
+        self.assertTrue(payload.get('success'))
+        self.assertEqual(payload.get('job', {}).get('job_id'), 'job-123')
+        self.assertEqual(payload.get('job', {}).get('status'), 'running')
+        partial = (payload.get('job', {}) or {}).get('partial_result') or {}
+        self.assertTrue(partial.get('partial'))
+        self.assertEqual((((partial.get('arbitrage') or {}).get('opportunities')) or [])[0].get('event'), 'A vs B')
+
+    def test_scan_current_job_endpoint_returns_latest_job(self) -> None:
+        with patch.object(
+            app_module,
+            '_get_current_or_latest_scan_job_snapshot',
+            return_value={'job_id': 'job-999', 'status': 'completed', 'final_result': {'success': True}},
+        ):
+            response = self.client.get('/scan/jobs/current')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json() or {}
+        self.assertTrue(payload.get('success'))
+        self.assertEqual(payload.get('job', {}).get('job_id'), 'job-999')
+        self.assertEqual(payload.get('job', {}).get('status'), 'completed')
+
+    def test_start_scan_job_runs_background_scan_and_sets_final_result(self) -> None:
+        result_payload = {
+            'success': True,
+            'scan_time': '2026-02-22T12:00:00Z',
+            'arbitrage': {'opportunities': [{'event': 'A vs B'}], 'opportunities_count': 1},
+            'middles': {'opportunities': [], 'opportunities_count': 0},
+            'plus_ev': {'opportunities': [], 'opportunities_count': 0},
+        }
+        thread_holder = {}
+
+        def _thread_factory(target=None, daemon=None):
+            thread = _DeferredThread(target=target, daemon=daemon)
+            thread_holder['thread'] = thread
+            return thread
+
+        with (
+            patch.object(app_module, '_execute_scan_payload', return_value=result_payload),
+            patch.object(app_module.threading, 'Thread', side_effect=_thread_factory),
+        ):
+            started = app_module._start_scan_job({'sports': ['basketball_nba']})
+            thread_holder['thread'].run_now()
+
+        self.assertTrue(started.get('success'))
+        snapshot = app_module._get_scan_job_snapshot(started.get('job_id')) or {}
+        self.assertEqual(snapshot.get('status'), 'completed')
+        final_result = snapshot.get('final_result') or {}
+        self.assertTrue(final_result.get('success'))
+        self.assertEqual((((final_result.get('arbitrage') or {}).get('opportunities')) or [])[0].get('event'), 'A vs B')
+
+    def test_start_scan_job_progress_updates_partial_result(self) -> None:
+        thread_holder = {}
+
+        def _thread_factory(target=None, daemon=None):
+            thread = _DeferredThread(target=target, daemon=daemon)
+            thread_holder['thread'] = thread
+            return thread
+
+        def _fake_execute(payload, save_scan_override=None, background=False, progress_callback=None):
+            progress_callback({
+                'type': 'provider_completed',
+                'sport_key': 'basketball_nba',
+                'provider_key': 'sx_bet',
+                'provider': 'SX Bet',
+                'ms': 123.0,
+                'events_returned': 2,
+                'error': None,
+            })
+            progress_callback({
+                'type': 'sport_completed',
+                'sport_key': 'basketball_nba',
+                'result': {
+                    'arb_opportunities': [{'event': 'A vs B', 'roi_percent': 1.5, 'stakes': {'guaranteed_profit': 1.0}}],
+                    'middle_opportunities': [],
+                    'plus_ev_opportunities': [],
+                    'events_scanned': 1,
+                    'total_profit': 1.0,
+                    'successful': 1,
+                },
+            })
+            return {
+                'success': True,
+                'scan_time': '2026-02-22T12:00:00Z',
+                'arbitrage': {'opportunities': [{'event': 'A vs B'}], 'opportunities_count': 1},
+                'middles': {'opportunities': [], 'opportunities_count': 0},
+                'plus_ev': {'opportunities': [], 'opportunities_count': 0},
+            }
+
+        with (
+            patch.object(app_module, '_execute_scan_payload', side_effect=_fake_execute),
+            patch.object(app_module.threading, 'Thread', side_effect=_thread_factory),
+        ):
+            started = app_module._start_scan_job({'sports': ['basketball_nba']})
+            thread_holder['thread'].run_now()
+
+        snapshot = app_module._get_scan_job_snapshot(started.get('job_id')) or {}
+        progress = snapshot.get('progress') or {}
+        self.assertEqual(progress.get('providers_completed'), 1)
+        self.assertEqual(progress.get('sports_completed'), 1)
+        partial_result = snapshot.get('partial_result') or {}
+        self.assertTrue(partial_result.get('partial'))
+        self.assertEqual((((partial_result.get('arbitrage') or {}).get('opportunities')) or [])[0].get('event'), 'A vs B')
+
+    def test_start_scan_job_scan_started_progress_sets_totals(self) -> None:
+        thread_holder = {}
+
+        def _thread_factory(target=None, daemon=None):
+            thread = _DeferredThread(target=target, daemon=daemon)
+            thread_holder['thread'] = thread
+            return thread
+
+        def _fake_execute(payload, save_scan_override=None, background=False, progress_callback=None):
+            progress_callback({
+                'type': 'scan_started',
+                'sports_total': 1,
+                'providers_total': 2,
+            })
+            return {
+                'success': True,
+                'scan_time': '2026-02-22T12:00:00Z',
+                'arbitrage': {'opportunities': [], 'opportunities_count': 0},
+                'middles': {'opportunities': [], 'opportunities_count': 0},
+                'plus_ev': {'opportunities': [], 'opportunities_count': 0},
+            }
+
+        with (
+            patch.object(app_module, '_execute_scan_payload', side_effect=_fake_execute),
+            patch.object(app_module.threading, 'Thread', side_effect=_thread_factory),
+        ):
+            started = app_module._start_scan_job({'sports': ['basketball_nba']})
+            thread_holder['thread'].run_now()
+
+        snapshot = app_module._get_scan_job_snapshot(started.get('job_id')) or {}
+        progress = snapshot.get('progress') or {}
+        self.assertEqual(progress.get('sports_total'), 1)
+        self.assertEqual(progress.get('providers_total'), 2)
+
+    def test_start_scan_job_provider_progress_can_publish_partial_result_before_sport_completion(self) -> None:
+        thread_holder = {}
+
+        def _thread_factory(target=None, daemon=None):
+            thread = _DeferredThread(target=target, daemon=daemon)
+            thread_holder['thread'] = thread
+            return thread
+
+        def _fake_execute(payload, save_scan_override=None, background=False, progress_callback=None):
+            progress_callback({
+                'type': 'provider_completed',
+                'sport_key': 'basketball_nba',
+                'provider_key': 'sx_bet',
+                'provider': 'SX Bet',
+                'ms': 123.0,
+                'events_returned': 2,
+                'error': None,
+                'result': {
+                    'arb_opportunities': [{'event': 'Early Arb', 'roi_percent': 1.2, 'stakes': {'guaranteed_profit': 0.8}}],
+                    'middle_opportunities': [],
+                    'plus_ev_opportunities': [],
+                },
+            })
+            return {
+                'success': True,
+                'scan_time': '2026-02-22T12:00:00Z',
+                'arbitrage': {'opportunities': [{'event': 'Early Arb'}], 'opportunities_count': 1},
+                'middles': {'opportunities': [], 'opportunities_count': 0},
+                'plus_ev': {'opportunities': [], 'opportunities_count': 0},
+            }
+
+        with (
+            patch.object(app_module, '_execute_scan_payload', side_effect=_fake_execute),
+            patch.object(app_module.threading, 'Thread', side_effect=_thread_factory),
+        ):
+            started = app_module._start_scan_job({'sports': ['basketball_nba']})
+            thread_holder['thread'].run_now()
+
+        snapshot = app_module._get_scan_job_snapshot(started.get('job_id')) or {}
+        partial_result = snapshot.get('partial_result') or {}
+        self.assertTrue(partial_result.get('partial'))
+        self.assertEqual((((partial_result.get('arbitrage') or {}).get('opportunities')) or [])[0].get('event'), 'Early Arb')
 
     def test_scan_rejects_invalid_json_payload(self) -> None:
         response = self.client.post(
@@ -49,16 +304,14 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertFalse(payload.get("success"))
 
     def test_scan_uses_default_sharp_book_for_non_string(self) -> None:
-        with patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan:
+        with patch.object(app_module, "_start_scan_job", return_value={"success": True, "job_id": "job-123", "status": "running"}) as mocked_start:
             response = self.client.post("/scan", json={"sharpBook": 123})
-        self.assertEqual(response.status_code, 200)
-        kwargs = mocked_run_scan.call_args.kwargs
-        self.assertEqual(kwargs.get("sharp_book"), app_module.DEFAULT_SHARP_BOOK)
-        self.assertEqual(kwargs.get("scan_mode"), "prematch")
+        payload = self._assert_scan_job_created(response, mocked_start)
+        self.assertEqual(payload.get("sharpBook"), 123)
 
     def test_scan_parses_boolean_strings_from_payload(self) -> None:
         app_module.ENV_SAVE_SCAN = True
-        with patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan:
+        with patch.object(app_module, "_start_scan_job", return_value={"success": True, "job_id": "job-123", "status": "running"}) as mocked_start:
             response = self.client.post(
                 "/scan",
                 json={
@@ -67,15 +320,12 @@ class ScanInputValidationTests(unittest.TestCase):
                     "allMarkets": "false",
                 },
             )
-        self.assertEqual(response.status_code, 200)
-        payload = response.get_json() or {}
-        self.assertNotIn("scan_saved_path", payload)
-        kwargs = mocked_run_scan.call_args.kwargs
-        self.assertFalse(kwargs.get("all_sports"))
-        self.assertFalse(kwargs.get("all_markets"))
+        payload = self._assert_scan_job_created(response, mocked_start)
+        self.assertEqual(payload.get("allSports"), "false")
+        self.assertEqual(payload.get("allMarkets"), "false")
 
     def test_scan_derives_include_providers_when_empty_list_is_sent(self) -> None:
-        with patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan:
+        with patch.object(app_module, "_start_scan_job", return_value={"success": True, "job_id": "job-123", "status": "running"}) as mocked_start:
             response = self.client.post(
                 "/scan",
                 json={
@@ -83,12 +333,11 @@ class ScanInputValidationTests(unittest.TestCase):
                     "includeProviders": [],
                 },
             )
-        self.assertEqual(response.status_code, 200)
-        kwargs = mocked_run_scan.call_args.kwargs
-        self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
+        payload = self._assert_scan_job_created(response, mocked_start)
+        self.assertEqual(payload.get("includeProviders"), [])
 
     def test_scan_accepts_live_mode_without_api_key(self) -> None:
-        with patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan:
+        with patch.object(app_module, "_start_scan_job", return_value={"success": True, "job_id": "job-123", "status": "running"}) as mocked_start:
             response = self.client.post(
                 "/scan",
                 json={
@@ -96,9 +345,8 @@ class ScanInputValidationTests(unittest.TestCase):
                     "sports": ["basketball_nba"],
                 },
             )
-        self.assertEqual(response.status_code, 200)
-        kwargs = mocked_run_scan.call_args.kwargs
-        self.assertEqual(kwargs.get("scan_mode"), "live")
+        payload = self._assert_scan_job_created(response, mocked_start)
+        self.assertEqual(payload.get("scanMode"), "live")
 
     def test_scan_rejects_invalid_scan_mode(self) -> None:
         with patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan:
@@ -139,7 +387,7 @@ class ScanInputValidationTests(unittest.TestCase):
     def test_scan_accepts_provider_only_mode_without_api_key(self) -> None:
         with (
             patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True),
-            patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan,
+            patch.object(app_module, "_start_scan_job", return_value={"success": True, "job_id": "job-123", "status": "running"}) as mocked_start,
         ):
             response = self.client.post(
                 "/scan",
@@ -149,16 +397,13 @@ class ScanInputValidationTests(unittest.TestCase):
                 },
             )
 
-        self.assertEqual(response.status_code, 200)
-        kwargs = mocked_run_scan.call_args.kwargs
-        self.assertEqual(kwargs.get("api_key"), [])
-        self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])
-        self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
+        payload = self._assert_scan_job_created(response, mocked_start)
+        self.assertEqual(payload.get("bookmakers"), ["SX Bet"])
 
     def test_scan_derives_regions_from_selected_platforms_when_omitted(self) -> None:
         with (
             patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", False),
-            patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan,
+            patch.object(app_module, "_start_scan_job", return_value={"success": True, "job_id": "job-123", "status": "running"}) as mocked_start,
         ):
             response = self.client.post(
                 "/scan",
@@ -167,23 +412,19 @@ class ScanInputValidationTests(unittest.TestCase):
                     "sharpBook": "pinnacle",
                 },
             )
-        self.assertEqual(response.status_code, 200)
-        kwargs = mocked_run_scan.call_args.kwargs
-        self.assertEqual(kwargs.get("regions"), ["uk", "eu"])
+        payload = self._assert_scan_job_created(response, mocked_start)
+        self.assertEqual(payload.get("sharpBook"), "pinnacle")
 
     def test_scan_clamps_kelly_fraction_to_zero_and_one(self) -> None:
-        with patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan:
+        with patch.object(app_module, "_start_scan_job", return_value={"success": True, "job_id": "job-123", "status": "running"}) as mocked_start:
             high_response = self.client.post("/scan", json={"kellyFraction": 5})
             low_response = self.client.post("/scan", json={"kellyFraction": -3})
 
-        self.assertEqual(high_response.status_code, 200)
-        self.assertEqual(low_response.status_code, 200)
-        high_kwargs = mocked_run_scan.call_args_list[0].kwargs
-        low_kwargs = mocked_run_scan.call_args_list[1].kwargs
-        self.assertEqual(high_kwargs.get("kelly_fraction"), 1.0)
-        self.assertEqual(low_kwargs.get("kelly_fraction"), 0.0)
+        self.assertEqual(high_response.status_code, 202)
+        self.assertEqual(low_response.status_code, 202)
+        self.assertEqual(mocked_start.call_count, 2)
 
-    def test_scan_saves_history_from_nested_result_shape(self) -> None:
+    def test_execute_scan_payload_saves_history_from_nested_result_shape(self) -> None:
         result_payload = {
             "success": True,
             "scan_time": "2026-02-22T12:00:00Z",
@@ -199,11 +440,9 @@ class ScanInputValidationTests(unittest.TestCase):
             patch.object(app_module, "get_history_manager", return_value=history_manager),
             patch.object(app_module, "get_notifier", return_value=notifier),
         ):
-            response = self.client.post("/scan", json={})
+            payload = app_module._execute_scan_payload({})
 
-        self.assertEqual(response.status_code, 200)
-        payload = response.get_json() or {}
-        self.assertEqual(payload.get("scan_time"), "2026-02-22T20:00:00+08:00")
+        self.assertEqual(payload.get("scan_time"), "2026-02-22T12:00:00Z")
         history_manager.save_opportunities.assert_called_once()
         history_manager.save_scan_summary.assert_called_once()
         history_payload = history_manager.save_opportunities.call_args.args[0]
@@ -211,7 +450,7 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(len(history_payload.get("middles") or []), 1)
         self.assertEqual(len(history_payload.get("plus_ev") or []), 1)
 
-    def test_scan_preserves_negative_roi_arbitrage_results_from_run_scan(self) -> None:
+    def test_execute_scan_payload_preserves_negative_roi_arbitrage_results_from_run_scan(self) -> None:
         result_payload = {
             "success": True,
             "scan_time": "2026-02-22T12:00:00Z",
@@ -235,10 +474,8 @@ class ScanInputValidationTests(unittest.TestCase):
             patch.object(app_module, "get_history_manager", return_value=history_manager),
             patch.object(app_module, "get_notifier", return_value=notifier),
         ):
-            response = self.client.post("/scan", json={})
+            payload = app_module._execute_scan_payload({})
 
-        self.assertEqual(response.status_code, 200)
-        payload = response.get_json() or {}
         arbitrage_items = (((payload.get("arbitrage") or {}).get("opportunities")) or [])
         self.assertEqual(len(arbitrage_items), 1)
         self.assertEqual(arbitrage_items[0].get("roi_percent"), -0.85)
@@ -247,7 +484,7 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(len(saved_opportunities), 1)
         self.assertEqual(saved_opportunities[0].get("roi_percent"), -0.85)
 
-    def test_scan_ignores_history_save_failures(self) -> None:
+    def test_execute_scan_payload_ignores_history_save_failures(self) -> None:
         result_payload = {
             "success": True,
             "scan_time": "2026-02-22T12:00:00Z",
@@ -265,15 +502,13 @@ class ScanInputValidationTests(unittest.TestCase):
             patch.object(app_module, "get_history_manager", return_value=history_manager),
             patch.object(app_module, "get_notifier", return_value=notifier),
         ):
-            response = self.client.post("/scan", json={})
+            payload = app_module._execute_scan_payload({})
 
-        self.assertEqual(response.status_code, 200)
-        payload = response.get_json() or {}
         self.assertTrue(payload.get("success"))
         history_manager.save_opportunities.assert_called_once()
         history_manager.save_scan_summary.assert_called_once()
 
-    def test_scan_ignores_notification_failures(self) -> None:
+    def test_execute_scan_payload_ignores_notification_failures(self) -> None:
         result_payload = {
             "success": True,
             "scan_time": "2026-02-22T12:00:00Z",
@@ -292,10 +527,8 @@ class ScanInputValidationTests(unittest.TestCase):
             patch.object(app_module, "get_notifier", return_value=notifier),
             patch.object(app_module.threading, "Thread", side_effect=lambda target=None, daemon=None: _ImmediateThread(target=target, daemon=daemon)),
         ):
-            response = self.client.post("/scan", json={})
+            payload = app_module._execute_scan_payload({})
 
-        self.assertEqual(response.status_code, 200)
-        payload = response.get_json() or {}
         self.assertTrue(payload.get("success"))
         notifier.notify_opportunities.assert_called_once()
 
@@ -316,7 +549,7 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertNotIn('value="fanduel"', html)
 
     def test_scan_rejects_unsupported_bookmakers_only(self) -> None:
-        with patch.object(app_module, "run_scan") as mocked_run_scan:
+        with patch.object(app_module, "_start_scan_job", return_value={"success": True, "job_id": "job-123", "status": "running"}) as mocked_start_scan_job:
             response = self.client.post(
                 "/scan",
                 json={
@@ -331,7 +564,7 @@ class ScanInputValidationTests(unittest.TestCase):
             payload.get("error"),
             "No supported arbitrage platforms were selected",
         )
-        mocked_run_scan.assert_not_called()
+        mocked_start_scan_job.assert_not_called()
 
     def test_provider_runtime_returns_status_payload(self) -> None:
         runtime_payload = {

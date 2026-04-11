@@ -1519,10 +1519,12 @@
     let autoScanTimer = null;
     let serverAutoScanSyncTimer = null;
     let scanFeedbackTimer = null;
+    let scanPollTimer = null;
     let scanStartedAtMs = 0;
     let scanLastStatusKey = '';
     let scanLastElapsedSecond = -1;
     let activeScanContext = null;
+    let activeScanJobId = '';
     let scanLockedControls = [];
     const scanControlDisabledState = new WeakMap();
     let notificationAudioContext = null;
@@ -4999,29 +5001,19 @@
         });
         const data = await response.json();
         if (!data.success) {
+          if (response.status === 409 && data.job_id) {
+            activeScanJobId = data.job_id;
+            await pollScanJob(true);
+            return;
+          }
           throw new Error(data.error || t('scan_failed'));
         }
-        if (data?.middles?.defaults) {
-          const defaults = data.middles.defaults;
-          if (defaults.min_gap !== undefined) minGapInput.value = defaults.min_gap;
-          if (defaults.positive_only !== undefined) positiveEvToggle.checked = defaults.positive_only;
-          if (defaults.sort) middleSortSelect.value = defaults.sort;
-        }
-        if (data?.plus_ev?.defaults) {
-          const defaults = data.plus_ev.defaults;
-          if (defaults.sharp_book) sharpSelect.value = defaults.sharp_book;
-          if (defaults.min_edge_percent !== undefined) minEdgeInput.value = defaults.min_edge_percent;
-          if (defaults.bankroll !== undefined) bankrollInput.value = defaults.bankroll;
-          if (defaults.kelly_fraction !== undefined) kellySelect.value = defaults.kelly_fraction;
-        }
-        renderScanData(data);
-        showStatusKey('scan_complete', 'success', { time: formatTime(data.scan_time) });
-        notifyScanComplete(data);
+        activeScanJobId = String(data.job_id || '');
+        await pollScanJob(true);
       } catch (err) {
         showStatus(err.message || t('scan_failed'), 'error');
         renderScanData(null, { mode: payload?.scanMode, clearMode: true });
       } finally {
-        setScanning(false);
       }
     }
 
@@ -5076,6 +5068,109 @@
         return;
       }
       refreshStatus();
+    }
+
+    function clearScanPollTimer() {
+      if (scanPollTimer) {
+        clearTimeout(scanPollTimer);
+        scanPollTimer = null;
+      }
+    }
+
+    function applyScanPayloadDefaults(data) {
+      if (data?.middles?.defaults) {
+        const defaults = data.middles.defaults;
+        if (defaults.min_gap !== undefined) minGapInput.value = defaults.min_gap;
+        if (defaults.positive_only !== undefined) positiveEvToggle.checked = defaults.positive_only;
+        if (defaults.sort) middleSortSelect.value = defaults.sort;
+      }
+      if (data?.plus_ev?.defaults) {
+        const defaults = data.plus_ev.defaults;
+        if (defaults.sharp_book) sharpSelect.value = defaults.sharp_book;
+        if (defaults.min_edge_percent !== undefined) minEdgeInput.value = defaults.min_edge_percent;
+        if (defaults.bankroll !== undefined) bankrollInput.value = defaults.bankroll;
+        if (defaults.kelly_fraction !== undefined) kellySelect.value = defaults.kelly_fraction;
+      }
+    }
+
+    async function pollScanJob(runImmediately = false) {
+      clearScanPollTimer();
+      if (!activeScanJobId) return;
+
+      const executePoll = async () => {
+        try {
+          const response = await fetch(`/scan/jobs/${encodeURIComponent(activeScanJobId)}`);
+          const payload = await response.json();
+          if (!response.ok || !payload?.success) {
+            throw new Error(payload?.error || t('scan_failed'));
+          }
+          const job = payload.job || {};
+          if (job.progress && scanApiCalls) {
+            const providersCompleted = Number(job.progress.providers_completed || 0);
+            const sportsCompleted = Number(job.progress.sports_completed || 0);
+            scanApiCalls.textContent = `${providersCompleted} providers / ${sportsCompleted} sports`;
+          }
+          if (job.partial_result) {
+            applyScanPayloadDefaults(job.partial_result);
+            renderScanData(job.partial_result, { mode: activeScanContext?.scanMode });
+          }
+          if (job.status === 'completed') {
+            if (job.final_result) {
+              applyScanPayloadDefaults(job.final_result);
+              renderScanData(job.final_result, { mode: activeScanContext?.scanMode });
+              showStatusKey('scan_complete', 'success', { time: formatTime(job.final_result.scan_time) });
+              notifyScanComplete(job.final_result);
+            }
+            activeScanJobId = '';
+            setScanning(false);
+            return;
+          }
+          if (job.status === 'failed') {
+            activeScanJobId = '';
+            setScanning(false);
+            showStatus(job.error || t('scan_failed'), 'error');
+            return;
+          }
+          scanPollTimer = window.setTimeout(() => {
+            void pollScanJob(true);
+          }, 800);
+        } catch (err) {
+          activeScanJobId = '';
+          setScanning(false);
+          showStatus(err.message || t('scan_failed'), 'error');
+        }
+      };
+
+      if (runImmediately) {
+        await executePoll();
+      } else {
+        scanPollTimer = window.setTimeout(() => {
+          void pollScanJob(true);
+        }, 800);
+      }
+    }
+
+    async function recoverCurrentScanJob() {
+      try {
+        const response = await fetch('/scan/jobs/current');
+        const payload = await response.json();
+        if (!response.ok || !payload?.success) return;
+        const job = payload.job || {};
+        if (job.status !== 'running' || !job.job_id) return;
+        activeScanJobId = String(job.job_id || '');
+        setScanning(true, {
+          scanMode: ((job.payload_summary || {}).scan_mode) || selectedScanMode(),
+          sports: ((job.payload_summary || {}).sports) || [],
+          bookmakers: ((job.payload_summary || {}).bookmakers) || [],
+          includeProviders: ((job.payload_summary || {}).include_providers) || [],
+        });
+        if (job.partial_result) {
+          renderScanData(job.partial_result, { mode: activeScanContext?.scanMode });
+        }
+        await pollScanJob(true);
+      } catch (err) {
+        console.error(err);
+      }
     }
 
     function showStatus(message, type, key = null, params = {}) {
@@ -10911,6 +11006,7 @@
       if (activeTabId === 'history' && typeof window.loadHistory === 'function') {
         window.loadHistory();
       }
+      void recoverCurrentScanJob();
     });
   </script>
 </body>

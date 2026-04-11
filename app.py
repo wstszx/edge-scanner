@@ -10,6 +10,7 @@ import re
 import socket
 import threading
 import time
+import uuid
 import webbrowser
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -85,6 +86,10 @@ _SERVER_AUTO_SCAN_LEASE_HANDLE: Optional[BinaryIO] = None
 _FX_RATE_CACHE_LOCK = threading.Lock()
 _FX_RATE_CACHE: Optional[dict] = None
 _FX_RATE_CACHE_EXPIRES_AT = 0.0
+_SCAN_JOB_LOCK = threading.Lock()
+_SCAN_JOBS: dict[str, dict] = {}
+_CURRENT_SCAN_JOB_ID: Optional[str] = None
+_LATEST_SCAN_JOB_ID: Optional[str] = None
 
 CONTINUOUS_AUTO_SCAN_BACKOFF_SECONDS = 5.0
 CONTINUOUS_AUTO_SCAN_IDLE_WAIT_SECONDS = 0.1
@@ -475,6 +480,213 @@ def _is_valid_scan_mode(value: object) -> bool:
     return value.strip().lower() in {SCAN_MODE_PREMATCH, SCAN_MODE_LIVE}
 
 
+def _scan_job_iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _copy_scan_job_snapshot(job: Optional[dict]) -> Optional[dict]:
+    return copy.deepcopy(job) if isinstance(job, dict) else None
+
+
+def _register_scan_job(payload: dict) -> dict:
+    global _CURRENT_SCAN_JOB_ID, _LATEST_SCAN_JOB_ID
+    job_id = uuid.uuid4().hex
+    scan_mode = _normalize_scan_mode((payload or {}).get("scanMode"))
+    sports = payload.get("sports") if isinstance(payload, dict) else []
+    bookmakers = payload.get("bookmakers") if isinstance(payload, dict) else []
+    providers = payload.get("includeProviders") if isinstance(payload, dict) else []
+    now = _scan_job_iso_now()
+    job = {
+        "job_id": job_id,
+        "status": "queued",
+        "created_at": now,
+        "started_at": None,
+        "updated_at": now,
+        "finished_at": None,
+        "payload_summary": {
+            "scan_mode": scan_mode,
+            "sports": list(sports) if isinstance(sports, list) else [],
+            "bookmakers": list(bookmakers) if isinstance(bookmakers, list) else [],
+            "include_providers": list(providers) if isinstance(providers, list) else [],
+        },
+        "progress": {
+            "sports_total": len(sports) if isinstance(sports, list) else 0,
+            "sports_completed": 0,
+            "providers_total": 0,
+            "providers_completed": 0,
+            "provider_events": [],
+        },
+        "partial_result": None,
+        "final_result": None,
+        "error": None,
+    }
+    with _SCAN_JOB_LOCK:
+        _SCAN_JOBS[job_id] = job
+        _CURRENT_SCAN_JOB_ID = job_id
+        _LATEST_SCAN_JOB_ID = job_id
+    return _copy_scan_job_snapshot(job) or job
+
+
+def _update_scan_job(job_id: str, **changes) -> Optional[dict]:
+    global _CURRENT_SCAN_JOB_ID, _LATEST_SCAN_JOB_ID
+    with _SCAN_JOB_LOCK:
+        job = _SCAN_JOBS.get(job_id)
+        if not isinstance(job, dict):
+            return None
+        job.update(changes)
+        job["updated_at"] = _scan_job_iso_now()
+        status = str(job.get("status") or "").strip().lower()
+        if status in {"completed", "failed"} and _CURRENT_SCAN_JOB_ID == job_id:
+            _CURRENT_SCAN_JOB_ID = None
+            _LATEST_SCAN_JOB_ID = job_id
+        return copy.deepcopy(job)
+
+
+def _get_scan_job_snapshot(job_id: str) -> Optional[dict]:
+    with _SCAN_JOB_LOCK:
+        return _copy_scan_job_snapshot(_SCAN_JOBS.get(str(job_id or "").strip()))
+
+
+def _get_current_or_latest_scan_job_snapshot() -> Optional[dict]:
+    with _SCAN_JOB_LOCK:
+        target_id = _CURRENT_SCAN_JOB_ID or _LATEST_SCAN_JOB_ID
+        return _copy_scan_job_snapshot(_SCAN_JOBS.get(target_id)) if target_id else None
+
+
+def _start_scan_job(payload: dict) -> dict:
+    current = _get_current_or_latest_scan_job_snapshot()
+    if isinstance(current, dict) and current.get("status") == "running":
+        return {
+            "success": False,
+            "error": "Scan already in progress",
+            "error_code": 409,
+            "job_id": current.get("job_id"),
+        }
+    job = _register_scan_job(payload)
+    job_id = str(job.get("job_id") or "")
+    _update_scan_job(job_id, status="running", started_at=_scan_job_iso_now())
+
+    partial_arb: list[dict] = []
+    partial_middle: list[dict] = []
+    partial_plus_ev: list[dict] = []
+
+    def _progress(event: Optional[dict]) -> None:
+        if not isinstance(event, dict):
+            return
+        snapshot = _get_scan_job_snapshot(job_id) or {}
+        progress = copy.deepcopy(snapshot.get("progress") or {})
+        event_type = str(event.get("type") or "").strip().lower()
+        if event_type == "scan_started":
+            if event.get("sports_total") is not None:
+                progress["sports_total"] = int(event.get("sports_total") or 0)
+            if event.get("providers_total") is not None:
+                progress["providers_total"] = int(event.get("providers_total") or 0)
+            _update_scan_job(job_id, progress=progress)
+            return
+        if event_type == "provider_completed":
+            progress["providers_completed"] = int(progress.get("providers_completed", 0) or 0) + 1
+            provider_events = list(progress.get("provider_events") or [])
+            provider_events.append(
+                {
+                    "sport_key": event.get("sport_key"),
+                    "provider_key": event.get("provider_key"),
+                    "provider": event.get("provider"),
+                    "ms": event.get("ms"),
+                    "events_returned": event.get("events_returned"),
+                    "error": event.get("error"),
+                }
+            )
+            progress["provider_events"] = provider_events
+            partial_result_payload = event.get("result") or {}
+            provider_partial_arb = _extract_opportunity_list(partial_result_payload.get("arb_opportunities"))
+            provider_partial_middle = _extract_opportunity_list(partial_result_payload.get("middle_opportunities"))
+            provider_partial_plus_ev = _extract_opportunity_list(partial_result_payload.get("plus_ev_opportunities"))
+            if provider_partial_arb or provider_partial_middle or provider_partial_plus_ev:
+                partial_result = {
+                    "success": True,
+                    "partial": True,
+                    "arbitrage": {
+                        "opportunities": list(provider_partial_arb),
+                        "opportunities_count": len(provider_partial_arb),
+                    },
+                    "middles": {
+                        "opportunities": list(provider_partial_middle),
+                        "opportunities_count": len(provider_partial_middle),
+                    },
+                    "plus_ev": {
+                        "opportunities": list(provider_partial_plus_ev),
+                        "opportunities_count": len(provider_partial_plus_ev),
+                    },
+                }
+                _update_scan_job(job_id, progress=progress, partial_result=partial_result)
+            else:
+                _update_scan_job(job_id, progress=progress)
+            return
+        if event_type == "sport_completed":
+            progress["sports_completed"] = int(progress.get("sports_completed", 0) or 0) + 1
+            result = event.get("result") or {}
+            partial_arb.extend(_extract_opportunity_list(result.get("arb_opportunities")))
+            partial_middle.extend(_extract_opportunity_list(result.get("middle_opportunities")))
+            partial_plus_ev.extend(_extract_opportunity_list(result.get("plus_ev_opportunities")))
+            partial_result = {
+                "success": True,
+                "partial": True,
+                "arbitrage": {
+                    "opportunities": list(partial_arb),
+                    "opportunities_count": len(partial_arb),
+                },
+                "middles": {
+                    "opportunities": list(partial_middle),
+                    "opportunities_count": len(partial_middle),
+                },
+                "plus_ev": {
+                    "opportunities": list(partial_plus_ev),
+                    "opportunities_count": len(partial_plus_ev),
+                },
+            }
+            _update_scan_job(job_id, progress=progress, partial_result=partial_result)
+
+    def _run_job() -> None:
+        try:
+            result = _execute_scan_payload(
+                payload,
+                background=True,
+                progress_callback=_progress,
+            )
+        except Exception as exc:
+            _update_scan_job(
+                job_id,
+                status="failed",
+                finished_at=_scan_job_iso_now(),
+                error=str(exc),
+            )
+            logging.exception("Scan job crashed: %s", job_id)
+            return
+
+        if isinstance(result, dict) and result.get("success"):
+            _update_scan_job(
+                job_id,
+                status="completed",
+                finished_at=_scan_job_iso_now(),
+                final_result=result,
+            )
+        else:
+            _update_scan_job(
+                job_id,
+                status="failed",
+                finished_at=_scan_job_iso_now(),
+                error=(result or {}).get("error") if isinstance(result, dict) else "Scan failed",
+                final_result=result if isinstance(result, dict) else None,
+            )
+
+    threading.Thread(target=_run_job, daemon=True).start()
+    return {
+        "success": True,
+        "job_id": job_id,
+        "status": "running",
+    }
+
+
 def _server_auto_scan_payload() -> dict:
     provider_keys = list(PROVIDER_FETCHERS.keys())
     payload = {
@@ -859,6 +1071,7 @@ def _execute_scan_payload(
     *,
     save_scan_override: Optional[bool] = None,
     background: bool = False,
+    progress_callback=None,
 ) -> dict:
     if background:
         acquired = _SCAN_EXECUTION_LOCK.acquire(blocking=False)
@@ -1014,6 +1227,7 @@ def _execute_scan_payload(
             bankroll=bankroll_value,
             kelly_fraction=kelly_fraction,
             include_providers=include_providers_value,
+            progress_callback=progress_callback,
         )
         if isinstance(result, dict) and "scan_mode" not in result:
             result["scan_mode"] = scan_mode
@@ -1367,9 +1581,48 @@ def scan() -> tuple:
             ),
             400,
         )
-    result = _execute_scan_payload(payload)
-    status = 200 if result.get("success") else result.get("error_code", 500)
+    raw_bookmakers = payload.get("bookmakers")
+    if isinstance(raw_bookmakers, list):
+        raw_bookmakers = [
+            str(book).strip()
+            for book in raw_bookmakers
+            if isinstance(book, str) and str(book).strip()
+        ]
+        normalized_bookmakers = normalize_supported_bookmakers(raw_bookmakers)
+        include_providers_raw = payload.get("includeProviders")
+        derived_providers = []
+        if isinstance(include_providers_raw, list):
+            derived_providers = [item for item in include_providers_raw if isinstance(item, str) and item.strip()]
+        if raw_bookmakers and not normalized_bookmakers and not derived_providers:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "No supported arbitrage platforms were selected",
+                        "error_code": 400,
+                    }
+                ),
+                400,
+            )
+    result = _start_scan_job(payload)
+    status = 202 if result.get("success") else result.get("error_code", 500)
     return _jsonify_client_payload(result), status
+
+
+@app.route("/scan/jobs/<job_id>", methods=["GET"])
+def scan_job(job_id: str) -> tuple:
+    snapshot = _get_scan_job_snapshot(job_id)
+    if not isinstance(snapshot, dict):
+        return jsonify({"success": False, "error": "Scan job not found", "error_code": 404}), 404
+    return _jsonify_client_payload({"success": True, "job": snapshot}), 200
+
+
+@app.route("/scan/jobs/current", methods=["GET"])
+def scan_job_current() -> tuple:
+    snapshot = _get_current_or_latest_scan_job_snapshot()
+    if not isinstance(snapshot, dict):
+        return jsonify({"success": False, "error": "Scan job not found", "error_code": 404}), 404
+    return _jsonify_client_payload({"success": True, "job": snapshot}), 200
 
 
 @app.route("/server-auto-scan-config", methods=["GET", "POST"])
