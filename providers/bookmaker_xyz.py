@@ -1915,6 +1915,7 @@ def _normalize_condition_market(
                 "market_id": market_id,
                 "game_period_id": game_period_id,
                 "game_type_id": game_type_id,
+                "team_player_id": team_player_id,
                 "market_key": market_key,
                 "market_name": market_name,
             }
@@ -1993,9 +1994,11 @@ def _normalize_condition_market(
                     ],
                 }
 
+    has_team_player_target = bool(_normalize_text(market_meta.get("team_player_id")))
     if (
-        any(token in market_name for token in ("team total", "player total", "individual total", "total points incl. ot"))
-        or any(token in condition_label for token in ("team total", "player total", "individual total", "total points incl. ot"))
+        any(token in market_name for token in ("team total", "player total", "individual total"))
+        or any(token in condition_label for token in ("team total", "player total", "individual total"))
+        or has_team_player_target
     ) and over_selection and under_selection and len(parsed_outcomes) == 2:
         return None
 

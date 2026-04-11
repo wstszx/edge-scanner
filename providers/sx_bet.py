@@ -125,7 +125,9 @@ SX_MARKET_TYPE_ID_BASE_KEY: Dict[int, str] = {
     28: "totals",
     52: "h2h",
     226: "h2h",
+    236: "totals",
     342: "spreads",
+    1618: "h2h",
 }
 ORDERS_CACHE: Dict[str, object] = {
     "expires_at": 0.0,
@@ -608,6 +610,8 @@ def _market_period_suffix(*values: object) -> str:
     token = "_".join(_normalize_market_key(item) for item in values if _normalize_market_key(item))
     if not token:
         return ""
+    if any(pattern in token for pattern in ("1st_5", "first_5", "five_innings", "first_five_innings")):
+        return "h1"
     if any(pattern in token for pattern in ("second_half", "2nd_half", "half_2", "h2")):
         return "h2"
     if any(pattern in token for pattern in ("first_half", "1st_half", "half_time", "halftime", "half_1", "h1")):
@@ -734,6 +738,9 @@ def _infer_market_base_key(market: dict) -> Optional[str]:
     if not tokens:
         return None
 
+    if 'tie' in {outcome_one, outcome_two} and 'not tie' in {outcome_one, outcome_two}:
+        return 'h2h_3_way'
+
     if "both teams to score" in tokens or re.search(r"\byes\b", tokens) and re.search(r"\bno\b", tokens):
         return "btts"
 
@@ -765,8 +772,10 @@ def _market_type_aliases(market: dict) -> List[str]:
     type_hint = _market_type_base_hint(market)
     raw_type = _normalize_text(market.get("marketType") or market.get("type")).upper()
     raw_name = _normalize_text(market.get("marketName") or market.get("name"))
+    outcome_one_name = _normalize_text(market.get('outcomeOneName'))
+    outcome_two_name = _normalize_text(market.get('outcomeTwoName'))
     aliases: List[str] = []
-    period_hints = (raw_type, raw_name, type_hint)
+    period_hints = (raw_type, raw_name, type_hint, outcome_one_name, outcome_two_name)
 
     for raw in (raw_type, raw_name, type_hint):
         key = _normalize_market_key(raw)
@@ -801,6 +810,9 @@ def _market_type_aliases(market: dict) -> List[str]:
         aliases.append(_scoped_market_alias(inferred, *period_hints))
     elif inferred == "btts":
         aliases.extend(["btts", "both_teams_to_score"])
+
+    if inferred == 'h2h_3_way':
+        aliases.append('h2h_3_way')
 
     out: List[str] = []
     seen = set()
@@ -885,6 +897,20 @@ def _normalize_fixture_market(
     }
 
     if target_market_base == "h2h":
+        if target_market_key == 'h2h_3_way':
+            if label_one_token == 'tie' and label_two_token == 'not tie':
+                return {
+                    **candidate,
+                    'outcome_one_name': 'Draw',
+                    'outcome_two_name': 'Not Draw',
+                }
+            if label_two_token == 'tie' and label_one_token == 'not tie':
+                return {
+                    **candidate,
+                    'outcome_one_name': 'Not Draw',
+                    'outcome_two_name': 'Draw',
+                }
+            return None
         if "draw" in {label_one_token, label_two_token}:
             return None
         if label_one_token == away_token and label_two_token == home_token:

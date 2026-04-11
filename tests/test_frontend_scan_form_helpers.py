@@ -218,26 +218,25 @@ class FrontendScanFormHelperTests(unittest.TestCase):
             patch.object(app_module, "_start_background_provider_services") as mocked_start,
             patch.object(app_module, "get_history_manager", return_value=history_manager),
             patch.object(app_module, "get_notifier", return_value=notifier),
-            patch.object(app_module, "run_scan", return_value={"success": True}) as mocked_run_scan,
+            patch.object(app_module, "_start_scan_job", return_value={"success": True, "job_id": "job-123", "status": "running"}) as mocked_start_job,
             patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True),
         ):
             response = self.client.post("/scan", json=helper_payload)
 
-        self.assertEqual(response.status_code, 200)
-        mocked_start.assert_called_once_with(wait_timeout=0.0)
-        kwargs = mocked_run_scan.call_args.kwargs
-        self.assertEqual(kwargs.get("api_key"), [])
-        self.assertEqual(kwargs.get("scan_mode"), "prematch")
-        self.assertEqual(kwargs.get("sports"), ["icehockey_nhl"])
-        self.assertEqual(kwargs.get("regions"), ["eu"])
-        self.assertEqual(kwargs.get("bookmakers"), ["sx_bet"])
-        self.assertEqual(kwargs.get("include_providers"), ["sx_bet"])
-        self.assertEqual(kwargs.get("commission_rate"), 0.035)
-        self.assertEqual(kwargs.get("stake_amount"), 90.0)
-        self.assertEqual(kwargs.get("sharp_book"), "pinnacle")
-        self.assertEqual(kwargs.get("min_edge_percent"), 1.1)
-        self.assertEqual(kwargs.get("bankroll"), 1800.0)
-        self.assertEqual(kwargs.get("kelly_fraction"), 0.4)
+        self.assertEqual(response.status_code, 202)
+        payload = mocked_start_job.call_args.args[0]
+        self.assertEqual(payload.get("apiKey"), "should-be-cleared")
+        self.assertEqual(payload.get("scanMode"), "prematch")
+        self.assertEqual(payload.get("sports"), ["icehockey_nhl"])
+        self.assertIsNone(payload.get("regions"))
+        self.assertEqual(payload.get("bookmakers"), ["sx_bet"])
+        self.assertEqual(payload.get("includeProviders"), ["sx_bet"])
+        self.assertEqual(payload.get("commission"), 3.5)
+        self.assertEqual(payload.get("stake"), 90)
+        self.assertEqual(payload.get("sharpBook"), "Pinnacle")
+        self.assertEqual(payload.get("minEdgePercent"), 1.1)
+        self.assertEqual(payload.get("bankroll"), 1800.0)
+        self.assertEqual(payload.get("kellyFraction"), 0.4)
 
 
 if __name__ == "__main__":

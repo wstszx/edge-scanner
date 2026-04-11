@@ -16,6 +16,83 @@ async def _fake_shared_client(*args, **kwargs):
 
 
 class SXBetProviderTests(unittest.IsolatedAsyncioTestCase):
+    def test_market_period_suffix_treats_first_five_innings_as_h1_not_h2(self) -> None:
+        suffix = sx_bet._market_period_suffix('1618', 'Miami Marlins (1st 5 Innings)', 'h2h')
+
+        self.assertEqual(suffix, 'h1')
+
+    def test_normalize_fixture_market_maps_baseball_first_five_totals_to_totals_h1(self) -> None:
+        market = {
+            'type': 236,
+            'outcomeOneName': 'Over 4.5 (1st 5 Innings)',
+            'outcomeTwoName': 'Under 4.5 (1st 5 Innings)',
+            'teamOneName': 'Miami Marlins',
+            'teamTwoName': 'Chicago White Sox',
+            'line': 4.5,
+            'bestOddsOutcomeOne': 1.9,
+            'bestOddsOutcomeTwo': 1.9,
+        }
+
+        normalized = sx_bet._normalize_fixture_market(
+            market,
+            {'totals_h1'},
+            'Miami Marlins',
+            'Chicago White Sox',
+        )
+
+        self.assertIsNotNone(normalized)
+        self.assertEqual(normalized.get('market_key'), 'totals_h1')
+        self.assertEqual(normalized.get('outcome_one_name'), 'Over')
+        self.assertEqual(normalized.get('outcome_two_name'), 'Under')
+        self.assertEqual(normalized.get('outcome_one_point'), 4.5)
+        self.assertEqual(normalized.get('outcome_two_point'), 4.5)
+
+    def test_normalize_fixture_market_maps_baseball_first_five_moneyline_to_h2h_h1(self) -> None:
+        market = {
+            'type': 1618,
+            'outcomeOneName': 'Miami Marlins (1st 5 Innings)',
+            'outcomeTwoName': 'Chicago White Sox (1st 5 Innings)',
+            'teamOneName': 'Miami Marlins',
+            'teamTwoName': 'Chicago White Sox',
+            'bestOddsOutcomeOne': 2.1,
+            'bestOddsOutcomeTwo': 1.8,
+        }
+
+        normalized = sx_bet._normalize_fixture_market(
+            market,
+            {'h2h_h1'},
+            'Miami Marlins',
+            'Chicago White Sox',
+        )
+
+        self.assertIsNotNone(normalized)
+        self.assertEqual(normalized.get('market_key'), 'h2h_h1')
+        self.assertEqual(normalized.get('outcome_one_name'), 'Miami Marlins')
+        self.assertEqual(normalized.get('outcome_two_name'), 'Chicago White Sox')
+
+    def test_normalize_fixture_market_maps_soccer_tie_not_tie_to_h2h_3_way(self) -> None:
+        market = {
+            'type': 1,
+            'outcomeOneName': 'Tie',
+            'outcomeTwoName': 'Not tie',
+            'teamOneName': 'Rayo Vallecano',
+            'teamTwoName': 'Elche',
+            'bestOddsOutcomeOne': 3.2,
+            'bestOddsOutcomeTwo': 1.4,
+        }
+
+        normalized = sx_bet._normalize_fixture_market(
+            market,
+            {'h2h_3_way'},
+            'Rayo Vallecano',
+            'Elche',
+        )
+
+        self.assertIsNotNone(normalized)
+        self.assertEqual(normalized.get('market_key'), 'h2h_3_way')
+        self.assertEqual(normalized.get('outcome_one_name'), 'Draw')
+        self.assertEqual(normalized.get('outcome_two_name'), 'Not Draw')
+
     async def test_fetch_events_async_chunks_live_state_requests_when_fixture_batch_exceeds_api_limit(self) -> None:
         fixtures_payload = []
         odds_payload = {}
