@@ -2839,5 +2839,124 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertEqual(((sport_events[0].get("result") or {}).get("arb_opportunities") or [])[0].get("event"), "A vs B")
 
 
+    def test_scan_single_sport_provider_completed_filters_non_positive_arbitrage(self) -> None:
+        progress_events = []
+
+        async def _provider_fetcher(sport_key: str, markets: list[str], regions: list[str], bookmakers=None):
+            return [
+                {
+                    "id": "provider-event-1",
+                    "sport_key": sport_key,
+                    "home_team": "Home Team",
+                    "away_team": "Away Team",
+                    "commence_time": "2099-03-13T00:00:00Z",
+                    "bookmakers": [
+                        {
+                            "key": "sx_bet",
+                            "title": "SX Bet",
+                            "markets": [
+                                {
+                                    "key": "h2h",
+                                    "outcomes": [
+                                        {"name": "Home Team", "price": 2.0},
+                                        {"name": "Away Team", "price": 1.5},
+                                    ],
+                                }
+                            ],
+                        },
+                        {
+                            "key": "betdex",
+                            "title": "BetDEX",
+                            "markets": [
+                                {
+                                    "key": "h2h",
+                                    "outcomes": [
+                                        {"name": "Home Team", "price": 1.6},
+                                        {"name": "Away Team", "price": 2.05},
+                                    ],
+                                }
+                            ],
+                        },
+                    ],
+                }
+            ]
+
+        with (
+            patch.dict(scanner.PROVIDER_FETCHERS, {"sx_bet": _provider_fetcher}),
+            patch.dict(scanner.PROVIDER_TITLES, {"sx_bet": "SX Bet"}),
+        ):
+            asyncio.run(
+                scanner._scan_single_sport(
+                    sport={"key": "basketball_nba", "title": "NBA"},
+                    scan_mode="prematch",
+                    all_markets=False,
+                    should_fetch_api=False,
+                    api_pool=scanner.ApiKeyPool([]),
+                    normalized_regions=["us"],
+                    api_bookmakers=[],
+                    provider_target_sport_keys=["basketball_nba"],
+                    enabled_provider_keys=["sx_bet"],
+                    normalized_bookmakers=["sx_bet"],
+                    stake_amount=100.0,
+                    commission_rate=0.05,
+                    sharp_priority=scanner._sharp_priority("pinnacle"),
+                    min_edge_percent=0.0,
+                    bankroll=1000.0,
+                    kelly_fraction=0.25,
+                    progress_callback=progress_events.append,
+                )
+            )
+
+        provider_events = [item for item in progress_events if item.get("type") == "provider_completed"]
+        self.assertEqual(len(provider_events), 1)
+        partial_arb = ((provider_events[0].get("result") or {}).get("arb_opportunities") or [])
+        self.assertEqual(partial_arb, [])
+
+    def test_run_scan_async_filters_non_positive_arbitrage_from_final_results(self) -> None:
+        sports_payload = [{"key": "basketball_nba", "title": "NBA", "active": True, "has_outrights": False}]
+
+        def _fake_scan_single_sport(**kwargs):
+            return {
+                "skipped": False,
+                "sport_key": "basketball_nba",
+                "sport_timing": {"sport_key": "basketball_nba", "sport": "NBA", "total_ms": 0.0},
+                "timing_steps": [],
+                "api_market_skips": [],
+                "sport_errors": [],
+                "provider_updates": {},
+                "provider_snapshot_updates": {},
+                "events_scanned": 1,
+                "total_profit": -0.8,
+                "arb_opportunities": [
+                    {"event": "Bad Arb", "roi_percent": -0.8, "stakes": {"guaranteed_profit": -0.8}},
+                    {"event": "Flat Arb", "roi_percent": 0.0, "stakes": {"guaranteed_profit": 0.0}},
+                    {"event": "Good Arb", "roi_percent": 1.5, "stakes": {"guaranteed_profit": 1.0}},
+                ],
+                "middle_opportunities": [],
+                "plus_ev_opportunities": [],
+                "stale_event_filters": [],
+                "successful": 1,
+            }
+
+        with (
+            patch.object(scanner, "fetch_sports", return_value=sports_payload),
+            patch.object(scanner, "_scan_single_sport", side_effect=_fake_scan_single_sport),
+            patch.object(scanner, "_sport_scan_max_workers", return_value=1),
+        ):
+            result = asyncio.run(
+                scanner.run_scan_async(
+                    api_key="dummy",
+                    sports=["basketball_nba"],
+                )
+            )
+
+        self.assertTrue(result.get("success"))
+        arbitrage = result.get("arbitrage") or {}
+        opportunities = arbitrage.get("opportunities") or []
+        self.assertEqual([item.get("event") for item in opportunities], ["Good Arb"])
+        self.assertEqual(arbitrage.get("opportunities_count"), 1)
+        self.assertEqual((arbitrage.get("summary") or {}).get("positive_count"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

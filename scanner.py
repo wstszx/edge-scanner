@@ -4303,6 +4303,19 @@ def _calculate_stakes(outcomes: List[dict], stake_total: float, price_field: str
     }
 
 
+def _positive_arb_opportunities(opportunities: Sequence[dict]) -> List[dict]:
+    filtered: List[dict] = []
+    for opportunity in opportunities or []:
+        if not isinstance(opportunity, dict):
+            continue
+        roi = _safe_float(opportunity.get("roi_percent"))
+        if roi is None or roi <= 0:
+            continue
+        filtered.append(opportunity)
+    return filtered
+
+
+
 def _summaries(
     opportunities: List[dict],
     sports_scanned: int,
@@ -4895,7 +4908,7 @@ async def _scan_single_sport(
                     "error": provider_error,
                     "result": {
                         "sport_key": sport_key,
-                        "arb_opportunities": partial_provider_arb,
+                        "arb_opportunities": _positive_arb_opportunities(partial_provider_arb),
                         "middle_opportunities": partial_provider_middle,
                         "plus_ev_opportunities": partial_provider_plus_ev,
                     },
@@ -5013,6 +5026,14 @@ async def _scan_single_sport(
             "ms": sport_timing["total_ms"],
             "events_scanned": len(events),
         }
+    )
+    arb_opportunities = _positive_arb_opportunities(arb_opportunities)
+    total_profit = round(
+        sum(
+            _safe_float((opportunity.get("stakes") or {}).get("guaranteed_profit")) or 0.0
+            for opportunity in arb_opportunities
+        ),
+        2,
     )
     return {
         "skipped": False,
@@ -5489,6 +5510,14 @@ async def run_scan_async(
 
     finalize_started_at = time.perf_counter()
     api_calls_used = api_pool.calls_made
+    arb_opportunities = _positive_arb_opportunities(arb_opportunities)
+    total_profit = round(
+        sum(
+            _safe_float((opportunity.get("stakes") or {}).get("guaranteed_profit")) or 0.0
+            for opportunity in arb_opportunities
+        ),
+        2,
+    )
     arb_opportunities.sort(key=lambda x: x["roi_percent"], reverse=True)
     middle_opportunities.sort(key=lambda x: x["ev_percent"], reverse=True)
     middle_opportunities = _deduplicate_middles(middle_opportunities)
