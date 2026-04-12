@@ -1885,6 +1885,67 @@ class BrowserScanFlowTests(unittest.TestCase):
 
         self.assertEqual(len(run_scan_calls), 3)
 
+    def test_browser_calculator_displays_precise_roi_for_small_profit_scenarios(self) -> None:
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+
+        opp = _sample_arbitrage_opportunity(over_price=4.40)
+        opp["best_odds"][1]["price"] = 1.32
+        opp["best_odds"][1]["effective_price"] = 1.32
+        opp["best_odds"][0]["bookmaker"] = "Book A"
+        opp["best_odds"][0]["bookmaker_key"] = "book_a"
+        opp["best_odds"][1]["bookmaker"] = "Book B"
+        opp["best_odds"][1]["bookmaker_key"] = "book_b"
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True))
+            stack.enter_context(patch.object(app_module, "_start_background_provider_services"))
+            stack.enter_context(patch.object(app_module, "get_history_manager", return_value=history_manager))
+            stack.enter_context(patch.object(app_module, "get_notifier", return_value=notifier))
+            stack.enter_context(patch.object(app_module, "run_scan", return_value=_sample_scan_result(opportunities=[opp])))
+
+            server = _LiveServer(app_module.app)
+            server.start()
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(headless=True)
+                    context = browser.new_context()
+                    page = context.new_page()
+                    page.route("https://fonts.googleapis.com/*", lambda route: route.abort())
+                    page.route("https://fonts.gstatic.com/*", lambda route: route.abort())
+                    page.goto(server.base_url, wait_until="domcontentloaded")
+
+                    self._configure_selected_provider(page)
+
+                    with page.expect_response(lambda response: response.url.endswith("/scan") and response.request.method == "POST"):
+                        page.evaluate("document.getElementById('scan-form').requestSubmit()")
+
+                    page.wait_for_selector("#arb-desktop-list .arb-opportunity-card")
+                    page.click("#arb-desktop-list .arb-opportunity-card")
+                    page.wait_for_selector("#arb-calc-body:not(.hidden)")
+
+                    def set_input(selector: str, value: str) -> None:
+                        page.fill(selector, value)
+                        page.dispatch_event(selector, "input")
+                        page.dispatch_event(selector, "change")
+                        page.dispatch_event(selector, "blur")
+
+                    set_input("#arb-calc-odds-a", "4.40")
+                    set_input("#arb-calc-odds-b", "1.32")
+                    set_input("#arb-calc-stake-a", "0.36")
+                    set_input("#arb-calc-stake-b", "1.21")
+
+                    self._wait_for(lambda: page.locator("#arb-calc-roi").text_content().strip() != "-")
+
+                    self.assertEqual(page.locator("#arb-calc-min-payout").text_content().strip(), "US$1.58")
+                    self.assertEqual(page.locator("#arb-calc-profit").text_content().strip(), "US$0.01")
+                    self.assertEqual(page.locator("#arb-calc-roi").text_content().strip(), "0.89%")
+
+                    browser.close()
+            finally:
+                server.stop()
+
     def test_browser_calculator_selection_survives_refresh_when_event_id_changes(self) -> None:
         run_scan_calls: list[dict] = []
         history_manager = MagicMock()

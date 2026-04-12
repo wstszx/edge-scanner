@@ -3007,17 +3007,19 @@
       return Number.isFinite(rate) && rate > 0;
     }
 
-    function convertArbCalcCurrencyAmount(amount, fromCurrency, toCurrency) {
+    function convertArbCalcCurrencyAmount(amount, fromCurrency, toCurrency, options = {}) {
       if (!Number.isFinite(amount)) return NaN;
+      const { round = true } = options || {};
       const from = normalizeArbCalcCurrency(fromCurrency);
       const to = normalizeArbCalcCurrency(toCurrency);
-      if (from === to) return roundMoney(amount);
+      if (from === to) return round ? roundMoney(amount) : Number(amount);
       const fromRate = from === arbCalcFxState.referenceCurrency ? 1 : Number(arbCalcFxState?.rates?.[from]);
       const toRate = to === arbCalcFxState.referenceCurrency ? 1 : Number(arbCalcFxState?.rates?.[to]);
       if (!Number.isFinite(fromRate) || fromRate <= 0 || !Number.isFinite(toRate) || toRate <= 0) {
         return NaN;
       }
-      return roundMoney((amount / fromRate) * toRate);
+      const converted = (amount / fromRate) * toRate;
+      return round ? roundMoney(converted) : converted;
     }
 
     async function ensureArbCalcFxRates(force = false) {
@@ -7638,7 +7640,7 @@
         }
         const localPayoutExact = stake * odds;
         const localPayout = roundMoney(localPayoutExact);
-        const basePayoutExact = convertArbCalcCurrencyAmount(localPayoutExact, leg?.currency, normalizedBaseCurrency);
+        const basePayoutExact = convertArbCalcCurrencyAmount(localPayoutExact, leg?.currency, normalizedBaseCurrency, { round: false });
         const basePayout = convertArbCalcCurrencyAmount(localPayout, leg?.currency, normalizedBaseCurrency);
         return {
           local: localPayout,
