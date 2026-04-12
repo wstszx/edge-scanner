@@ -4315,6 +4315,12 @@ body {
   background: color-mix(in srgb, var(--surface) 82%, transparent);
 }
 
+.arb-calc-meta .arb-meta-pill.is-notice {
+  border-color: color-mix(in srgb, var(--warning) 38%, transparent);
+  background: color-mix(in srgb, var(--warning) 18%, white);
+  color: color-mix(in srgb, var(--warning) 72%, var(--text));
+}
+
 .arb-calc-badges {
   display: flex;
   align-items: center;
@@ -5400,6 +5406,12 @@ body {
   color: #5f7184;
   box-shadow: none;
   font-size: 0.6rem;
+}
+
+.arb-calculator-card .arb-calc-meta .arb-meta-pill.is-notice {
+  border-color: rgba(214, 155, 56, 0.55);
+  background: rgba(255, 244, 214, 0.92);
+  color: #8a5a14;
 }
 
 .arb-calculator-card .arb-calc-fx-bar {

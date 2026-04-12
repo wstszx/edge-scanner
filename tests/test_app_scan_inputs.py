@@ -279,6 +279,169 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertTrue(partial_result.get('partial'))
         self.assertEqual((((partial_result.get('arbitrage') or {}).get('opportunities')) or [])[0].get('event'), 'Early Arb')
 
+    def test_start_scan_job_provider_partial_progress_accumulates_before_provider_completion(self) -> None:
+        thread_holder = {}
+
+        def _thread_factory(target=None, daemon=None):
+            thread = _DeferredThread(target=target, daemon=daemon)
+            thread_holder['thread'] = thread
+            return thread
+
+        def _fake_execute(payload, save_scan_override=None, background=False, progress_callback=None):
+            progress_callback({
+                'type': 'provider_partial',
+                'sport_key': 'basketball_nba',
+                'provider_key': 'polymarket',
+                'provider': 'Polymarket',
+                'result': {
+                    'arb_opportunities': [{'event': 'Early Partial Arb', 'roi_percent': 1.1, 'stakes': {'guaranteed_profit': 0.7}}],
+                    'middle_opportunities': [],
+                    'plus_ev_opportunities': [],
+                },
+            })
+            progress_callback({
+                'type': 'provider_completed',
+                'sport_key': 'basketball_nba',
+                'provider_key': 'polymarket',
+                'provider': 'Polymarket',
+                'ms': 456.0,
+                'events_returned': 3,
+                'error': None,
+                'result': {
+                    'arb_opportunities': [
+                        {'event': 'Early Partial Arb', 'roi_percent': 1.1, 'stakes': {'guaranteed_profit': 0.7}},
+                        {'event': 'Late Provider Arb', 'roi_percent': 0.9, 'stakes': {'guaranteed_profit': 0.5}},
+                    ],
+                    'middle_opportunities': [],
+                    'plus_ev_opportunities': [],
+                },
+            })
+            return {
+                'success': True,
+                'scan_time': '2026-02-22T12:00:00Z',
+                'arbitrage': {'opportunities': [{'event': 'Early Partial Arb'}, {'event': 'Late Provider Arb'}], 'opportunities_count': 2},
+                'middles': {'opportunities': [], 'opportunities_count': 0},
+                'plus_ev': {'opportunities': [], 'opportunities_count': 0},
+            }
+
+        with (
+            patch.object(app_module, '_execute_scan_payload', side_effect=_fake_execute),
+            patch.object(app_module.threading, 'Thread', side_effect=_thread_factory),
+        ):
+            started = app_module._start_scan_job({'sports': ['basketball_nba']})
+            thread_holder['thread'].run_now()
+
+        snapshot = app_module._get_scan_job_snapshot(started.get('job_id')) or {}
+        partial_result = snapshot.get('partial_result') or {}
+        arbitrage_items = (((partial_result.get('arbitrage') or {}).get('opportunities')) or [])
+        self.assertEqual([item.get('event') for item in arbitrage_items], ['Early Partial Arb', 'Late Provider Arb'])
+
+    def test_start_scan_job_provider_progress_accumulates_partial_results(self) -> None:
+        thread_holder = {}
+
+        def _thread_factory(target=None, daemon=None):
+            thread = _DeferredThread(target=target, daemon=daemon)
+            thread_holder['thread'] = thread
+            return thread
+
+        def _fake_execute(payload, save_scan_override=None, background=False, progress_callback=None):
+            progress_callback({
+                'type': 'provider_completed',
+                'sport_key': 'basketball_nba',
+                'provider_key': 'sx_bet',
+                'provider': 'SX Bet',
+                'ms': 123.0,
+                'events_returned': 2,
+                'error': None,
+                'result': {
+                    'arb_opportunities': [{'event': 'First Arb', 'roi_percent': 1.2, 'stakes': {'guaranteed_profit': 0.8}}],
+                    'middle_opportunities': [],
+                    'plus_ev_opportunities': [],
+                },
+            })
+            first_snapshot = app_module._get_scan_job_snapshot(started.get('job_id')) or {}
+            first_partial = (((first_snapshot.get('partial_result') or {}).get('arbitrage') or {}).get('opportunities')) or []
+            self.assertEqual([item.get('event') for item in first_partial], ['First Arb'])
+
+            progress_callback({
+                'type': 'provider_completed',
+                'sport_key': 'basketball_nba',
+                'provider_key': 'betdex',
+                'provider': 'BetDEX',
+                'ms': 456.0,
+                'events_returned': 3,
+                'error': None,
+                'result': {
+                    'arb_opportunities': [{'event': 'Second Arb', 'roi_percent': 0.9, 'stakes': {'guaranteed_profit': 0.5}}],
+                    'middle_opportunities': [],
+                    'plus_ev_opportunities': [],
+                },
+            })
+            return {
+                'success': True,
+                'scan_time': '2026-02-22T12:00:00Z',
+                'arbitrage': {'opportunities': [{'event': 'First Arb'}, {'event': 'Second Arb'}], 'opportunities_count': 2},
+                'middles': {'opportunities': [], 'opportunities_count': 0},
+                'plus_ev': {'opportunities': [], 'opportunities_count': 0},
+            }
+
+        with (
+            patch.object(app_module, '_execute_scan_payload', side_effect=_fake_execute),
+            patch.object(app_module.threading, 'Thread', side_effect=_thread_factory),
+        ):
+            started = app_module._start_scan_job({'sports': ['basketball_nba']})
+            thread_holder['thread'].run_now()
+
+        snapshot = app_module._get_scan_job_snapshot(started.get('job_id')) or {}
+        partial_result = snapshot.get('partial_result') or {}
+        arbitrage_items = (((partial_result.get('arbitrage') or {}).get('opportunities')) or [])
+        self.assertEqual([item.get('event') for item in arbitrage_items], ['First Arb', 'Second Arb'])
+
+    def test_start_scan_job_provider_progress_preserves_negative_roi_partial_result(self) -> None:
+        thread_holder = {}
+
+        def _thread_factory(target=None, daemon=None):
+            thread = _DeferredThread(target=target, daemon=daemon)
+            thread_holder['thread'] = thread
+            return thread
+
+        def _fake_execute(payload, save_scan_override=None, background=False, progress_callback=None):
+            progress_callback({
+                'type': 'provider_completed',
+                'sport_key': 'basketball_nba',
+                'provider_key': 'sx_bet',
+                'provider': 'SX Bet',
+                'ms': 123.0,
+                'events_returned': 2,
+                'error': None,
+                'result': {
+                    'arb_opportunities': [{'event': 'Near Arb', 'roi_percent': -0.8, 'stakes': {'guaranteed_profit': -0.8}}],
+                    'middle_opportunities': [],
+                    'plus_ev_opportunities': [],
+                },
+            })
+            return {
+                'success': True,
+                'scan_time': '2026-02-22T12:00:00Z',
+                'arbitrage': {'opportunities': [{'event': 'Near Arb', 'roi_percent': -0.8}], 'opportunities_count': 1},
+                'middles': {'opportunities': [], 'opportunities_count': 0},
+                'plus_ev': {'opportunities': [], 'opportunities_count': 0},
+            }
+
+        with (
+            patch.object(app_module, '_execute_scan_payload', side_effect=_fake_execute),
+            patch.object(app_module.threading, 'Thread', side_effect=_thread_factory),
+        ):
+            started = app_module._start_scan_job({'sports': ['basketball_nba']})
+            thread_holder['thread'].run_now()
+
+        snapshot = app_module._get_scan_job_snapshot(started.get('job_id')) or {}
+        partial_result = snapshot.get('partial_result') or {}
+        arbitrage_items = (((partial_result.get('arbitrage') or {}).get('opportunities')) or [])
+        self.assertEqual(len(arbitrage_items), 1)
+        self.assertEqual(arbitrage_items[0].get('event'), 'Near Arb')
+        self.assertEqual(arbitrage_items[0].get('roi_percent'), -0.8)
+
     def test_scan_rejects_invalid_json_payload(self) -> None:
         response = self.client.post(
             "/scan",

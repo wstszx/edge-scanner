@@ -1877,13 +1877,126 @@ class BrowserScanFlowTests(unittest.TestCase):
 
                     self._wait_for(lambda: len(run_scan_calls) >= 3)
                     self._wait_for(lambda: abs(float(page.input_value("#arb-calc-odds-a")) - 2.63) < 0.01)
-                    self.assertAlmostEqual(float(page.input_value("#arb-calc-stake-a")), initial_stake, places=2)
+                    self.assertNotAlmostEqual(float(page.input_value("#arb-calc-stake-a")), initial_stake, places=2)
+                    self.assertEqual(
+                        page.locator("#arb-desktop-list .arb-opportunity-card .arb-opportunity-roi").text_content().replace(" ", " ").strip(),
+                        page.locator("#arb-calc-roi").text_content().replace(" ", " ").strip(),
+                    )
 
                     browser.close()
             finally:
                 server.stop()
 
         self.assertEqual(len(run_scan_calls), 3)
+
+    def test_browser_calculator_shows_auto_rebalance_hint_when_latest_odds_sync_is_enabled(self) -> None:
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True))
+            stack.enter_context(patch.object(app_module, "_start_background_provider_services"))
+            stack.enter_context(patch.object(app_module, "get_history_manager", return_value=history_manager))
+            stack.enter_context(patch.object(app_module, "get_notifier", return_value=notifier))
+            stack.enter_context(patch.object(app_module, "run_scan", return_value=_sample_scan_result(opportunities=[_sample_arbitrage_opportunity()])))
+
+            server = _LiveServer(app_module.app)
+            server.start()
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(headless=True)
+                    context = browser.new_context()
+                    page = context.new_page()
+                    page.route("https://fonts.googleapis.com/*", lambda route: route.abort())
+                    page.route("https://fonts.gstatic.com/*", lambda route: route.abort())
+                    page.goto(server.base_url, wait_until="domcontentloaded")
+
+                    self._configure_selected_provider(page)
+
+                    with page.expect_response(lambda response: response.url.endswith("/scan") and response.request.method == "POST"):
+                        page.evaluate("document.getElementById('scan-form').requestSubmit()")
+
+                    page.wait_for_selector("#arb-desktop-list .arb-opportunity-card")
+                    page.click("#arb-desktop-list .arb-opportunity-card")
+                    page.wait_for_selector("#arb-calc-body:not(.hidden)")
+
+                    self.assertNotIn("is-notice", page.locator("#arb-calc-meta .arb-meta-pill").get_attribute("class") or "")
+                    page.check("#arb-calc-live-odds-toggle")
+                    self.assertIn("rebalanced", page.locator("#arb-calc-meta").inner_text().lower())
+                    self.assertIn("is-notice", page.locator("#arb-calc-meta .arb-meta-pill").get_attribute("class") or "")
+
+                    browser.close()
+            finally:
+                server.stop()
+
+    def test_browser_calculator_roi_matches_list_when_latest_odds_sync_refreshes_selection(self) -> None:
+        run_scan_calls: list[dict] = []
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+
+        initial_opp = _sample_arbitrage_opportunity(over_price=2.37)
+        refreshed_opp = _sample_arbitrage_opportunity(over_price=2.63)
+        scan_results = [
+            _sample_scan_result(opportunities=[initial_opp]),
+            _sample_scan_result(opportunities=[refreshed_opp]),
+        ]
+
+        def _fake_run_scan(**kwargs):
+            run_scan_calls.append(copy.deepcopy(kwargs))
+            idx = min(len(run_scan_calls) - 1, len(scan_results) - 1)
+            return copy.deepcopy(scan_results[idx])
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(app_module, "ENV_PROVIDER_ONLY_MODE", True))
+            stack.enter_context(patch.object(app_module, "_start_background_provider_services"))
+            stack.enter_context(patch.object(app_module, "get_history_manager", return_value=history_manager))
+            stack.enter_context(patch.object(app_module, "get_notifier", return_value=notifier))
+            stack.enter_context(patch.object(app_module, "run_scan", side_effect=_fake_run_scan))
+
+            server = _LiveServer(app_module.app)
+            server.start()
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.launch(headless=True)
+                    context = browser.new_context()
+                    page = context.new_page()
+                    page.route("https://fonts.googleapis.com/*", lambda route: route.abort())
+                    page.route("https://fonts.gstatic.com/*", lambda route: route.abort())
+                    page.goto(server.base_url, wait_until="domcontentloaded")
+
+                    self._configure_selected_provider(page)
+
+                    with page.expect_response(lambda response: response.url.endswith("/scan") and response.request.method == "POST"):
+                        page.evaluate("document.getElementById('scan-form').requestSubmit()")
+
+                    page.wait_for_selector("#arb-desktop-list .arb-opportunity-card")
+                    page.click("#arb-desktop-list .arb-opportunity-card")
+                    page.wait_for_selector("#arb-calc-body:not(.hidden)")
+
+                    page.check("#arb-calc-live-odds-toggle")
+                    self.assertTrue(page.is_checked("#arb-calc-live-odds-toggle"))
+
+                    with page.expect_response(lambda response: response.url.endswith("/scan") and response.request.method == "POST"):
+                        page.evaluate("document.getElementById('scan-form').requestSubmit()")
+
+                    self._wait_for(lambda: len(run_scan_calls) >= 2)
+                    self._wait_for(lambda: abs(float(page.input_value("#arb-calc-odds-a")) - 2.63) < 0.01)
+
+                    def _normalized_text(selector: str) -> str:
+                        return page.locator(selector).text_content().replace(" ", " ").strip()
+
+                    self.assertEqual(
+                        _normalized_text("#arb-desktop-list .arb-opportunity-card .arb-opportunity-roi"),
+                        _normalized_text("#arb-calc-roi"),
+                    )
+
+                    browser.close()
+            finally:
+                server.stop()
+
+        self.assertEqual(len(run_scan_calls), 2)
 
     def test_browser_calculator_displays_precise_roi_for_small_profit_scenarios(self) -> None:
         history_manager = MagicMock()

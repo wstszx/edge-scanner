@@ -4309,7 +4309,7 @@ def _positive_arb_opportunities(opportunities: Sequence[dict]) -> List[dict]:
         if not isinstance(opportunity, dict):
             continue
         roi = _safe_float(opportunity.get("roi_percent"))
-        if roi is None or roi <= 0:
+        if roi is None:
             continue
         filtered.append(opportunity)
     return filtered
@@ -4672,15 +4672,100 @@ async def _scan_single_sport(
         key for key in enabled_provider_keys if callable(PROVIDER_FETCHERS.get(key))
     ]
     provider_context = {"scan_mode": normalized_scan_mode, "live": normalized_scan_mode == SCAN_MODE_LIVE}
+
+    def _progress_opportunity_list(payload: object) -> List[dict]:
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict):
+            opportunities = payload.get("opportunities")
+            if isinstance(opportunities, list):
+                return [item for item in opportunities if isinstance(item, dict)]
+        return []
+
+    def _provider_partial_progress(provider_key: str, provider_title: str, payload: Optional[dict]) -> None:
+        if not callable(progress_callback) or not isinstance(payload, dict):
+            return
+        partial_arb = _progress_opportunity_list(payload.get("arb_opportunities"))
+        partial_middle = _progress_opportunity_list(payload.get("middle_opportunities"))
+        partial_plus_ev = _progress_opportunity_list(payload.get("plus_ev_opportunities"))
+        if not (partial_arb or partial_middle or partial_plus_ev):
+            partial_events_payload = payload.get("events")
+            if isinstance(partial_events_payload, list) and partial_events_payload:
+                _, partial_provider_events, _, _, _ = _prepare_provider_live_funnel(partial_events_payload)
+                merged_partial_events = _merge_events(copy.deepcopy(events), partial_provider_events)
+                progress_events, _ = _filter_events_for_scan_mode(copy.deepcopy(merged_partial_events), normalized_scan_mode)
+                for game in progress_events:
+                    game["sport_key"] = sport_key
+                    game["sport_title"] = sport.get("title")
+                    game["sport_display"] = SPORT_DISPLAY_NAMES.get(sport_key, sport_key)
+                    if normalized_scan_mode == SCAN_MODE_LIVE:
+                        current_markets = _available_markets(game)
+                    else:
+                        current_markets = _available_markets(game) if all_markets else base_markets
+                    for market_key in current_markets:
+                        partial_arb.extend(
+                            _collect_market_entries(
+                                game,
+                                market_key,
+                                stake_amount,
+                                commission_rate,
+                                scan_mode=scan_mode,
+                            )
+                        )
+                        if market_key in MIDDLE_MARKETS:
+                            partial_middle.extend(
+                                _collect_middle_opportunities(
+                                    game,
+                                    market_key,
+                                    stake_amount,
+                                    commission_rate,
+                                    scan_mode=scan_mode,
+                                )
+                            )
+                    partial_plus_ev.extend(
+                        _collect_plus_ev_opportunities(
+                            game,
+                            current_markets,
+                            sharp_priority,
+                            commission_rate,
+                            min_edge_percent,
+                            bankroll,
+                            kelly_fraction,
+                            scan_mode=scan_mode,
+                        )
+                    )
+        progress_callback(
+            {
+                "type": "provider_partial",
+                "sport_key": sport_key,
+                "sport": sport.get("title") or SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
+                "provider_key": provider_key,
+                "provider": provider_title,
+                "result": {
+                    "sport_key": sport_key,
+                    "arb_opportunities": partial_arb,
+                    "middle_opportunities": partial_middle,
+                    "plus_ev_opportunities": partial_plus_ev,
+                },
+            }
+        )
+
     async def _provider_job(provider_key: str) -> Tuple[str, dict]:
         try:
+            provider_title = PROVIDER_TITLES.get(provider_key, provider_key)
+            provider_job_context = dict(provider_context)
+            provider_job_context["progress_callback"] = lambda payload: _provider_partial_progress(
+                provider_key,
+                provider_title,
+                payload,
+            )
             result = await _fetch_provider_events_for_sport(
                 provider_key=provider_key,
                 sport_key=sport_key,
                 provider_markets=provider_markets,
                 regions=normalized_regions,
                 bookmakers=normalized_bookmakers,
-                provider_context=provider_context,
+                provider_context=provider_job_context,
             )
         except Exception as exc:  # pragma: no cover - defensive
             result = {

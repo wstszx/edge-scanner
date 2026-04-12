@@ -190,6 +190,39 @@ class ScannerRegressionTests(unittest.TestCase):
             },
         )
 
+    def test_fetch_provider_events_for_sport_passes_progress_callback_in_context(self) -> None:
+        observed = {}
+
+        async def _fake_fetcher(
+            sport_key: str,
+            markets: list[str],
+            regions: list[str],
+            bookmakers=None,
+            context=None,
+        ):
+            observed['context'] = dict(context or {})
+            callback = (context or {}).get('progress_callback')
+            if callable(callback):
+                callback({'arb_opportunities': [{'event': 'ctx-arb', 'roi_percent': 1.0}]})
+            return []
+
+        progress_payloads = []
+        with patch.dict(scanner.PROVIDER_FETCHERS, {'sx_bet': _fake_fetcher}):
+            result = asyncio.run(
+                scanner._fetch_provider_events_for_sport(
+                    provider_key='sx_bet',
+                    sport_key='basketball_nba',
+                    provider_markets=['h2h'],
+                    regions=['us'],
+                    bookmakers=['sx_bet'],
+                    provider_context={'scan_mode': 'prematch', 'progress_callback': progress_payloads.append},
+                )
+            )
+
+        self.assertEqual(result.get('events'), [])
+        self.assertIn('progress_callback', observed.get('context') or {})
+        self.assertEqual(progress_payloads, [{'arb_opportunities': [{'event': 'ctx-arb', 'roi_percent': 1.0}]}])
+
     def test_fetch_provider_events_for_sport_passes_context_when_supported(self) -> None:
         async def _fake_fetcher(
             sport_key: str,
@@ -2594,6 +2627,123 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertEqual(len(provider_events), 1)
         self.assertEqual(provider_events[0].get("provider_key"), "sx_bet")
 
+    def test_scan_single_sport_provider_partial_events_surface_cross_book_arb_before_provider_completion(self) -> None:
+        progress_events = []
+
+        async def _provider_a(sport_key: str, markets: list[str], regions: list[str], bookmakers=None, context=None):
+            return [
+                {
+                    'id': 'shared-event',
+                    'sport_key': sport_key,
+                    'home_team': 'Home Team',
+                    'away_team': 'Away Team',
+                    'commence_time': '2099-03-13T00:00:00Z',
+                    'bookmakers': [
+                        {
+                            'key': 'book_a',
+                            'title': 'Book A',
+                            'markets': [
+                                {
+                                    'key': 'h2h',
+                                    'outcomes': [
+                                        {'name': 'Home Team', 'price': 2.3},
+                                        {'name': 'Away Team', 'price': 1.8},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+
+        async def _provider_b(sport_key: str, markets: list[str], regions: list[str], bookmakers=None, context=None):
+            await asyncio.sleep(0.05)
+            callback = (context or {}).get('progress_callback')
+            if callable(callback):
+                callback({
+                    'events': [
+                        {
+                            'id': 'shared-event',
+                            'sport_key': sport_key,
+                            'home_team': 'Home Team',
+                            'away_team': 'Away Team',
+                            'commence_time': '2099-03-13T00:00:00Z',
+                            'bookmakers': [
+                                {
+                                    'key': 'book_b',
+                                    'title': 'Book B',
+                                    'markets': [
+                                        {
+                                            'key': 'h2h',
+                                            'outcomes': [
+                                                {'name': 'Home Team', 'price': 1.8},
+                                                {'name': 'Away Team', 'price': 2.3},
+                                            ],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                })
+            return [
+                {
+                    'id': 'shared-event',
+                    'sport_key': sport_key,
+                    'home_team': 'Home Team',
+                    'away_team': 'Away Team',
+                    'commence_time': '2099-03-13T00:00:00Z',
+                    'bookmakers': [
+                        {
+                            'key': 'book_b',
+                            'title': 'Book B',
+                            'markets': [
+                                {
+                                    'key': 'h2h',
+                                    'outcomes': [
+                                        {'name': 'Home Team', 'price': 1.8},
+                                        {'name': 'Away Team', 'price': 2.3},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+
+        with (
+            patch.dict(scanner.PROVIDER_FETCHERS, {'book_a': _provider_a, 'book_b': _provider_b}, clear=False),
+            patch.dict(scanner.PROVIDER_TITLES, {'book_a': 'Book A', 'book_b': 'Book B'}, clear=False),
+        ):
+            asyncio.run(
+                scanner._scan_single_sport(
+                    sport={'key': 'basketball_nba', 'title': 'NBA'},
+                    scan_mode='prematch',
+                    all_markets=False,
+                    should_fetch_api=False,
+                    api_pool=scanner.ApiKeyPool([]),
+                    normalized_regions=['us'],
+                    api_bookmakers=[],
+                    provider_target_sport_keys=['basketball_nba'],
+                    enabled_provider_keys=['book_a', 'book_b'],
+                    normalized_bookmakers=['book_a', 'book_b'],
+                    stake_amount=100.0,
+                    commission_rate=0.0,
+                    sharp_priority=scanner._sharp_priority('pinnacle'),
+                    min_edge_percent=0.0,
+                    bankroll=1000.0,
+                    kelly_fraction=0.25,
+                    progress_callback=progress_events.append,
+                )
+            )
+
+        partial_events = [item for item in progress_events if item.get('type') == 'provider_partial']
+        self.assertEqual(len(partial_events), 1)
+        partial_result = partial_events[0].get('result') or {}
+        partial_arb = partial_result.get('arb_opportunities') or []
+        self.assertTrue(partial_arb)
+        self.assertGreater(partial_arb[0].get('roi_percent', 0.0), 0.0)
+
     def test_scan_single_sport_provider_progress_surfaces_cross_book_arb_before_sport_completion(self) -> None:
         progress_events = []
 
@@ -2695,6 +2845,77 @@ class ScannerRegressionTests(unittest.TestCase):
         second_arb = second_result.get("arb_opportunities") or []
         self.assertTrue(second_arb)
         self.assertGreater(second_arb[0].get("roi_percent", 0.0), 0.0)
+
+    def test_scan_single_sport_emits_provider_partial_progress_event(self) -> None:
+        progress_events = []
+
+        async def _provider_fetcher(sport_key: str, markets: list[str], regions: list[str], bookmakers=None, context=None):
+            callback = (context or {}).get('progress_callback')
+            if callable(callback):
+                callback({
+                    'arb_opportunities': [{'event': 'Early Partial Arb', 'roi_percent': 1.1, 'stakes': {'guaranteed_profit': 0.7}}],
+                    'middle_opportunities': [],
+                    'plus_ev_opportunities': [],
+                })
+            return [
+                {
+                    'id': 'provider-event-1',
+                    'sport_key': sport_key,
+                    'home_team': 'Home Team',
+                    'away_team': 'Away Team',
+                    'commence_time': '2099-03-13T00:00:00Z',
+                    'bookmakers': [
+                        {
+                            'key': 'polymarket',
+                            'title': 'Polymarket',
+                            'markets': [
+                                {
+                                    'key': 'h2h',
+                                    'outcomes': [
+                                        {'name': 'Home Team', 'price': 2.2},
+                                        {'name': 'Away Team', 'price': 1.85},
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+
+        provider_titles = dict(scanner.PROVIDER_TITLES)
+        provider_titles['polymarket'] = 'Polymarket'
+
+        with (
+            patch.dict(scanner.PROVIDER_FETCHERS, {'polymarket': _provider_fetcher}, clear=False),
+            patch.dict(scanner.PROVIDER_TITLES, provider_titles, clear=True),
+        ):
+            asyncio.run(
+                scanner._scan_single_sport(
+                    sport={'key': 'basketball_nba', 'title': 'NBA'},
+                    scan_mode='prematch',
+                    all_markets=False,
+                    should_fetch_api=False,
+                    api_pool=scanner.ApiKeyPool([]),
+                    normalized_regions=['us'],
+                    api_bookmakers=[],
+                    provider_target_sport_keys=['basketball_nba'],
+                    enabled_provider_keys=['polymarket'],
+                    normalized_bookmakers=['polymarket'],
+                    stake_amount=100.0,
+                    commission_rate=0.0,
+                    sharp_priority=scanner._sharp_priority('pinnacle'),
+                    min_edge_percent=0.0,
+                    bankroll=1000.0,
+                    kelly_fraction=0.25,
+                    progress_callback=progress_events.append,
+                )
+            )
+
+        partial_events = [item for item in progress_events if item.get('type') == 'provider_partial']
+        self.assertEqual(len(partial_events), 1)
+        self.assertEqual(partial_events[0].get('provider_key'), 'polymarket')
+        partial_arb = ((partial_events[0].get('result') or {}).get('arb_opportunities') or [])
+        self.assertEqual([item.get('event') for item in partial_arb], ['Early Partial Arb'])
 
     def test_scan_single_sport_provider_progress_is_emitted_as_each_provider_finishes(self) -> None:
         progress_events = []
@@ -2839,7 +3060,7 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertEqual(((sport_events[0].get("result") or {}).get("arb_opportunities") or [])[0].get("event"), "A vs B")
 
 
-    def test_scan_single_sport_provider_completed_filters_non_positive_arbitrage(self) -> None:
+    def test_scan_single_sport_provider_completed_preserves_non_positive_arbitrage(self) -> None:
         progress_events = []
 
         async def _provider_fetcher(sport_key: str, markets: list[str], regions: list[str], bookmakers=None):
@@ -2910,9 +3131,10 @@ class ScannerRegressionTests(unittest.TestCase):
         provider_events = [item for item in progress_events if item.get("type") == "provider_completed"]
         self.assertEqual(len(provider_events), 1)
         partial_arb = ((provider_events[0].get("result") or {}).get("arb_opportunities") or [])
-        self.assertEqual(partial_arb, [])
+        self.assertEqual([item.get('event') for item in partial_arb], ['Away Team vs Home Team'])
+        self.assertLess(partial_arb[0].get('roi_percent', 0.0), 0.0)
 
-    def test_run_scan_async_filters_non_positive_arbitrage_from_final_results(self) -> None:
+    def test_run_scan_async_preserves_non_positive_arbitrage_in_final_results(self) -> None:
         sports_payload = [{"key": "basketball_nba", "title": "NBA", "active": True, "has_outrights": False}]
 
         def _fake_scan_single_sport(**kwargs):
@@ -2953,8 +3175,8 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertTrue(result.get("success"))
         arbitrage = result.get("arbitrage") or {}
         opportunities = arbitrage.get("opportunities") or []
-        self.assertEqual([item.get("event") for item in opportunities], ["Good Arb"])
-        self.assertEqual(arbitrage.get("opportunities_count"), 1)
+        self.assertEqual([item.get("event") for item in opportunities], ["Good Arb", "Flat Arb", "Bad Arb"])
+        self.assertEqual(arbitrage.get("opportunities_count"), 3)
         self.assertEqual((arbitrage.get("summary") or {}).get("positive_count"), 1)
 
 

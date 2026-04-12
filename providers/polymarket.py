@@ -3754,6 +3754,72 @@ def _set_last_stats(stats: dict) -> None:
     fetch_events_async.last_stats = stats
 
 
+def _build_standardized_events(
+    filtered_events: Sequence[tuple[dict, str, str, Optional[dict]]],
+    sport_key: str,
+    supported_markets: set[str],
+    now_utc: dt.datetime,
+    clob_quote_map: Optional[Dict[str, dict]] = None,
+) -> List[dict]:
+    events_out: List[dict] = []
+    for event, home_team, away_team, realtime_state in filtered_events:
+        market_list = _pick_match_markets(
+            event,
+            home_team,
+            away_team,
+            supported_markets,
+            now_utc,
+            clob_quote_map=clob_quote_map,
+        )
+        market_list = [market for market in market_list if _market_has_tradeable_outcomes(market)]
+        if not market_list:
+            continue
+
+        commence = _normalize_commence_time(event.get("startTime"))
+        if not commence:
+            commence = _normalize_commence_time(
+                (event.get("markets") or [{}])[0].get("gameStartTime")
+                if isinstance(event.get("markets"), list) and event.get("markets")
+                else None
+            )
+        if not commence:
+            commence = _normalize_commence_time(
+                event.get("eventDate")
+                or event.get("startDate")
+                or event.get("creationDate")
+                or event.get("createdAt")
+            )
+        if not commence:
+            continue
+
+        event_id = _normalize_text(event.get("id") or event.get("slug"))
+        if not event_id:
+            continue
+
+        live_state = _event_live_state_payload(event, realtime_state)
+        events_out.append(
+            {
+                "id": event_id,
+                "sport_key": sport_key,
+                "home_team": home_team,
+                "away_team": away_team,
+                "commence_time": commence,
+                "live_state": live_state,
+                "bookmakers": [
+                    {
+                        "key": PROVIDER_KEY,
+                        "title": PROVIDER_TITLE,
+                        "event_id": event_id,
+                        "event_url": _event_url(event),
+                        "live_state": live_state,
+                        "markets": market_list,
+                    }
+                ],
+            }
+        )
+    return events_out
+
+
 async def fetch_events_async(
     sport_key: str,
     markets: Sequence[str],
@@ -3967,6 +4033,7 @@ async def fetch_events_async(
                     now_utc,
                 )
             )
+        progress_callback = context.get("progress_callback") if isinstance(context, dict) else None
         clob_quote_map: Dict[str, dict] = {}
 
         if clob_token_ids:
@@ -3991,6 +4058,16 @@ async def fetch_events_async(
                 )
                 if realtime_quote_map:
                     clob_quote_map.update(realtime_quote_map)
+                    if callable(progress_callback):
+                        partial_events_out = _build_standardized_events(
+                            filtered_events,
+                            sport_key,
+                            supported_markets,
+                            now_utc,
+                            clob_quote_map=clob_quote_map,
+                        )
+                        if partial_events_out:
+                            progress_callback({"events": partial_events_out})
                 unresolved_token_ids = [
                     token_id for token_id in normalized_token_ids if token_id not in clob_quote_map
                 ]
@@ -4015,6 +4092,16 @@ async def fetch_events_async(
                     stats["retries_used"] += int(clob_meta.get("retries_used", 0) or 0)
                     stats["clob_books_fetched"] += int(clob_meta.get("books_fetched", 0) or 0)
                     stats["clob_book_errors"] += int(clob_meta.get("book_errors", 0) or 0)
+                    if callable(progress_callback):
+                        partial_events_out = _build_standardized_events(
+                            filtered_events,
+                            sport_key,
+                            supported_markets,
+                            now_utc,
+                            clob_quote_map=clob_quote_map,
+                        )
+                        if partial_events_out:
+                            progress_callback({"events": partial_events_out})
                 unresolved_token_ids = [
                     token_id for token_id in normalized_token_ids if token_id not in clob_quote_map
                 ]
@@ -4026,62 +4113,14 @@ async def fetch_events_async(
             )
             stats["clob_books_with_depth"] = stats["clob_books_with_quotes"]
 
-        for event, home_team, away_team, realtime_state in filtered_events:
-            market_list = _pick_match_markets(
-                event,
-                home_team,
-                away_team,
-                supported_markets,
-                now_utc,
-                clob_quote_map=clob_quote_map,
-            )
-            market_list = [market for market in market_list if _market_has_tradeable_outcomes(market)]
-            if not market_list:
-                continue
-            stats["events_with_market_count"] += 1
-
-            commence = _normalize_commence_time(event.get("startTime"))
-            if not commence:
-                commence = _normalize_commence_time(
-                    (event.get("markets") or [{}])[0].get("gameStartTime")
-                    if isinstance(event.get("markets"), list) and event.get("markets")
-                    else None
-                )
-            if not commence:
-                commence = _normalize_commence_time(
-                    event.get("eventDate")
-                    or event.get("startDate")
-                    or event.get("creationDate")
-                    or event.get("createdAt")
-                )
-            if not commence:
-                continue
-
-            event_id = _normalize_text(event.get("id") or event.get("slug"))
-            if not event_id:
-                continue
-
-            events_out.append(
-                {
-                    "id": event_id,
-                    "sport_key": sport_key,
-                    "home_team": home_team,
-                    "away_team": away_team,
-                    "commence_time": commence,
-                    "live_state": _event_live_state_payload(event, realtime_state),
-                    "bookmakers": [
-                        {
-                            "key": PROVIDER_KEY,
-                            "title": PROVIDER_TITLE,
-                            "event_id": event_id,
-                            "event_url": _event_url(event),
-                            "live_state": _event_live_state_payload(event, realtime_state),
-                            "markets": market_list,
-                        }
-                    ],
-                }
-            )
-
+        events_out = _build_standardized_events(
+            filtered_events,
+            sport_key,
+            supported_markets,
+            now_utc,
+            clob_quote_map=clob_quote_map,
+        )
+        stats["events_with_market_count"] = len(events_out)
     stats["events_returned_count"] = len(events_out)
     _set_last_stats(stats)
     return events_out

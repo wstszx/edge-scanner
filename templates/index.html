@@ -2102,6 +2102,7 @@
         arb_calc_fx_label: 'FX',
         arb_calc_live_odds_toggle: 'Sync latest odds',
         arb_calc_live_odds_on: 'Latest odds sync on',
+        arb_calc_live_odds_auto_rebalance: 'Latest odds sync on, stakes auto-rebalanced',
         arb_calc_live_odds_off: 'Latest odds sync off',
         arb_calc_fx_refresh: 'Refresh FX rates',
         arb_calc_base_currency_chip: 'Base {currency}',
@@ -7880,6 +7881,33 @@
       };
     }
 
+
+    function applyArbOpportunityRequestedTotalPreset(calcLegs, opp, baseCurrency, requestedTotal) {
+      if (!Array.isArray(calcLegs) || calcLegs.length < 2) {
+        return null;
+      }
+      const normalizedRequestedTotal = parseStakeValue(requestedTotal);
+      if (normalizedRequestedTotal === null || normalizedRequestedTotal <= 0) {
+        return null;
+      }
+      const split = calculateStakes(opp, normalizedRequestedTotal, true);
+      if (!split || split.total <= 0) {
+        return null;
+      }
+      const nextLegs = applySplitStakesToLegs(calcLegs, split.total, baseCurrency);
+      if (!nextLegs) {
+        return null;
+      }
+      const totalStake = calculateArbCalculatorTotalStake(nextLegs, baseCurrency);
+      if (!Number.isFinite(totalStake) || totalStake <= 0) {
+        return null;
+      }
+      return {
+        legs: nextLegs,
+        totalStake,
+      };
+    }
+
     function buildArbCalculatorLegsFromOpportunity(opp) {
       const odds = Array.isArray(opp?.best_odds) ? opp.best_odds.slice(0, 3) : [];
       return odds
@@ -7969,11 +7997,30 @@
             is_exchange: Boolean(previousLeg?.is_exchange ?? leg.is_exchange),
           };
         });
+        const resolvedMode = resolveArbCalculatorMode(preservedState.mode, restoredLegs.length);
+        if (!preserveOdds && resolvedMode === 'total') {
+          const requestedTotal = parseStakeValue(preservedState.totalStake);
+          const syncedLegs = applyArbOpportunityRequestedTotalPreset(
+            restoredLegs,
+            opp,
+            baseCurrency,
+            requestedTotal !== null && requestedTotal > 0 ? requestedTotal : fallbackTotal
+          );
+          if (syncedLegs) {
+            return {
+              key: oppKey,
+              mode: 'total',
+              totalStake: syncedLegs.totalStake,
+              baseCurrency,
+              legs: syncedLegs.legs,
+            };
+          }
+        }
         const restoredTotal = calculateArbCalculatorTotalStake(restoredLegs, baseCurrency);
         if (Number.isFinite(restoredTotal) && restoredTotal > 0) {
           return {
             key: oppKey,
-            mode: resolveArbCalculatorMode(preservedState.mode, restoredLegs.length),
+            mode: resolvedMode,
             totalStake: restoredTotal,
             baseCurrency,
             legs: restoredLegs,
@@ -8286,9 +8333,12 @@
       }
       const hasExchange = Boolean(selectedArbOpp.has_exchange);
       if (arbCalcMeta) {
-        arbCalcMeta.innerHTML = formatArbMetaPill(
-          t(arbCalculatorShouldRefreshOdds() ? 'arb_calc_live_odds_on' : 'arb_calc_live_odds_off')
-        );
+        const mode = arbCalculatorState?.mode || 'total';
+        const autoRebalanced = arbCalculatorShouldRefreshOdds() && mode === 'total';
+        const liveOddsMetaKey = autoRebalanced
+          ? 'arb_calc_live_odds_auto_rebalance'
+          : (arbCalculatorShouldRefreshOdds() ? 'arb_calc_live_odds_on' : 'arb_calc_live_odds_off');
+        arbCalcMeta.innerHTML = formatArbMetaPill(t(liveOddsMetaKey), autoRebalanced ? 'is-notice' : '');
         arbCalcMeta.classList.remove('hidden');
       }
 
@@ -9492,8 +9542,12 @@
       });
       if (breakdown.includes(null)) return null;
       const minPayout = Math.min(...breakdown.map((b) => b.payout));
+      const minPayoutExact = Math.min(...breakdown.map((b, idx) => {
+        const priceUsed = useEffectivePrices ? Number(b.effective_price ?? b.price) : Number(b.price);
+        return Number.isFinite(priceUsed) ? b.stake * priceUsed : b.payout;
+      }));
       const guaranteed_profit = Number((minPayout - actualTotal).toFixed(2));
-      const roi_percent = actualTotal ? (guaranteed_profit / actualTotal) * 100 : 0;
+      const roi_percent = actualTotal ? ((minPayoutExact - actualTotal) / actualTotal) * 100 : 0;
       return {
         requested_total: requestedTotal,
         total: actualTotal,

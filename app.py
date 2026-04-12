@@ -569,6 +569,37 @@ def _start_scan_job(payload: dict) -> dict:
     partial_arb: list[dict] = []
     partial_middle: list[dict] = []
     partial_plus_ev: list[dict] = []
+    provider_partial_buckets: dict[tuple[str, str], dict[str, list[dict]]] = {}
+    sport_partial_buckets: dict[str, dict[str, list[dict]]] = {}
+
+    def _rebuild_partial_result() -> dict:
+        combined_arb: list[dict] = []
+        combined_middle: list[dict] = []
+        combined_plus_ev: list[dict] = []
+        for bucket in provider_partial_buckets.values():
+            combined_arb.extend(bucket.get("arb") or [])
+            combined_middle.extend(bucket.get("middle") or [])
+            combined_plus_ev.extend(bucket.get("plus_ev") or [])
+        for bucket in sport_partial_buckets.values():
+            combined_arb.extend(bucket.get("arb") or [])
+            combined_middle.extend(bucket.get("middle") or [])
+            combined_plus_ev.extend(bucket.get("plus_ev") or [])
+        return {
+            "success": True,
+            "partial": True,
+            "arbitrage": {
+                "opportunities": list(combined_arb),
+                "opportunities_count": len(combined_arb),
+            },
+            "middles": {
+                "opportunities": list(combined_middle),
+                "opportunities_count": len(combined_middle),
+            },
+            "plus_ev": {
+                "opportunities": list(combined_plus_ev),
+                "opportunities_count": len(combined_plus_ev),
+            },
+        }
 
     def _progress(event: Optional[dict]) -> None:
         if not isinstance(event, dict):
@@ -583,41 +614,35 @@ def _start_scan_job(payload: dict) -> dict:
                 progress["providers_total"] = int(event.get("providers_total") or 0)
             _update_scan_job(job_id, progress=progress)
             return
-        if event_type == "provider_completed":
-            progress["providers_completed"] = int(progress.get("providers_completed", 0) or 0) + 1
-            provider_events = list(progress.get("provider_events") or [])
-            provider_events.append(
-                {
-                    "sport_key": event.get("sport_key"),
-                    "provider_key": event.get("provider_key"),
-                    "provider": event.get("provider"),
-                    "ms": event.get("ms"),
-                    "events_returned": event.get("events_returned"),
-                    "error": event.get("error"),
-                }
-            )
-            progress["provider_events"] = provider_events
+        if event_type in {"provider_partial", "provider_completed"}:
+            sport_key = str(event.get("sport_key") or "").strip()
+            provider_key = str(event.get("provider_key") or "").strip()
+            if event_type == "provider_completed":
+                progress["providers_completed"] = int(progress.get("providers_completed", 0) or 0) + 1
+                provider_events = list(progress.get("provider_events") or [])
+                provider_events.append(
+                    {
+                        "sport_key": event.get("sport_key"),
+                        "provider_key": event.get("provider_key"),
+                        "provider": event.get("provider"),
+                        "ms": event.get("ms"),
+                        "events_returned": event.get("events_returned"),
+                        "error": event.get("error"),
+                    }
+                )
+                progress["provider_events"] = provider_events
             partial_result_payload = event.get("result") or {}
             provider_partial_arb = _extract_opportunity_list(partial_result_payload.get("arb_opportunities"))
             provider_partial_middle = _extract_opportunity_list(partial_result_payload.get("middle_opportunities"))
             provider_partial_plus_ev = _extract_opportunity_list(partial_result_payload.get("plus_ev_opportunities"))
             if provider_partial_arb or provider_partial_middle or provider_partial_plus_ev:
-                partial_result = {
-                    "success": True,
-                    "partial": True,
-                    "arbitrage": {
-                        "opportunities": list(provider_partial_arb),
-                        "opportunities_count": len(provider_partial_arb),
-                    },
-                    "middles": {
-                        "opportunities": list(provider_partial_middle),
-                        "opportunities_count": len(provider_partial_middle),
-                    },
-                    "plus_ev": {
-                        "opportunities": list(provider_partial_plus_ev),
-                        "opportunities_count": len(provider_partial_plus_ev),
-                    },
+                bucket_key = (sport_key, provider_key)
+                provider_partial_buckets[bucket_key] = {
+                    "arb": list(provider_partial_arb),
+                    "middle": list(provider_partial_middle),
+                    "plus_ev": list(provider_partial_plus_ev),
                 }
+                partial_result = _rebuild_partial_result()
                 _update_scan_job(job_id, progress=progress, partial_result=partial_result)
             else:
                 _update_scan_job(job_id, progress=progress)
@@ -625,25 +650,16 @@ def _start_scan_job(payload: dict) -> dict:
         if event_type == "sport_completed":
             progress["sports_completed"] = int(progress.get("sports_completed", 0) or 0) + 1
             result = event.get("result") or {}
-            partial_arb.extend(_extract_opportunity_list(result.get("arb_opportunities")))
-            partial_middle.extend(_extract_opportunity_list(result.get("middle_opportunities")))
-            partial_plus_ev.extend(_extract_opportunity_list(result.get("plus_ev_opportunities")))
-            partial_result = {
-                "success": True,
-                "partial": True,
-                "arbitrage": {
-                    "opportunities": list(partial_arb),
-                    "opportunities_count": len(partial_arb),
-                },
-                "middles": {
-                    "opportunities": list(partial_middle),
-                    "opportunities_count": len(partial_middle),
-                },
-                "plus_ev": {
-                    "opportunities": list(partial_plus_ev),
-                    "opportunities_count": len(partial_plus_ev),
-                },
+            sport_key = str(event.get("sport_key") or result.get("sport_key") or "").strip()
+            sport_partial_buckets[sport_key] = {
+                "arb": _extract_opportunity_list(result.get("arb_opportunities")),
+                "middle": _extract_opportunity_list(result.get("middle_opportunities")),
+                "plus_ev": _extract_opportunity_list(result.get("plus_ev_opportunities")),
             }
+            if sport_key:
+                for bucket_key in [key for key in provider_partial_buckets if key[0] == sport_key]:
+                    provider_partial_buckets.pop(bucket_key, None)
+            partial_result = _rebuild_partial_result()
             _update_scan_job(job_id, progress=progress, partial_result=partial_result)
 
     def _run_job() -> None:

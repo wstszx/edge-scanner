@@ -1115,6 +1115,86 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         stats = polymarket.fetch_events_async.last_stats
         self.assertEqual(stats.get("clob_tokens_truncated"), 0)
 
+    async def test_fetch_events_async_emits_progress_callback_after_clob_batches(self) -> None:
+        event = _sample_event(slug='team-a-vs-team-b-spreads')
+        event['markets'] = [
+            {
+                'question': 'Spread: Team A (-1.5)',
+                'outcomes': '["Team A", "Team B"]',
+                'outcomePrices': '["0.31", "0.69"]',
+                'clobTokenIds': '["spread-a-1", "spread-b-1"]',
+                'active': True,
+                'closed': False,
+                'archived': False,
+            },
+            {
+                'question': 'Spread: Team B (-2.5)',
+                'outcomes': '["Team B", "Team A"]',
+                'outcomePrices': '["0.18", "0.82"]',
+                'clobTokenIds': '["spread-b-2", "spread-a-2"]',
+                'active': True,
+                'closed': False,
+                'archived': False,
+            },
+        ]
+
+        progress_payloads = []
+
+        async def _fake_load_clob_quote_map_async(**kwargs):
+            batch = list(kwargs.get('token_ids') or [])
+            quote_map = {}
+            for token_id, probability in {
+                'spread-a-1': 0.31,
+                'spread-b-1': 0.69,
+                'spread-b-2': 0.18,
+                'spread-a-2': 0.82,
+            }.items():
+                if token_id in batch:
+                    quote_map[token_id] = {
+                        'decimal_odds': round(1.0 / probability, 6),
+                        'stake': 10.0,
+                        'quote_source': 'clob_book_best_ask',
+                    }
+            return (
+                quote_map,
+                {
+                    'token_count_requested': len(batch),
+                    'token_count_considered': len(batch),
+                    'token_count_truncated': 0,
+                    'books_fetched': len(batch),
+                    'books_with_quotes': len(quote_map),
+                    'book_errors': 0,
+                    'retries_used': 0,
+                },
+            )
+
+        with (
+            patch.object(polymarket, 'POLYMARKET_CLOB_MAX_BOOKS_RAW', '2'),
+            patch.object(polymarket, '_websocket_realtime_enabled', return_value=False),
+            patch.object(polymarket, '_load_sport_tag_mapping_async', new=AsyncMock(return_value={})),
+            patch.object(
+                polymarket,
+                '_load_active_game_events_async',
+                new=AsyncMock(
+                    return_value=(
+                        [event],
+                        {'cache': 'miss', 'pages_fetched': 1, 'retries_used': 0},
+                    )
+                ),
+            ),
+            patch.object(polymarket, '_load_clob_quote_map_async', side_effect=_fake_load_clob_quote_map_async),
+        ):
+            await polymarket.fetch_events_async(
+                'basketball_nba',
+                ['spreads'],
+                ['us'],
+                bookmakers=['polymarket'],
+                context={'progress_callback': progress_payloads.append},
+            )
+
+        self.assertGreaterEqual(len(progress_payloads), 1)
+        self.assertTrue((progress_payloads[-1].get('events') or []))
+
     async def test_fetch_events_async_loads_all_clob_quote_batches(self) -> None:
         event = _sample_event(slug="team-a-vs-team-b-spreads")
         event["markets"] = [
