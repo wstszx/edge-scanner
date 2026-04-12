@@ -1974,6 +1974,8 @@
         maker_probability_label: 'Maker {value}',
         quote_raw_title: 'raw_percentage_odds: {value}',
         quote_updated_label: 'Updated {time}',
+      quote_time_unknown_label: 'Update time unknown',
+      quote_time_unknown_title: 'This leg has no verified quote timestamp, so treat it as lower confidence.',
         arb_empty_pre_scan_title: 'Run a scan to populate the board.',
         arb_empty_pre_scan_copy: 'The arbitrage workspace will fill in once scan results arrive.',
         arb_empty_scan_title: 'This scan returned no arbitrage.',
@@ -3549,14 +3551,16 @@
 
     function buildQuoteMeta(item) {
       if (!item || typeof item !== 'object') {
-        return { sourceLabel: '', updatedLabel: '', makerLabel: '', makerTitle: '' };
+        return { sourceLabel: '', updatedLabel: '', updatedTitle: '', makerLabel: '', makerTitle: '' };
       }
       const rawPercentageOdds = item.raw_percentage_odds ?? item.rawPercentageOdds;
+      const updatedValue = item.quote_updated_at || item.quoteUpdatedAt || item.last_updated;
+      const updatedLabel = formatQuoteUpdatedLabel(updatedValue);
+      const hasUnknownTime = !updatedLabel;
       return {
         sourceLabel: formatQuoteSourceLabel(item.quote_source || item.quoteSource),
-        updatedLabel: formatQuoteUpdatedLabel(
-          item.quote_updated_at || item.quoteUpdatedAt || item.last_updated
-        ),
+        updatedLabel: updatedLabel || t('quote_time_unknown_label'),
+        updatedTitle: hasUnknownTime ? t('quote_time_unknown_title') : '',
         makerLabel: formatMakerProbabilityLabel(rawPercentageOdds),
         makerTitle: formatRawPercentageOddsTitle(rawPercentageOdds),
       };
@@ -9002,7 +9006,7 @@
         hasStake ? `<span class="mono">${escapeHtml(stakeValue)}</span>` : '',
         hasPayout ? `<span>${escapeHtml(t('arb_calc_payout'))}: ${escapeHtml(payoutValue)}</span>` : '',
         `<span>${escapeHtml(available)}</span>`,
-        quoteMeta.updatedLabel ? `<span>${escapeHtml(quoteMeta.updatedLabel)}</span>` : '',
+        quoteMeta.updatedLabel ? `<span title="${escapeHtml(quoteMeta.updatedTitle || '')}">${escapeHtml(quoteMeta.updatedLabel)}</span>` : '',
       ].filter(Boolean).join('');
       const pickMeta = [effectiveNote].filter(Boolean).join('');
       const bookMarkup = targetUrl
@@ -9069,7 +9073,7 @@
           : '';
       const availableChip = availableValue !== '-' ? `<span class="arb-calc-leg-chip">${escapeHtml(available)}</span>` : '';
       const updatedChip = quoteMeta.updatedLabel
-        ? `<span class="arb-calc-leg-chip arb-quote-chip arb-quote-time-chip">${escapeHtml(quoteMeta.updatedLabel)}</span>`
+        ? `<span class="arb-calc-leg-chip arb-quote-chip arb-quote-time-chip" title="${escapeHtml(quoteMeta.updatedTitle || '')}">${escapeHtml(quoteMeta.updatedLabel)}</span>`
         : '';
       const targetUrl = opp ? normalizeUrl(resolveArbLegOpenUrl(item, opp)) : '';
       const openLink = targetUrl

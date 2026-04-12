@@ -516,6 +516,17 @@ module.exports = { dictionaries };
         self.assertEqual(events, [])
         self.assertEqual(stats.get("fallback_h2h_used_count"), 0)
 
+    def test_game_live_state_payload_does_not_use_starts_at_as_quote_update_time(self) -> None:
+        payload = bookmaker_xyz._game_live_state_payload(
+            {
+                "state": "Active",
+                "startsAt": "2026-04-19T23:00:00Z",
+            }
+        )
+
+        self.assertEqual(payload.get("status"), "active")
+        self.assertNotIn("updated_at", payload)
+
 
 if __name__ == "__main__":
     unittest.main()

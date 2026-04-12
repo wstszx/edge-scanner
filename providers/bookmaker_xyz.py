@@ -2214,7 +2214,6 @@ def _game_live_state_payload(game: object) -> Optional[dict]:
     updated_at = _normalize_text(
         game.get("updatedAt")
         or game.get("lastUpdated")
-        or game.get("startsAt")
     )
     payload: Dict[str, object] = {}
     if status:
