@@ -339,6 +339,29 @@ class PrematchArbitrageAdditionalTests(unittest.TestCase):
         self.assertGreater(stakes["guaranteed_profit"], 0.0)
         self.assertGreater(stakes["roi_percent"], 0.0)
 
+    def test_calculate_stakes_uses_unrounded_profit_for_roi_percent(self) -> None:
+        outcomes = [
+            {
+                "name": "Boston Celtics",
+                "bookmaker": "Book A",
+                "display_price": 4.4,
+                "effective_price": 4.4,
+            },
+            {
+                "name": "Magic",
+                "bookmaker": "Book B",
+                "display_price": 1.32,
+                "effective_price": 1.32,
+            },
+        ]
+
+        stakes = scanner._calculate_stakes(outcomes, 1.57, price_field="effective_price")
+
+        self.assertEqual([item["stake"] for item in stakes["breakdown"]], [0.36, 1.21])
+        self.assertEqual([item["payout"] for item in stakes["breakdown"]], [1.58, 1.6])
+        self.assertAlmostEqual(stakes["guaranteed_profit"], 0.01, places=2)
+        self.assertAlmostEqual(stakes["roi_percent"], 0.8917, places=4)
+
     def test_filter_events_for_scan_mode_prematch_uses_time_not_live_state(self) -> None:
         with patch("scanner.time.time", return_value=1_700_000_000):
             filtered, stats = scanner._filter_events_for_scan_mode(

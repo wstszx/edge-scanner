@@ -4266,11 +4266,14 @@ def _calculate_stakes(outcomes: List[dict], stake_total: float, price_field: str
             "roi_percent": 0.0,
         }
     breakdown = []
+    exact_payouts = []
     for outcome, fraction, stake_cent in zip(outcomes, fractions, stake_cents):
         stake_value = round(stake_cent / 100.0, 2)
         price_used = outcome.get(price_field)
         display_price = outcome.get("display_price", price_used)
-        payout = round(stake_value * price_used, 2)
+        payout_exact = stake_value * price_used
+        payout = round(payout_exact, 2)
+        exact_payouts.append(payout_exact)
         breakdown.append(
             {
                 "outcome": outcome.get("display_name") or outcome["name"],
@@ -4286,8 +4289,9 @@ def _calculate_stakes(outcomes: List[dict], stake_total: float, price_field: str
             }
         )
     min_payout = min(item["payout"] for item in breakdown) if breakdown else 0.0
-    guaranteed = round(min_payout - actual_total, 2)
-    roi = round((guaranteed / actual_total) * 100, 4) if actual_total else 0.0
+    min_payout_exact = min(exact_payouts) if exact_payouts else 0.0
+    guaranteed = round(min_payout_exact - actual_total, 2)
+    roi = round(((min_payout_exact - actual_total) / actual_total) * 100, 4) if actual_total else 0.0
     return {
         "total": actual_total,
         "requested_total": requested_total,

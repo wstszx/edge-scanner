@@ -7568,6 +7568,35 @@
       return Math.round((value + Number.EPSILON) * 100) / 100;
     }
 
+    function calculateArbCalculatorSummary(payouts, totalStake) {
+      if (!Array.isArray(payouts) || !payouts.length || !Number.isFinite(totalStake) || totalStake <= 0) {
+        return {
+          minPayout: NaN,
+          profit: NaN,
+          roi: NaN,
+        };
+      }
+      const exactPayouts = payouts
+        .map((item) => Number.isFinite(item?.baseExact) ? Number(item.baseExact) : Number(item?.base))
+        .filter((value) => Number.isFinite(value));
+      if (exactPayouts.length !== payouts.length) {
+        return {
+          minPayout: NaN,
+          profit: NaN,
+          roi: NaN,
+        };
+      }
+      const minPayoutExact = Math.min(...exactPayouts);
+      const minPayout = roundMoney(minPayoutExact);
+      const profit = roundMoney(minPayoutExact - totalStake);
+      const roi = ((minPayoutExact - totalStake) / totalStake) * 100;
+      return {
+        minPayout,
+        profit,
+        roi,
+      };
+    }
+
     function parseStakeValue(value) {
       const num = parseFloat(value);
       if (!Number.isFinite(num) || num < 0) return null;
@@ -7607,11 +7636,15 @@
         if (!Number.isFinite(stake) || stake < 0 || !Number.isFinite(odds) || odds <= 1) {
           return { local: NaN, base: NaN };
         }
-        const localPayout = roundMoney(stake * odds);
+        const localPayoutExact = stake * odds;
+        const localPayout = roundMoney(localPayoutExact);
+        const basePayoutExact = convertArbCalcCurrencyAmount(localPayoutExact, leg?.currency, normalizedBaseCurrency);
         const basePayout = convertArbCalcCurrencyAmount(localPayout, leg?.currency, normalizedBaseCurrency);
         return {
           local: localPayout,
           base: basePayout,
+          localExact: localPayoutExact,
+          baseExact: basePayoutExact,
         };
       });
     }
@@ -8447,10 +8480,10 @@
         return;
       }
 
-      const payoutTotals = payouts.map((item) => item.base);
-      const minPayout = Math.min(...payoutTotals);
-      const profit = roundMoney(minPayout - totalStake);
-      const roi = totalStake > 0 ? (profit / totalStake) * 100 : 0;
+      const summary = calculateArbCalculatorSummary(payouts, totalStake);
+      const minPayout = summary.minPayout;
+      const profit = summary.profit;
+      const roi = summary.roi;
 
       arbCalcMinPayout.textContent = formatCurrencyForCode(minPayout, baseCurrency);
       arbCalcProfit.textContent = formatCurrencyForCode(profit, baseCurrency);
