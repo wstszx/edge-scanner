@@ -36,6 +36,7 @@ class ArtlineProviderTests(unittest.IsolatedAsyncioTestCase):
             ],
             home_team="Lakers",
             away_team="Celtics",
+            sport_key="basketball_nba",
             requested_markets={"h2h"},
         )
 
@@ -52,6 +53,31 @@ class ArtlineProviderTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    def test_normalize_game_markets_maps_hockey_detail_moneyline_prefix(self) -> None:
+        markets = artline._normalize_game_markets(
+            [
+                {"event_name_value": "1_ml_1", "value": 1.97, "status": 1},
+                {"event_name_value": "1_ml_2", "value": 1.77, "status": 1},
+            ],
+            home_team="Florida Panthers",
+            away_team="New York Rangers",
+            sport_key="icehockey_nhl",
+            requested_markets={"h2h"},
+        )
+
+        self.assertEqual(
+            markets,
+            [
+                {
+                    "key": "h2h",
+                    "outcomes": [
+                        {"name": "Florida Panthers", "price": 1.97},
+                        {"name": "New York Rangers", "price": 1.77},
+                    ],
+                }
+            ],
+        )
+
     def test_normalize_game_markets_maps_three_way_result_market(self) -> None:
         markets = artline._normalize_game_markets(
             [
@@ -61,6 +87,7 @@ class ArtlineProviderTests(unittest.IsolatedAsyncioTestCase):
             ],
             home_team="Newcastle",
             away_team="Sunderland",
+            sport_key="soccer_italy_serie_a",
             requested_markets={"h2h_3_way"},
         )
 
@@ -91,6 +118,7 @@ class ArtlineProviderTests(unittest.IsolatedAsyncioTestCase):
             ],
             home_team="Lakers",
             away_team="Celtics",
+            sport_key="basketball_nba",
             requested_markets={"spreads", "totals"},
         )
 
@@ -124,6 +152,7 @@ class ArtlineProviderTests(unittest.IsolatedAsyncioTestCase):
             ],
             home_team="Denver Nuggets",
             away_team="Portland Trail Blazers",
+            sport_key="basketball_nba",
             requested_markets={"team_totals"},
         )
 
@@ -220,6 +249,60 @@ class ArtlineProviderTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(artline.fetch_events_async.last_stats.get("events_returned_count"), 1)
         self.assertEqual(artline.fetch_events_async.last_stats.get("payload_games_count"), 1)
+
+    async def test_fetch_events_async_enriches_hockey_h2h_from_detail_feed(self) -> None:
+        payload = {
+            "data": {
+                "hockey": {
+                    "games": [
+                        {
+                            "id": 375350180001809,
+                            "is_live": False,
+                            "start_at_timestamp": 1776121200,
+                            "team_1": {"value": "Florida Panthers"},
+                            "team_2": {"value": "New York Rangers"},
+                            "events": [
+                                {"event_name_value": "0_to-main_0_6", "value": 2.04, "status": 1},
+                                {"event_name_value": "0_tu-main_0_6", "value": 1.86, "status": 1},
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+        detail_events = [
+            {"event_name_value": "1_ml_1", "value": 1.97, "status": 1},
+            {"event_name_value": "1_ml_2", "value": 1.77, "status": 1},
+        ]
+
+        with (
+            patch.object(artline, "get_shared_client", new=_fake_shared_client),
+            patch.object(artline, "_request_json_async", return_value=(_deepcopy(payload), 0)),
+            patch.object(artline, "_load_game_detail_events_async", return_value=_deepcopy(detail_events)),
+        ):
+            events = await artline.fetch_events_async(
+                "icehockey_nhl",
+                ["h2h"],
+                ["eu"],
+                bookmakers=["artline"],
+            )
+
+        self.assertEqual(len(events), 1)
+        bookmaker = events[0]["bookmakers"][0]
+        self.assertEqual(
+            bookmaker["markets"],
+            [
+                {
+                    "key": "h2h",
+                    "outcomes": [
+                        {"name": "Florida Panthers", "price": 1.97},
+                        {"name": "New York Rangers", "price": 1.77},
+                    ],
+                }
+            ],
+        )
+        self.assertEqual(artline.fetch_events_async.last_stats.get("detail_enrichment_requested"), 1)
+        self.assertEqual(artline.fetch_events_async.last_stats.get("detail_enrichment_succeeded"), 1)
 
     async def test_fetch_events_async_respects_bookmaker_filter(self) -> None:
         events = await artline.fetch_events_async(

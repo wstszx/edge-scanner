@@ -304,8 +304,16 @@ def _store_best_market(store: Dict[str, dict], market: dict) -> None:
         store[signature] = market
 
 
-def _market_needs_detail_fetch(requested_markets: set[str]) -> bool:
-    return "team_totals" in requested_markets
+def _sport_uses_detail_h2h(sport_key: str) -> bool:
+    return _normalize_text(sport_key).lower() in {"icehockey_nhl", "icehockey_ahl"}
+
+
+def _market_needs_detail_fetch(requested_markets: set[str], sport_key: str) -> bool:
+    if "team_totals" in requested_markets:
+        return True
+    if "h2h" in requested_markets and _sport_uses_detail_h2h(sport_key):
+        return True
+    return False
 
 
 def _normalize_game_markets(
@@ -313,6 +321,7 @@ def _normalize_game_markets(
     *,
     home_team: str,
     away_team: str,
+    sport_key: str = "",
     requested_markets: set[str],
 ) -> List[dict]:
     if not isinstance(events, list):
@@ -335,9 +344,12 @@ def _normalize_game_markets(
         if price is None or price <= 1:
             continue
         event_name = _normalize_text(event.get("event_name_value"))
-        if event_name == "0_ml_1":
+        sport_token = _normalize_text(sport_key).lower()
+        is_hockey_detail_moneyline = _sport_uses_detail_h2h(sport_token) and event_name == "1_ml_1"
+        is_hockey_detail_moneyline_away = _sport_uses_detail_h2h(sport_token) and event_name == "1_ml_2"
+        if event_name == "0_ml_1" or is_hockey_detail_moneyline:
             _store_best_outcome(two_way, "home", _outcome_row(home_team, price))
-        elif event_name == "0_ml_2":
+        elif event_name == "0_ml_2" or is_hockey_detail_moneyline_away:
             _store_best_outcome(two_way, "away", _outcome_row(away_team, price))
         elif event_name == "0_win_0":
             _store_best_outcome(three_way, "draw", _outcome_row("Draw", price))
@@ -627,7 +639,7 @@ async def fetch_events_async(
             stats['live_all_total_games'] = sum(live_all_sports_available.values())
 
     detailed_events_by_id: Dict[str, List[dict]] = {}
-    if games and _market_needs_detail_fetch(requested_markets):
+    if games and _market_needs_detail_fetch(requested_markets, sport_token):
         semaphore = asyncio.Semaphore(_detail_max_concurrency())
 
         async def _detail_job(game: dict) -> tuple[str, Optional[List[dict]], Optional[str]]:
@@ -688,6 +700,7 @@ async def fetch_events_async(
             game_events,
             home_team=home_team,
             away_team=away_team,
+            sport_key=sport_token,
             requested_markets=requested_markets,
         )
         if not normalized_markets:
