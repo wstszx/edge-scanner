@@ -997,6 +997,10 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertIn("Golden State Warriors", outcome_names)
 
     def test_collect_market_entries_preserves_quote_source(self) -> None:
+        recent_quote_time = (
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)
+        ).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+
         game = {
             "sport_key": "basketball_nba",
             "sport_display": "NBA",
@@ -1014,13 +1018,13 @@ class ScannerRegressionTests(unittest.TestCase):
                                     "name": "Home Team",
                                     "price": 2.2,
                                     "quote_source": "ws",
-                                    "last_updated": "2026-03-16T01:02:03Z",
+                                    "last_updated": recent_quote_time,
                                 },
                                 {
                                     "name": "Away Team",
                                     "price": 1.8,
                                     "quote_source": "ws",
-                                    "last_updated": "2026-03-16T01:02:03Z",
+                                    "last_updated": recent_quote_time,
                                 },
                             ],
                         }
@@ -1037,13 +1041,13 @@ class ScannerRegressionTests(unittest.TestCase):
                                     "name": "Home Team",
                                     "price": 1.8,
                                     "quote_source": "rest_snapshot",
-                                    "last_updated": "2026-03-16T01:02:01Z",
+                                    "last_updated": recent_quote_time,
                                 },
                                 {
                                     "name": "Away Team",
                                     "price": 2.2,
                                     "quote_source": "rest_snapshot",
-                                    "last_updated": "2026-03-16T01:02:01Z",
+                                    "last_updated": recent_quote_time,
                                 },
                             ],
                         }

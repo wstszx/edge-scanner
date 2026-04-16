@@ -469,6 +469,22 @@ def _sx_live_scores_live_state_payload(payload: object) -> Optional[dict]:
     return live_state
 
 
+def _fixture_has_live_evidence(fixture: object) -> bool:
+    if not isinstance(fixture, dict):
+        return False
+    live_state = fixture.get("live_state")
+    if not isinstance(live_state, dict):
+        return False
+    if live_state.get("is_live") is True:
+        return True
+    status = _normalize_status_token(
+        live_state.get("status")
+        or live_state.get("in_play_status")
+        or live_state.get("provider_status")
+    )
+    return status in {"live", "inplay", "playing"}
+
+
 async def _load_fixture_status_map_async(
     client: httpx.AsyncClient,
     event_ids: Sequence[str],
@@ -2792,6 +2808,7 @@ async def fetch_events_async(
         "fixtures_missing_team_count": 0,
         "fixtures_missing_commence_count": 0,
         "fixtures_no_markets_count": 0,
+        "fixtures_live_context_filtered_count": 0,
         "fixtures_market_found_count": 0,
         "candidates_total_count": 0,
         "events_returned_count": 0,
@@ -2935,6 +2952,13 @@ async def fetch_events_async(
     unresolved_hashes: List[str] = []
     candidate_hashes: List[str] = []
     for fixture in fixtures:
+        if (
+            live_context
+            and _normalize_text(stats.get("fixture_source_used")) == "markets_active"
+            and not _fixture_has_live_evidence(fixture)
+        ):
+            stats["fixtures_live_context_filtered_count"] += 1
+            continue
         if not _fixture_matches_sport(sport_key, fixture, manual_league_map):
             stats["fixtures_filtered_out_by_league_count"] += 1
             if True:

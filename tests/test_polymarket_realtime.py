@@ -1451,6 +1451,138 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(events, [])
 
+    async def test_fetch_events_async_live_mode_skips_stale_past_events_without_live_state(self) -> None:
+        event = _sample_event(slug="stale-game")
+        event["startTime"] = "2000-01-01T00:00:00Z"
+        event["markets"] = [
+            {
+                "question": "Team A vs Team B",
+                "outcomes": '["Team A", "Team B"]',
+                "outcomePrices": '["0.4", "0.6"]',
+                "clobTokenIds": '["token-a", "token-b"]',
+                "active": True,
+                "closed": False,
+                "archived": False,
+                "acceptingOrders": True,
+            }
+        ]
+
+        with (
+            patch.object(polymarket, "_websocket_realtime_enabled", return_value=False),
+            patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={})),
+            patch.object(
+                polymarket,
+                "_load_active_game_events_async",
+                new=AsyncMock(
+                    return_value=(
+                        [event],
+                        {"cache": "miss", "pages_fetched": 1, "retries_used": 0},
+                    )
+                ),
+            ),
+            patch.object(
+                polymarket,
+                "_load_clob_quote_map_async",
+                new=AsyncMock(
+                    return_value=(
+                        {
+                            "token-a": {
+                                "decimal_odds": 2.0,
+                                "stake": 10.0,
+                                "quote_source": "clob_book_best_ask",
+                                "observed_at": 1773593000.0,
+                                "updated_at": 1773593000.0,
+                            },
+                            "token-b": {
+                                "decimal_odds": 1.666667,
+                                "stake": 10.0,
+                                "quote_source": "clob_book_best_ask",
+                                "observed_at": 1773593001.0,
+                                "updated_at": 1773593001.0,
+                            },
+                        },
+                        {},
+                    )
+                ),
+            ),
+        ):
+            events = await polymarket.fetch_events_async(
+                "basketball_nba",
+                ["h2h"],
+                ["us"],
+                bookmakers=["polymarket"],
+                context={"live": True},
+            )
+
+        self.assertEqual(events, [])
+
+    async def test_fetch_events_async_live_mode_skips_non_game_market_without_live_state(self) -> None:
+        event = _sample_event(slug="series-market")
+        event["gameId"] = None
+        event["startTime"] = None
+        event["startDate"] = "2026-04-13T21:09:39.156748Z"
+        event["markets"] = [
+            {
+                "question": "Team A vs Team B",
+                "outcomes": '["Team A", "Team B"]',
+                "outcomePrices": '["0.4", "0.6"]',
+                "clobTokenIds": '["token-a", "token-b"]',
+                "active": True,
+                "closed": False,
+                "archived": False,
+                "acceptingOrders": True,
+            }
+        ]
+
+        with (
+            patch.object(polymarket, "_websocket_realtime_enabled", return_value=False),
+            patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={})),
+            patch.object(
+                polymarket,
+                "_load_active_game_events_async",
+                new=AsyncMock(
+                    return_value=(
+                        [event],
+                        {"cache": "miss", "pages_fetched": 1, "retries_used": 0},
+                    )
+                ),
+            ),
+            patch.object(
+                polymarket,
+                "_load_clob_quote_map_async",
+                new=AsyncMock(
+                    return_value=(
+                        {
+                            "token-a": {
+                                "decimal_odds": 2.0,
+                                "stake": 10.0,
+                                "quote_source": "clob_book_best_ask",
+                                "observed_at": 1773593000.0,
+                                "updated_at": 1773593000.0,
+                            },
+                            "token-b": {
+                                "decimal_odds": 1.666667,
+                                "stake": 10.0,
+                                "quote_source": "clob_book_best_ask",
+                                "observed_at": 1773593001.0,
+                                "updated_at": 1773593001.0,
+                            },
+                        },
+                        {},
+                    )
+                ),
+            ),
+        ):
+            events = await polymarket.fetch_events_async(
+                "basketball_nba",
+                ["h2h"],
+                ["us"],
+                bookmakers=["polymarket"],
+                context={"live": True},
+            )
+
+        self.assertEqual(events, [])
+
 
 class PolymarketSportsResultMatchingTests(unittest.TestCase):
     def test_sports_result_matches_sport_filters_cross_sport_live_results(self) -> None:

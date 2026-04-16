@@ -242,6 +242,99 @@ class SXBetRealtimeTests(unittest.TestCase):
         self.assertEqual(stats.get("realtime_odds_hits"), 1)
         self.assertEqual(stats.get("odds_lookup_requested"), 0)
 
+    def test_fetch_events_async_live_mode_skips_markets_active_fixture_without_live_evidence(self) -> None:
+        fixtures = [
+            {
+                "eventId": "sx-future-1",
+                "id": "sx-future-1",
+                "teamOne": "Home Team",
+                "teamTwo": "Away Team",
+                "leagueLabel": "NBA",
+                "gameTime": "2099-01-01T00:00:00Z",
+                "live_state": {"is_live": False, "status": "scheduled"},
+                "markets": [
+                    {
+                        "type": 226,
+                        "teamOneName": "Home Team",
+                        "teamTwoName": "Away Team",
+                        "outcomeOneName": "Home Team",
+                        "outcomeTwoName": "Away Team",
+                        "bestOddsOutcomeOne": 2.1,
+                        "bestOddsOutcomeTwo": 1.8,
+                        "marketHash": "sx-future-h2h",
+                    }
+                ],
+            }
+        ]
+
+        async def _fake_load_upcoming_fixtures_async(*args, **kwargs):
+            return (
+                fixtures,
+                {
+                    "cache": "miss",
+                    "pages_fetched": 1,
+                    "retries_used": 0,
+                    "fixture_source": "markets_active",
+                },
+            )
+
+        async def _fake_load_fixture_status_map_async(*args, **kwargs):
+            return {}
+
+        async def _fake_load_live_scores_map_async(*args, **kwargs):
+            return {}
+
+        async def _fake_load_best_odds_map_async(*args, **kwargs):
+            return (
+                {
+                    "sx-future-h2h": {
+                        "odds_one": 2.1,
+                        "odds_two": 1.8,
+                        "updated_at_one": 1773593000000,
+                        "updated_at_two": 1773593001000,
+                    }
+                },
+                0,
+                {
+                    "best_odds_items": 1,
+                    "best_odds_null_count": 0,
+                    "best_odds_with_any_odds": 1,
+                    "best_odds_with_both_odds": 1,
+                },
+            )
+
+        async def _fake_load_best_stake_map_async(*args, **kwargs):
+            return (
+                {"sx-future-h2h": (100.0, 100.0)},
+                0,
+                {
+                    "orders_rows": 1,
+                    "orders_missing_market_hash": 0,
+                },
+            )
+
+        async def _fake_shared_client(*args, **kwargs):
+            return object()
+
+        with (
+            patch.object(sx_bet, "get_shared_client", new=_fake_shared_client),
+            patch.object(sx_bet, "_load_upcoming_fixtures_async", new=_fake_load_upcoming_fixtures_async),
+            patch.object(sx_bet, "_load_fixture_status_map_async", new=_fake_load_fixture_status_map_async),
+            patch.object(sx_bet, "_load_live_scores_map_async", new=_fake_load_live_scores_map_async),
+            patch.object(sx_bet, "_load_best_odds_map_async", new=_fake_load_best_odds_map_async),
+            patch.object(sx_bet, "_load_best_stake_map_async", new=_fake_load_best_stake_map_async),
+        ):
+            events = asyncio.run(
+                sx_bet.fetch_events_async(
+                    "basketball_nba",
+                    ["h2h"],
+                    ["us"],
+                    context={"live": True},
+                )
+            )
+
+        self.assertEqual(events, [])
+
     def test_realtime_manager_snapshot_merge_preserves_newer_ws_odds(self) -> None:
         manager = sx_bet.SXBetRealtimeManager()
 

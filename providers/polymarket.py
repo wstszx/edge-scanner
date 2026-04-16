@@ -1610,6 +1610,26 @@ def _event_live_state_payload(event: object, realtime_state: object = None) -> O
     return payload or None
 
 
+def _live_context_stale_start_cutoff(now_utc: dt.datetime) -> dt.datetime:
+    return now_utc - dt.timedelta(hours=8)
+
+
+def _live_context_event_start(event: object) -> Optional[dt.datetime]:
+    if not isinstance(event, dict):
+        return None
+    markets = event.get('markets') if isinstance(event.get('markets'), list) else []
+    first_market = markets[0] if markets and isinstance(markets[0], dict) else {}
+    for value in (
+        event.get('startTime'),
+        first_market.get('gameStartTime') if isinstance(first_market, dict) else None,
+        event.get('eventDate') or event.get('startDate') or event.get('creationDate') or event.get('createdAt'),
+    ):
+        parsed = _parse_datetime_utc(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
 def _context_requests_live(context: Optional[dict]) -> bool:
     return isinstance(context, dict) and bool(context.get("live"))
 
@@ -4020,7 +4040,12 @@ async def fetch_events_async(
                 live_state_preview = _event_live_state_payload(event, realtime_state)
                 explicit_live = bool(isinstance(live_state_preview, dict) and live_state_preview.get("is_live") is True)
                 event_start = _parse_datetime_utc(event.get("startTime"))
+                event_start = _live_context_event_start(event)
+                if not explicit_live and not _normalize_text(event.get('gameId') or event.get('metadataGameId')):
+                    continue
                 if not explicit_live and event_start is not None and event_start > now_utc:
+                    continue
+                if not explicit_live and event_start is not None and event_start < _live_context_stale_start_cutoff(now_utc):
                     continue
             stats["events_matchup_count"] += 1
             filtered_events.append((event, home_team, away_team, realtime_state))
