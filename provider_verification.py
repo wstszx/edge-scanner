@@ -11,15 +11,10 @@ from typing import Any, Optional, Sequence
 
 from config import DEFAULT_STAKE_AMOUNT
 from live_availability import write_live_scan_report
+from providers import PROVIDER_CAPABILITIES
 from scanner import run_scan
 
-DEFAULT_PROVIDERS = [
-    "artline",
-    "betdex",
-    "bookmaker_xyz",
-    "sx_bet",
-    "polymarket",
-]
+DEFAULT_PROVIDERS = sorted(PROVIDER_CAPABILITIES)
 
 DEFAULT_PROVIDER_TESTS = [
     "tests/test_provider_artline.py",
@@ -53,15 +48,6 @@ OFFICIAL_DOCS: dict[str, list[str]] = {
         "https://docs.polymarket.com/developers/CLOB/introduction",
     ],
 }
-
-PROVIDER_TITLES = {
-    "artline": "Artline",
-    "betdex": "BetDEX",
-    "bookmaker_xyz": "bookmaker.xyz",
-    "sx_bet": "SX Bet",
-    "polymarket": "Polymarket",
-}
-
 
 @dataclass
 class ProviderStatus:
@@ -99,7 +85,10 @@ def _utc_now() -> str:
 
 
 def _safe_provider_title(provider_key: str) -> str:
-    return PROVIDER_TITLES.get(provider_key, provider_key)
+    capability = PROVIDER_CAPABILITIES.get(provider_key)
+    if capability is not None:
+        return capability.title
+    return provider_key
 
 
 def _output_token() -> str:

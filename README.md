@@ -78,6 +78,8 @@ Run the repeatable provider verification script to check provider-focused tests,
 python provider_verification.py --sport basketball_nba
 ```
 
+For code-declared provider sport/market coverage, see the generated support matrix at `docs/provider_support_matrix.md`. It reflects `providers.PROVIDER_CAPABILITIES` and declared support in code, not guaranteed real-time provider availability.
+
 Windows shortcuts:
 
 ```powershell
