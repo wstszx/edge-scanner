@@ -389,7 +389,14 @@ def _merge_live_state_payload(existing: Optional[dict], incoming: Optional[dict]
         merged["is_live"] = False
     elif not existing_status and incoming_status:
         merged["status"] = incoming_status
-    for key in ("provider_status", "updated_at", "market_status", "in_play_status", "live_enabled"):
+    for key in (
+        "provider_status",
+        "provider_market_status",
+        "updated_at",
+        "market_status",
+        "in_play_status",
+        "live_enabled",
+    ):
         if not merged.get(key) and incoming.get(key) not in (None, ""):
             merged[key] = incoming.get(key)
     return merged
@@ -434,12 +441,17 @@ def _sx_live_state_payload(*payloads: object) -> Optional[dict]:
             or payload.get("status")
         )
         if status_token:
-            current["provider_status"] = status_token
             if status_token in {"settled", "closed", "resolved", "cancelled", "canceled", "finished", "final"}:
+                current["provider_status"] = status_token
                 current["status"] = "final"
                 current["is_live"] = False
             elif status_token in {"active", "open"}:
-                current["market_status"] = status_token
+                current["provider_market_status"] = status_token
+                if current.get("is_live") is not None:
+                    current["provider_status"] = status_token
+                    current["market_status"] = status_token
+            else:
+                current["provider_status"] = status_token
         commence_time = _normalize_commence_time(
             payload.get("gameTime") or payload.get("startsAt") or payload.get("startTime")
         )
@@ -454,9 +466,6 @@ def _sx_live_state_payload(*payloads: object) -> Optional[dict]:
                     if parsed_commence > now_utc:
                         current["is_live"] = False
                         current["status"] = "scheduled"
-                    elif current.get("is_live") is None and status_token in {"active", "open"}:
-                        current["is_live"] = True
-                        current["status"] = "live"
         updated_at = payload.get("updatedAt") or payload.get("lastUpdated") or payload.get("modifiedAt")
         if updated_at not in (None, ""):
             current["updated_at"] = updated_at
@@ -511,8 +520,12 @@ def _fixture_has_live_evidence(fixture: object) -> bool:
         return False
     if status in {"final", "finished", "closed", "resolved", "settled", "cancelled", "canceled"}:
         return False
-    provider_status = _normalize_status_token(live_state.get("provider_status"))
-    market_status = _normalize_status_token(live_state.get("market_status"))
+    provider_status = _normalize_status_token(
+        live_state.get("provider_status") or live_state.get("provider_market_status")
+    )
+    market_status = _normalize_status_token(
+        live_state.get("market_status") or live_state.get("provider_market_status")
+    )
     live_enabled = bool(live_state.get("live_enabled") or live_state.get("liveEnabled"))
     if live_enabled and (provider_status in {"active", "open"} or market_status in {"active", "open"}):
         return True

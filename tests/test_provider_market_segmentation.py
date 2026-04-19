@@ -305,7 +305,7 @@ class TestSxBetSegmentation(unittest.TestCase):
         self.assertEqual(len(fixture_markets), 1)
         self.assertEqual(meta.get("markets_rows_main_line_filtered"), 0)
 
-    def test_markets_active_rows_capture_live_state_for_started_event(self) -> None:
+    def test_markets_active_started_rows_do_not_emit_explicit_live_without_provider_signal(self) -> None:
         rows = [
             {
                 "sportId": 1,
@@ -328,9 +328,11 @@ class TestSxBetSegmentation(unittest.TestCase):
         )
         self.assertEqual(len(fixtures), 1)
         live_state = fixtures[0].get("live_state") or {}
-        self.assertTrue(live_state.get("is_live"))
-        self.assertEqual(live_state.get("status"), "live")
-        self.assertEqual(live_state.get("provider_status"), "active")
+        self.assertNotIn("is_live", live_state)
+        self.assertNotIn("status", live_state)
+        self.assertEqual(live_state.get("provider_market_status"), "active")
+        self.assertTrue(live_state.get("live_enabled"))
+        self.assertTrue(sx_bet._fixture_has_live_evidence(fixtures[0]))
 
     def test_markets_active_future_rows_stay_scheduled_when_live_is_only_enabled(self) -> None:
         rows = [
@@ -357,7 +359,7 @@ class TestSxBetSegmentation(unittest.TestCase):
         live_state = fixtures[0].get("live_state") or {}
         self.assertFalse(live_state.get("is_live"))
         self.assertEqual(live_state.get("status"), "scheduled")
-        self.assertEqual(live_state.get("provider_status"), "active")
+        self.assertEqual(live_state.get("provider_market_status"), "active")
 
     def test_auto_fixture_loader_falls_back_to_summary_when_markets_active_fails(self) -> None:
         with (
