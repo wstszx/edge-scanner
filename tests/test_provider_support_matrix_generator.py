@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import provider_verification as pv
 from providers import PROVIDER_CAPABILITIES
 from scripts.generate_provider_support_matrix import (
     build_matrix_markdown,
@@ -12,6 +13,29 @@ from scripts.generate_provider_support_matrix import (
 
 
 class ProviderSupportMatrixGeneratorTests(unittest.TestCase):
+    def test_provider_verification_defaults_include_matrix_related_coverage(self) -> None:
+        self.assertIn(
+            "tests/test_provider_capabilities_registry.py",
+            pv.DEFAULT_PROVIDER_TESTS,
+        )
+        self.assertIn(
+            "tests/test_provider_live_state_contract.py",
+            pv.DEFAULT_PROVIDER_TESTS,
+        )
+        self.assertIn(
+            "tests/test_provider_support_matrix_generator.py",
+            pv.DEFAULT_PROVIDER_TESTS,
+        )
+
+    def test_committed_docs_match_current_generated_matrix(self) -> None:
+        committed = Path("docs") / "provider_support_matrix.md"
+
+        self.assertTrue(committed.exists())
+        self.assertEqual(
+            build_matrix_markdown(),
+            committed.read_text(encoding="utf-8"),
+        )
+
     def test_build_matrix_markdown_uses_registry_with_stable_ordering(self) -> None:
         markdown = build_matrix_markdown()
 
