@@ -150,7 +150,7 @@ class SXBetProviderTests(unittest.IsolatedAsyncioTestCase):
                     fixture_status_calls.append(list(event_ids))
                     return {
                         'status': 'success',
-                        'data': {event_id: {'status': 1} for event_id in event_ids},
+                        'data': {event_id: {'status': 2} for event_id in event_ids},
                     }, 0
                 live_scores_calls.append(list(event_ids))
                 return {'status': 'success', 'data': []}, 0
@@ -338,6 +338,78 @@ class SXBetProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].get('live_state', {}).get('is_live'), True)
         self.assertEqual(events[0].get('live_state', {}).get('status'), 'live')
+
+    async def test_fetch_events_async_live_context_filters_future_active_markets_with_explicit_scheduled_state(self) -> None:
+        fixtures_payload = [
+            {
+                'id': 'L19990001',
+                'eventId': 'L19990001',
+                'teamOne': 'Boston Celtics',
+                'teamTwo': 'Philadelphia 76ers',
+                'gameTime': 1776618000,
+                'sportId': 1,
+                'sportLabel': 'Basketball',
+                'leagueId': 7,
+                'leagueLabel': 'NBA',
+                'live_state': {
+                    'is_live': False,
+                    'status': 'scheduled',
+                    'provider_status': 'active',
+                    'market_status': 'active',
+                    'live_enabled': True,
+                },
+                'markets': [
+                    {
+                        'marketHash': '0xdef',
+                        'type': 52,
+                        'outcomeOneName': 'Boston Celtics',
+                        'outcomeTwoName': 'Philadelphia 76ers',
+                        'status': 'ACTIVE',
+                        'liveEnabled': True,
+                        'mainLine': True,
+                        'bestOddsOutcomeOne': 2.0,
+                        'bestOddsOutcomeTwo': 2.0,
+                    }
+                ],
+            }
+        ]
+        fixture_status_payload = {
+            'status': 'success',
+            'data': {
+                'L19990001': {'status': 1}
+            },
+        }
+        live_scores_payload = {
+            'status': 'success',
+            'data': [],
+        }
+
+        async def _fake_request_json_async(client, path, params=None, retries=None, backoff_seconds=None):
+            if path == 'fixture/status':
+                return _deepcopy(fixture_status_payload), 0
+            if path == 'live-scores':
+                return _deepcopy(live_scores_payload), 0
+            if path == 'orders/odds/best':
+                return {'status': 'success', 'data': {'0xdef': {'marketHash': '0xdef', 'percentageOdds': '50000000000000000000', 'price': 2.0}}}, 0
+            if path == 'orders':
+                return {'status': 'success', 'data': []}, 0
+            raise AssertionError((path, params))
+
+        with (
+            patch.object(sx_bet, 'get_shared_client', new=_fake_shared_client),
+            patch.object(sx_bet, '_request_json_async', side_effect=_fake_request_json_async),
+            patch.object(sx_bet, '_sx_best_odds_ws_enabled', return_value=False),
+            patch.object(sx_bet, '_load_upcoming_fixtures_async', return_value=(_deepcopy(fixtures_payload), {'fixture_source': 'markets_active', 'cache': 'miss', 'pages_fetched': 1, 'retries_used': 0})),
+        ):
+            events = await sx_bet.fetch_events_async(
+                'basketball_nba',
+                ['h2h'],
+                ['us'],
+                bookmakers=['sx_bet'],
+                context={'live': True, 'scan_mode': 'live'},
+            )
+
+        self.assertEqual(events, [])
 
 
 if __name__ == '__main__':

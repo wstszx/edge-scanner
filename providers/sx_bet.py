@@ -477,6 +477,8 @@ def _fixture_has_live_evidence(fixture: object) -> bool:
         return False
     if live_state.get("is_live") is True:
         return True
+    if "is_live" in live_state and live_state.get("is_live") is False:
+        return False
     status = _normalize_status_token(
         live_state.get("status")
         or live_state.get("in_play_status")
@@ -484,6 +486,8 @@ def _fixture_has_live_evidence(fixture: object) -> bool:
     )
     if status in {"live", "inplay", "playing"}:
         return True
+    if status in {"scheduled", "preplay", "prematch", "not_started"}:
+        return False
     if status in {"final", "finished", "closed", "resolved", "settled", "cancelled", "canceled"}:
         return False
     provider_status = _normalize_status_token(live_state.get("provider_status"))
