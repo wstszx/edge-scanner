@@ -19,6 +19,7 @@ import httpx
 import requests
 
 from ._async_http import get_shared_client, request_json, request_text
+from .capabilities import ProviderCapability, sorted_unique_tuple
 
 PROVIDER_KEY = "bookmaker_xyz"
 PROVIDER_TITLE = "bookmaker.xyz"
@@ -338,6 +339,24 @@ SPORT_COUNTRY_HINTS: Dict[str, Sequence[str]] = {
     "soccer_france_ligue_one": ("france",),
     "soccer_usa_mls": ("united states", "usa"),
 }
+
+PROVIDER_CAPABILITY = ProviderCapability(
+    key=PROVIDER_KEY,
+    title=PROVIDER_TITLE,
+    supported_sport_keys=sorted_unique_tuple(
+        (
+            *BOOKMAKER_XYZ_SPORT_FILTERS,
+            *SPORT_SLUG_HINTS,
+            *SPORT_LEAGUE_HINTS,
+            *SPORT_LEAGUE_SLUG_HINTS,
+            *SPORT_COUNTRY_HINTS,
+        )
+    ),
+    supported_markets=sorted_unique_tuple(
+        ("h2h", "spreads", "totals", "both_teams_to_score")
+    ),
+    live_mode_supported=True,
+)
 
 GRAPHQL_CONDITIONS_QUERY = """
 query Conditions(

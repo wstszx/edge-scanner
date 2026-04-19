@@ -2,18 +2,24 @@ from __future__ import annotations
 
 from typing import Awaitable, Callable, Dict, List, Optional, Sequence
 
+from .artline import PROVIDER_CAPABILITY as ARTLINE_CAPABILITY
 from .artline import PROVIDER_TITLE as ARTLINE_TITLE
 from .artline import fetch_events as fetch_artline_events
 from .artline import fetch_events_async as fetch_artline_events_async
+from .betdex import PROVIDER_CAPABILITY as BETDEX_CAPABILITY
 from .betdex import PROVIDER_TITLE as BETDEX_TITLE
 from .betdex import fetch_events as fetch_betdex_events
 from .betdex import fetch_events_async as fetch_betdex_events_async
+from .bookmaker_xyz import PROVIDER_CAPABILITY as BOOKMAKER_XYZ_CAPABILITY
 from .bookmaker_xyz import PROVIDER_TITLE as BOOKMAKER_XYZ_TITLE
 from .bookmaker_xyz import fetch_events as fetch_bookmaker_xyz_events
 from .bookmaker_xyz import fetch_events_async as fetch_bookmaker_xyz_events_async
+from .capabilities import ProviderCapability
+from .polymarket import PROVIDER_CAPABILITY as POLYMARKET_CAPABILITY
 from .polymarket import PROVIDER_TITLE as POLYMARKET_TITLE
 from .polymarket import fetch_events as fetch_polymarket_events
 from .polymarket import fetch_events_async as fetch_polymarket_events_async
+from .sx_bet import PROVIDER_CAPABILITY as SX_BET_CAPABILITY
 from .sx_bet import PROVIDER_TITLE as SX_BET_TITLE
 from .sx_bet import fetch_events as fetch_sx_bet_events
 from .sx_bet import fetch_events_async as fetch_sx_bet_events_async
@@ -34,6 +40,14 @@ PROVIDER_TITLES: Dict[str, str] = {
     "bookmaker_xyz": BOOKMAKER_XYZ_TITLE,
     "sx_bet": SX_BET_TITLE,
     "polymarket": POLYMARKET_TITLE,
+}
+
+PROVIDER_CAPABILITIES: Dict[str, ProviderCapability] = {
+    "artline": ARTLINE_CAPABILITY,
+    "betdex": BETDEX_CAPABILITY,
+    "bookmaker_xyz": BOOKMAKER_XYZ_CAPABILITY,
+    "sx_bet": SX_BET_CAPABILITY,
+    "polymarket": POLYMARKET_CAPABILITY,
 }
 
 PROVIDER_ALIASES: Dict[str, str] = {

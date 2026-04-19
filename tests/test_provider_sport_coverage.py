@@ -2,17 +2,28 @@
 
 import unittest
 
-from providers import artline, betdex, bookmaker_xyz, polymarket, sx_bet
+from providers import PROVIDER_CAPABILITIES, artline, betdex, bookmaker_xyz, polymarket, sx_bet
 
 
 class ProviderSportCoverageTests(unittest.TestCase):
-    def test_ncaaf_present_in_provider_maps(self) -> None:
+    def test_ncaaf_presence_stays_tied_to_provider_source_maps(self) -> None:
         self.assertIn("americanfootball_ncaaf", sx_bet.SX_SPORT_ID_MAP)
         self.assertIn("americanfootball_ncaaf", bookmaker_xyz.SPORT_SLUG_HINTS)
         self.assertIn("americanfootball_ncaaf", betdex.SPORT_SUBCATEGORY_DEFAULTS)
         self.assertIn("americanfootball_ncaaf", polymarket.SPORT_ALIASES)
 
-    def test_generic_tennis_and_rugby_keys_present_in_provider_maps(self) -> None:
+        self.assertIn("americanfootball_ncaaf", PROVIDER_CAPABILITIES["sx_bet"].supported_sport_keys)
+        self.assertIn(
+            "americanfootball_ncaaf",
+            PROVIDER_CAPABILITIES["bookmaker_xyz"].supported_sport_keys,
+        )
+        self.assertIn("americanfootball_ncaaf", PROVIDER_CAPABILITIES["betdex"].supported_sport_keys)
+        self.assertIn(
+            "americanfootball_ncaaf",
+            PROVIDER_CAPABILITIES["polymarket"].supported_sport_keys,
+        )
+
+    def test_generic_tennis_and_rugby_keys_stay_tied_to_provider_source_maps(self) -> None:
         self.assertIn("tennis_atp", bookmaker_xyz.SPORT_SLUG_HINTS)
         self.assertIn("tennis_wta", bookmaker_xyz.SPORT_SLUG_HINTS)
         self.assertIn("rugby_union", bookmaker_xyz.SPORT_SLUG_HINTS)
@@ -23,42 +34,49 @@ class ProviderSportCoverageTests(unittest.TestCase):
         self.assertIn("tennis_wta", betdex.SPORT_LEAGUE_HINTS)
         self.assertIn("rugby_union", betdex.SPORT_LEAGUE_HINTS)
 
-    def test_betdex_has_expected_verified_expansion_mappings(self) -> None:
-        self.assertIn("basketball_euroleague", betdex.SPORT_SUBCATEGORY_DEFAULTS)
-        self.assertIn("basketball_germany_bbl", betdex.SPORT_SUBCATEGORY_DEFAULTS)
-        self.assertIn("soccer_england_championship", betdex.SPORT_SUBCATEGORY_DEFAULTS)
-        self.assertIn("soccer_england_league_one", betdex.SPORT_SUBCATEGORY_DEFAULTS)
-        self.assertIn("soccer_england_league_two", betdex.SPORT_SUBCATEGORY_DEFAULTS)
-        self.assertIn("soccer_brazil_serie_a", betdex.SPORT_SUBCATEGORY_DEFAULTS)
-        self.assertIn("soccer_netherlands_eredivisie", betdex.SPORT_SUBCATEGORY_DEFAULTS)
-        self.assertIn("soccer_argentina_liga_profesional", betdex.SPORT_SUBCATEGORY_DEFAULTS)
-        self.assertIn("mma_ufc", betdex.SPORT_SUBCATEGORY_DEFAULTS)
-        self.assertIn("basketball_euroleague", betdex.SPORT_LEAGUE_HINTS)
-        self.assertIn("basketball_germany_bbl", betdex.SPORT_LEAGUE_HINTS)
-        self.assertIn("soccer_england_championship", betdex.SPORT_LEAGUE_HINTS)
-        self.assertIn("soccer_england_league_one", betdex.SPORT_LEAGUE_HINTS)
-        self.assertIn("soccer_england_league_two", betdex.SPORT_LEAGUE_HINTS)
-        self.assertIn("soccer_brazil_serie_a", betdex.SPORT_LEAGUE_HINTS)
-        self.assertIn("soccer_netherlands_eredivisie", betdex.SPORT_LEAGUE_HINTS)
-        self.assertIn("soccer_argentina_liga_profesional", betdex.SPORT_LEAGUE_HINTS)
-        self.assertIn("mma_ufc", betdex.SPORT_LEAGUE_HINTS)
+        self.assertIn("tennis_atp", PROVIDER_CAPABILITIES["bookmaker_xyz"].supported_sport_keys)
+        self.assertIn("tennis_wta", PROVIDER_CAPABILITIES["bookmaker_xyz"].supported_sport_keys)
+        self.assertIn("rugby_union", PROVIDER_CAPABILITIES["bookmaker_xyz"].supported_sport_keys)
+        self.assertIn("tennis_atp", PROVIDER_CAPABILITIES["betdex"].supported_sport_keys)
+        self.assertIn("tennis_wta", PROVIDER_CAPABILITIES["betdex"].supported_sport_keys)
+        self.assertIn("rugby_union", PROVIDER_CAPABILITIES["betdex"].supported_sport_keys)
 
-    def test_artline_has_expected_verified_league_mappings(self) -> None:
-        self.assertIn("basketball_nba", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("icehockey_nhl", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("soccer_italy_serie_a", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("soccer_usa_mls", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("soccer_england_championship", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("soccer_netherlands_eredivisie", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("soccer_mexico_liga_mx", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("basketball_france_pro_a", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("icehockey_ahl", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("soccer_portugal_primeira_liga", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("soccer_argentina_liga_profesional", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("soccer_england_league_one", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("soccer_england_league_two", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("basketball_germany_bbl", artline.ARTLINE_SPORT_FILTERS)
-        self.assertIn("baseball_mlb", artline.ARTLINE_SPORT_FILTERS)
+    def test_betdex_capability_registry_tracks_verified_expansion_source_mappings(self) -> None:
+        for sport_key in (
+            "basketball_euroleague",
+            "basketball_germany_bbl",
+            "soccer_england_championship",
+            "soccer_england_league_one",
+            "soccer_england_league_two",
+            "soccer_brazil_serie_a",
+            "soccer_netherlands_eredivisie",
+            "soccer_argentina_liga_profesional",
+            "mma_ufc",
+        ):
+            self.assertIn(sport_key, betdex.SPORT_SUBCATEGORY_DEFAULTS)
+            self.assertIn(sport_key, betdex.SPORT_LEAGUE_HINTS)
+            self.assertIn(sport_key, PROVIDER_CAPABILITIES["betdex"].supported_sport_keys)
+
+    def test_artline_capability_registry_tracks_verified_source_mappings(self) -> None:
+        for sport_key in (
+            "basketball_nba",
+            "icehockey_nhl",
+            "soccer_italy_serie_a",
+            "soccer_usa_mls",
+            "soccer_england_championship",
+            "soccer_netherlands_eredivisie",
+            "soccer_mexico_liga_mx",
+            "basketball_france_pro_a",
+            "icehockey_ahl",
+            "soccer_portugal_primeira_liga",
+            "soccer_argentina_liga_profesional",
+            "soccer_england_league_one",
+            "soccer_england_league_two",
+            "basketball_germany_bbl",
+            "baseball_mlb",
+        ):
+            self.assertIn(sport_key, artline.ARTLINE_SPORT_FILTERS)
+            self.assertIn(sport_key, PROVIDER_CAPABILITIES["artline"].supported_sport_keys)
 
     def test_bookmaker_xyz_soccer_epl_requires_english_context(self) -> None:
         singapore_game = {

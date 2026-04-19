@@ -14,6 +14,7 @@ from urllib.parse import quote
 import requests
 
 from ._async_http import get_shared_client, request_json
+from .capabilities import ProviderCapability, sorted_unique_tuple
 
 PROVIDER_KEY = "betdex"
 PROVIDER_TITLE = "BetDEX"
@@ -97,6 +98,27 @@ SPORT_LEAGUE_HINTS: Dict[str, Sequence[str]] = {
     "tennis_atp": ("atp",),
     "tennis_wta": ("wta",),
 }
+
+PROVIDER_CAPABILITY = ProviderCapability(
+    key=PROVIDER_KEY,
+    title=PROVIDER_TITLE,
+    supported_sport_keys=sorted_unique_tuple(
+        (*SPORT_SUBCATEGORY_DEFAULTS, *SPORT_LEAGUE_HINTS)
+    ),
+    supported_markets=sorted_unique_tuple(
+        (
+            "h2h",
+            "h2h_3_way",
+            "spreads",
+            "totals",
+            "both_teams_to_score",
+            "h2h_h1",
+            "spreads_h1",
+            "totals_h1",
+        )
+    ),
+    live_mode_supported=True,
+)
 
 
 class ProviderError(Exception):

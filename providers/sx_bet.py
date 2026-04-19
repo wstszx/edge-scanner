@@ -13,6 +13,7 @@ import httpx
 import requests
 
 from ._async_http import get_shared_client, request_json
+from .capabilities import ProviderCapability, sorted_unique_tuple
 
 PROVIDER_KEY = "sx_bet"
 PROVIDER_TITLE = "SX Bet"
@@ -92,6 +93,26 @@ SPORT_LEAGUE_HINTS: Dict[str, Sequence[str]] = {
     "soccer_france_ligue_one": ("ligue 1", "ligue one"),
     "soccer_usa_mls": ("mls", "major league soccer"),
 }
+
+PROVIDER_CAPABILITY = ProviderCapability(
+    key=PROVIDER_KEY,
+    title=PROVIDER_TITLE,
+    supported_sport_keys=sorted_unique_tuple((*SX_SPORT_ID_MAP, *SPORT_LEAGUE_HINTS)),
+    supported_markets=sorted_unique_tuple(
+        (
+            "h2h",
+            "h2h_3_way",
+            "spreads",
+            "totals",
+            "both_teams_to_score",
+            "h2h_h1",
+            "spreads_h1",
+            "totals_h1",
+        )
+    ),
+    live_mode_supported=True,
+)
+
 SX_PUBLIC_SPORT_SLUGS_BY_PREFIX: Dict[str, str] = {
     "basketball": "basketball",
     "baseball": "baseball",

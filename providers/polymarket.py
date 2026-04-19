@@ -15,6 +15,7 @@ import httpx
 import requests
 
 from ._async_http import get_shared_client, request_json
+from .capabilities import ProviderCapability, sorted_unique_tuple
 
 PROVIDER_KEY = "polymarket"
 PROVIDER_TITLE = "Polymarket"
@@ -175,6 +176,17 @@ SPORT_RESULT_LEAGUE_HINTS: Dict[str, Sequence[str]] = {
     "soccer_france_ligue_one": ("fl1",),
     "soccer_usa_mls": ("mls",),
 }
+
+PROVIDER_CAPABILITY = ProviderCapability(
+    key=PROVIDER_KEY,
+    title=PROVIDER_TITLE,
+    supported_sport_keys=sorted_unique_tuple((*SPORT_ALIASES, *SPORT_RESULT_LEAGUE_HINTS)),
+    supported_markets=sorted_unique_tuple(
+        ("h2h", "h2h_3_way", "spreads", "totals", "both_teams_to_score")
+    ),
+    live_mode_supported=True,
+)
+
 TEAM_LOOKUP_STOPWORDS = {
     "fc",
     "cf",
