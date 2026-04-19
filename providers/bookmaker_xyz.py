@@ -2008,9 +2008,6 @@ def _normalize_condition_market(
 
     if market_meta is None or len(parsed_outcomes) < 2:
         return None
-    game_period_id = _normalize_text(market_meta.get("game_period_id"))
-    if game_period_id not in {"1", "76"}:
-        return None
 
     condition_label = _normalize_text(
         condition.get("conditionName")
@@ -2032,6 +2029,7 @@ def _normalize_condition_market(
     under_selection = _find_selection(parsed_outcomes, {"under", "u"})
     market_name = _normalize_text(market_meta.get("market_name")).lower()
     market_id = _normalize_text(market_meta.get("market_id"))
+    segmented_market = _condition_is_segmented(condition) or _looks_segmented_market_label(market_name)
 
     if "h2h" in requested_markets and home_selection and away_selection and len(parsed_outcomes) == 2:
         looks_like_winner = (
@@ -2040,8 +2038,7 @@ def _normalize_condition_market(
             or "full time result" in market_name
             or "match winner" in market_name
         )
-        is_segment = _looks_segmented_market_label(market_name)
-        if looks_like_winner and not is_segment:
+        if looks_like_winner and not segmented_market:
             return {
                 "key": "h2h",
                 "outcomes": [
@@ -2058,7 +2055,14 @@ def _normalize_condition_market(
                 ],
             }
 
-    if "spreads" in requested_markets and home_selection and away_selection and len(parsed_outcomes) == 2 and "handicap" in market_name:
+    if (
+        "spreads" in requested_markets
+        and home_selection
+        and away_selection
+        and len(parsed_outcomes) == 2
+        and "handicap" in market_name
+        and not segmented_market
+    ):
         point_1 = home_selection.get("point")
         point_2 = away_selection.get("point")
         if point_1 is not None and point_2 is not None:
@@ -2088,7 +2092,13 @@ def _normalize_condition_market(
     ) and over_selection and under_selection and len(parsed_outcomes) == 2:
         return None
 
-    if "totals" in requested_markets and over_selection and under_selection and len(parsed_outcomes) == 2:
+    if (
+        "totals" in requested_markets
+        and over_selection
+        and under_selection
+        and len(parsed_outcomes) == 2
+        and not segmented_market
+    ):
         if "total" in market_name:
             over_point = over_selection.get("point")
             under_point = under_selection.get("point")

@@ -176,6 +176,13 @@ LIVE_STATE_TERMINAL_TOKENS = {
     "suspended_final",
 }
 
+PREMATCH_OBSERVED_AT_QUOTE_SOURCES = {
+    "clob_book_best_ask",
+    "rest_snapshot",
+    "ws",
+    "ws_book_best_ask",
+}
+
 COMMON_EXTRA_MARKETS = [
     "h2h_lay",
     "h2h_3_way",
@@ -2476,6 +2483,39 @@ def _normalize_team_name(value: Optional[str]) -> str:
     return " ".join(cleaned)
 
 
+_STRIP_CALLABLES_MISSING = object()
+
+
+def _strip_callables(value: object):
+    if callable(value):
+        return _STRIP_CALLABLES_MISSING
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, item in value.items():
+            cleaned_item = _strip_callables(item)
+            if cleaned_item is _STRIP_CALLABLES_MISSING:
+                continue
+            cleaned[key] = cleaned_item
+        return cleaned
+    if isinstance(value, list):
+        cleaned = []
+        for item in value:
+            cleaned_item = _strip_callables(item)
+            if cleaned_item is _STRIP_CALLABLES_MISSING:
+                continue
+            cleaned.append(cleaned_item)
+        return cleaned
+    if isinstance(value, tuple):
+        cleaned = []
+        for item in value:
+            cleaned_item = _strip_callables(item)
+            if cleaned_item is _STRIP_CALLABLES_MISSING:
+                continue
+            cleaned.append(cleaned_item)
+        return tuple(cleaned)
+    return value
+
+
 def _team_similarity(a: str, b: str) -> float:
     if not a or not b:
         return 0.0
@@ -2609,6 +2649,21 @@ def _quote_freshness_timestamp_seconds(
     return _quote_updated_at_seconds(game, bookmaker, market, outcome)
 
 
+def _prematch_quote_prefers_observed_at(
+    game: Optional[dict],
+    bookmaker: Optional[dict],
+    market: Optional[dict],
+    outcome: Optional[dict],
+) -> bool:
+    for source in (outcome, market, bookmaker, game):
+        if not isinstance(source, dict):
+            continue
+        quote_source = _normalize_text(source.get("quote_source") or source.get("source"))
+        if quote_source in PREMATCH_OBSERVED_AT_QUOTE_SOURCES:
+            return True
+    return False
+
+
 def _live_quote_age_seconds(
     game: Optional[dict],
     bookmaker: Optional[dict],
@@ -2652,7 +2707,12 @@ def _is_live_quote_fresh(
         prefer_observed_at = True
     elif normalized_mode == SCAN_MODE_PREMATCH:
         max_age = _prematch_quote_max_age_seconds()
-        prefer_observed_at = False
+        prefer_observed_at = _prematch_quote_prefers_observed_at(
+            game,
+            bookmaker,
+            market,
+            outcome,
+        )
     else:
         return True
     if max_age <= 0:
@@ -4523,7 +4583,9 @@ async def _fetch_provider_events_for_sport(
             )
             if not isinstance(provider_events, list):
                 provider_events = []
-            provider_stats = getattr(fetch_provider_events, "last_stats", {}) or {}
+            raw_provider_stats = getattr(fetch_provider_events, "last_stats", {}) or {}
+            cleaned_provider_stats = _strip_callables(raw_provider_stats)
+            provider_stats = cleaned_provider_stats if isinstance(cleaned_provider_stats, dict) else {}
         except Exception as exc:
             provider_error = str(exc)
     return {

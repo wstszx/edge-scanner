@@ -482,7 +482,16 @@ def _fixture_has_live_evidence(fixture: object) -> bool:
         or live_state.get("in_play_status")
         or live_state.get("provider_status")
     )
-    return status in {"live", "inplay", "playing"}
+    if status in {"live", "inplay", "playing"}:
+        return True
+    if status in {"final", "finished", "closed", "resolved", "settled", "cancelled", "canceled"}:
+        return False
+    provider_status = _normalize_status_token(live_state.get("provider_status"))
+    market_status = _normalize_status_token(live_state.get("market_status"))
+    live_enabled = bool(live_state.get("live_enabled") or live_state.get("liveEnabled"))
+    if live_enabled and (provider_status in {"active", "open"} or market_status in {"active", "open"}):
+        return True
+    return False
 
 
 async def _load_fixture_status_map_async(

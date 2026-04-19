@@ -662,6 +662,17 @@ def _market_accepting_orders(market: object) -> bool:
     return _flag_is_true(market.get("acceptingOrders"))
 
 
+def _market_supports_gamma_tradeable_fallback(market: object) -> bool:
+    if not isinstance(market, dict):
+        return False
+    if _market_accepting_orders(market):
+        return True
+    return (
+        _safe_float(market.get("bestBid")) is not None
+        and _safe_float(market.get("bestAsk")) is not None
+    )
+
+
 def _event_has_tradeable_live_markets(event: object) -> bool:
     if not isinstance(event, dict):
         return False
@@ -3227,6 +3238,7 @@ def _pick_match_markets(
                         ),
                     ],
                     "volume": _safe_float(market.get("volumeNum") or market.get("volume")) or 0.0,
+                    "tradeable_without_clob": _market_supports_gamma_tradeable_fallback(market),
                 }
             )
             continue
@@ -3272,9 +3284,15 @@ def _pick_match_markets(
             if team_match:
                 team_token = _team_token(team_match.group(1))
                 if team_token == home_token:
-                    yes_by_team[home_token] = dict(yes_quote)
+                    yes_by_team[home_token] = {
+                        **dict(yes_quote),
+                        "tradeable_without_clob": _market_supports_gamma_tradeable_fallback(market),
+                    }
                 elif team_token == away_token:
-                    yes_by_team[away_token] = dict(yes_quote)
+                    yes_by_team[away_token] = {
+                        **dict(yes_quote),
+                        "tradeable_without_clob": _market_supports_gamma_tradeable_fallback(market),
+                    }
 
     if direct_candidates:
         best = max(direct_candidates, key=lambda item: item.get("volume", 0.0))
@@ -3288,6 +3306,7 @@ def _pick_match_markets(
                 collected.append(
                     {
                         "key": "h2h",
+                        "tradeable_without_clob": bool(best.get("tradeable_without_clob")),
                         "outcomes": [
                             _market_outcome_row(
                                 home_team,
@@ -3326,6 +3345,10 @@ def _pick_match_markets(
             collected.append(
                 {
                     "key": "h2h",
+                    "tradeable_without_clob": bool(
+                        home_data.get("tradeable_without_clob")
+                        and away_data.get("tradeable_without_clob")
+                    ),
                         "outcomes": [
                             _market_outcome_row(
                                 home_team,
@@ -3504,6 +3527,7 @@ def _market_has_tradeable_outcomes(market: object) -> bool:
     outcomes = market.get("outcomes")
     if not isinstance(outcomes, list) or not outcomes:
         return False
+    gamma_fallback_allowed = bool(market.get("tradeable_without_clob"))
     for outcome in outcomes:
         if not isinstance(outcome, dict):
             return False
@@ -3511,6 +3535,10 @@ def _market_has_tradeable_outcomes(market: object) -> bool:
         source = _normalize_text(outcome.get("quote_source"))
         if price is None or price <= 1:
             return False
+        if source == "gamma_outcome_price":
+            if not gamma_fallback_allowed:
+                return False
+            continue
         if source not in {"clob_book_best_ask", "ws_book_best_ask"}:
             return False
     return True
