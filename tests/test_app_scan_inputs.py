@@ -1,3 +1,6 @@
+import copy
+import threading
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -33,10 +36,18 @@ class ScanInputValidationTests(unittest.TestCase):
         self.client = app_module.app.test_client()
         self._env_save_scan = app_module.ENV_SAVE_SCAN
         self._background_started = app_module._BACKGROUND_SERVICES_STARTED
+        self._scan_jobs = copy.deepcopy(app_module._SCAN_JOBS)
+        self._current_scan_job_id = app_module._CURRENT_SCAN_JOB_ID
+        self._latest_scan_job_id = app_module._LATEST_SCAN_JOB_ID
 
     def tearDown(self) -> None:
         app_module.ENV_SAVE_SCAN = self._env_save_scan
         app_module._BACKGROUND_SERVICES_STARTED = self._background_started
+        with app_module._SCAN_JOB_LOCK:
+            app_module._SCAN_JOBS.clear()
+            app_module._SCAN_JOBS.update(copy.deepcopy(self._scan_jobs))
+            app_module._CURRENT_SCAN_JOB_ID = self._current_scan_job_id
+            app_module._LATEST_SCAN_JOB_ID = self._latest_scan_job_id
 
     def _assert_scan_job_created(self, response, mocked_start, expected_job_id='job-123'):
         self.assertEqual(response.status_code, 202)
@@ -148,6 +159,73 @@ class ScanInputValidationTests(unittest.TestCase):
         final_result = snapshot.get('final_result') or {}
         self.assertTrue(final_result.get('success'))
         self.assertEqual((((final_result.get('arbitrage') or {}).get('opportunities')) or [])[0].get('event'), 'A vs B')
+
+    def test_start_scan_job_allows_only_one_runner_under_concurrent_admission(self) -> None:
+        real_thread = threading.Thread
+        results = []
+        start_barrier = threading.Barrier(2)
+        original_register = app_module._register_scan_job
+
+        def _thread_factory(target=None, daemon=None):
+            return _DeferredThread(target=target, daemon=daemon)
+
+        def _delayed_register(payload, *args, **kwargs):
+            time.sleep(0.01)
+            return original_register(payload, *args, **kwargs)
+
+        with (
+            patch.object(app_module, '_register_scan_job', side_effect=_delayed_register),
+            patch.object(app_module.threading, 'Thread', side_effect=_thread_factory),
+        ):
+            def _worker() -> None:
+                start_barrier.wait()
+                results.append(app_module._start_scan_job({'sports': ['basketball_nba']}))
+
+            first = real_thread(target=_worker)
+            second = real_thread(target=_worker)
+            first.start()
+            second.start()
+            first.join()
+            second.join()
+
+        successes = [item for item in results if item.get('success')]
+        conflicts = [item for item in results if item.get('error_code') == 409]
+
+        self.assertEqual(len(successes), 1)
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(len(app_module._SCAN_JOBS), 1)
+
+    def test_update_scan_job_prunes_old_finished_jobs_beyond_history_limit(self) -> None:
+        with patch.object(app_module, 'SCAN_JOB_HISTORY_LIMIT', 2, create=True):
+            first = app_module._register_scan_job({'sports': ['basketball_nba']})
+            second = app_module._register_scan_job({'sports': ['basketball_nba']})
+            third = app_module._register_scan_job({'sports': ['basketball_nba']})
+
+            app_module._update_scan_job(
+                first['job_id'],
+                status='completed',
+                finished_at='2026-02-22T12:00:01Z',
+                final_result={'success': True, 'scan_time': '2026-02-22T12:00:01Z'},
+            )
+            app_module._update_scan_job(
+                second['job_id'],
+                status='completed',
+                finished_at='2026-02-22T12:00:02Z',
+                final_result={'success': True, 'scan_time': '2026-02-22T12:00:02Z'},
+            )
+            app_module._update_scan_job(
+                third['job_id'],
+                status='completed',
+                finished_at='2026-02-22T12:00:03Z',
+                final_result={'success': True, 'scan_time': '2026-02-22T12:00:03Z'},
+            )
+
+        self.assertNotIn(first['job_id'], app_module._SCAN_JOBS)
+        self.assertIn(second['job_id'], app_module._SCAN_JOBS)
+        self.assertIn(third['job_id'], app_module._SCAN_JOBS)
+        self.assertEqual(app_module._LATEST_SCAN_JOB_ID, third['job_id'])
+        latest_snapshot = app_module._get_current_or_latest_scan_job_snapshot() or {}
+        self.assertEqual(latest_snapshot.get('job_id'), third['job_id'])
 
     def test_start_scan_job_progress_updates_partial_result(self) -> None:
         thread_holder = {}

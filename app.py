@@ -90,6 +90,13 @@ _SCAN_JOB_LOCK = threading.Lock()
 _SCAN_JOBS: dict[str, dict] = {}
 _CURRENT_SCAN_JOB_ID: Optional[str] = None
 _LATEST_SCAN_JOB_ID: Optional[str] = None
+try:
+    SCAN_JOB_HISTORY_LIMIT = max(
+        0,
+        int(float(os.getenv("SCAN_JOB_HISTORY_LIMIT", "20").strip())),
+    )
+except (TypeError, ValueError):
+    SCAN_JOB_HISTORY_LIMIT = 20
 
 CONTINUOUS_AUTO_SCAN_BACKOFF_SECONDS = 5.0
 CONTINUOUS_AUTO_SCAN_IDLE_WAIT_SECONDS = 0.1
@@ -488,19 +495,65 @@ def _copy_scan_job_snapshot(job: Optional[dict]) -> Optional[dict]:
     return copy.deepcopy(job) if isinstance(job, dict) else None
 
 
-def _register_scan_job(payload: dict) -> dict:
-    global _CURRENT_SCAN_JOB_ID, _LATEST_SCAN_JOB_ID
+def _scan_job_order_key(job: Optional[dict], job_id: str = "") -> tuple[str, str]:
+    if not isinstance(job, dict):
+        return ("", str(job_id or ""))
+    marker = (
+        str(job.get("finished_at") or "").strip()
+        or str(job.get("updated_at") or "").strip()
+        or str(job.get("created_at") or "").strip()
+    )
+    return (marker, str(job.get("job_id") or job_id or ""))
+
+
+def _refresh_latest_scan_job_id_locked() -> None:
+    global _LATEST_SCAN_JOB_ID
+    candidates = [
+        (job_id, job)
+        for job_id, job in _SCAN_JOBS.items()
+        if isinstance(job, dict) and job_id != _CURRENT_SCAN_JOB_ID
+    ]
+    if not candidates:
+        if _CURRENT_SCAN_JOB_ID in _SCAN_JOBS:
+            _LATEST_SCAN_JOB_ID = _CURRENT_SCAN_JOB_ID
+        else:
+            _LATEST_SCAN_JOB_ID = None
+        return
+    _LATEST_SCAN_JOB_ID = max(
+        candidates,
+        key=lambda item: _scan_job_order_key(item[1], item[0]),
+    )[0]
+
+
+def _prune_terminal_scan_jobs_locked() -> None:
+    terminal_jobs = [
+        (job_id, job)
+        for job_id, job in _SCAN_JOBS.items()
+        if isinstance(job, dict)
+        and str(job.get("status") or "").strip().lower() in {"completed", "failed"}
+        and job_id != _CURRENT_SCAN_JOB_ID
+    ]
+    excess = len(terminal_jobs) - max(0, int(SCAN_JOB_HISTORY_LIMIT))
+    if excess <= 0:
+        return
+    terminal_jobs.sort(key=lambda item: _scan_job_order_key(item[1], item[0]))
+    for job_id, _ in terminal_jobs[:excess]:
+        _SCAN_JOBS.pop(job_id, None)
+
+
+def _build_scan_job(payload: dict, *, status: str = "queued") -> dict:
     job_id = uuid.uuid4().hex
     scan_mode = _normalize_scan_mode((payload or {}).get("scanMode"))
     sports = payload.get("sports") if isinstance(payload, dict) else []
     bookmakers = payload.get("bookmakers") if isinstance(payload, dict) else []
     providers = payload.get("includeProviders") if isinstance(payload, dict) else []
     now = _scan_job_iso_now()
-    job = {
+    normalized_status = str(status or "queued").strip().lower() or "queued"
+    return {
         "job_id": job_id,
-        "status": "queued",
+        "status": normalized_status,
         "created_at": now,
-        "started_at": None,
+        "started_at": now if normalized_status == "running" else None,
         "updated_at": now,
         "finished_at": None,
         "payload_summary": {
@@ -520,15 +573,36 @@ def _register_scan_job(payload: dict) -> dict:
         "final_result": None,
         "error": None,
     }
+
+
+def _register_scan_job(
+    payload: dict,
+    *,
+    status: str = "queued",
+    reject_if_running: bool = False,
+) -> dict:
+    global _CURRENT_SCAN_JOB_ID
+    job = _build_scan_job(payload, status=status)
     with _SCAN_JOB_LOCK:
-        _SCAN_JOBS[job_id] = job
-        _CURRENT_SCAN_JOB_ID = job_id
-        _LATEST_SCAN_JOB_ID = job_id
+        if reject_if_running:
+            current = _SCAN_JOBS.get(_CURRENT_SCAN_JOB_ID) if _CURRENT_SCAN_JOB_ID else None
+            if isinstance(current, dict) and str(current.get("status") or "").strip().lower() == "running":
+                return {
+                    "success": False,
+                    "error": "Scan already in progress",
+                    "error_code": 409,
+                    "job_id": current.get("job_id"),
+                }
+        _SCAN_JOBS[job["job_id"]] = job
+        if str(job.get("status") or "").strip().lower() == "running":
+            _CURRENT_SCAN_JOB_ID = job["job_id"]
+        _prune_terminal_scan_jobs_locked()
+        _refresh_latest_scan_job_id_locked()
     return _copy_scan_job_snapshot(job) or job
 
 
 def _update_scan_job(job_id: str, **changes) -> Optional[dict]:
-    global _CURRENT_SCAN_JOB_ID, _LATEST_SCAN_JOB_ID
+    global _CURRENT_SCAN_JOB_ID
     with _SCAN_JOB_LOCK:
         job = _SCAN_JOBS.get(job_id)
         if not isinstance(job, dict):
@@ -536,9 +610,12 @@ def _update_scan_job(job_id: str, **changes) -> Optional[dict]:
         job.update(changes)
         job["updated_at"] = _scan_job_iso_now()
         status = str(job.get("status") or "").strip().lower()
-        if status in {"completed", "failed"} and _CURRENT_SCAN_JOB_ID == job_id:
+        if status == "running":
+            _CURRENT_SCAN_JOB_ID = job_id
+        elif status in {"completed", "failed"} and _CURRENT_SCAN_JOB_ID == job_id:
             _CURRENT_SCAN_JOB_ID = None
-            _LATEST_SCAN_JOB_ID = job_id
+        _prune_terminal_scan_jobs_locked()
+        _refresh_latest_scan_job_id_locked()
         return copy.deepcopy(job)
 
 
@@ -554,17 +631,10 @@ def _get_current_or_latest_scan_job_snapshot() -> Optional[dict]:
 
 
 def _start_scan_job(payload: dict) -> dict:
-    current = _get_current_or_latest_scan_job_snapshot()
-    if isinstance(current, dict) and current.get("status") == "running":
-        return {
-            "success": False,
-            "error": "Scan already in progress",
-            "error_code": 409,
-            "job_id": current.get("job_id"),
-        }
-    job = _register_scan_job(payload)
+    job = _register_scan_job(payload, status="running", reject_if_running=True)
+    if isinstance(job, dict) and job.get("success") is False:
+        return job
     job_id = str(job.get("job_id") or "")
-    _update_scan_job(job_id, status="running", started_at=_scan_job_iso_now())
 
     partial_arb: list[dict] = []
     partial_middle: list[dict] = []
