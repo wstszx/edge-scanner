@@ -56,6 +56,7 @@ from config import (
     MIN_MIDDLE_GAP,
     NFL_KEY_NUMBER_PROBABILITY,
     PROBABILITY_PER_INTEGER,
+    PROVIDER_COMMISSION_RATES,
     REGION_CONFIG,
     ROI_BANDS,
     SHARP_BOOKS,
@@ -130,7 +131,7 @@ except (TypeError, ValueError):
     SCAN_REQUEST_LOG_RETENTION_FILES = 20
 
 LIVE_EVENT_MAX_FUTURE_SECONDS_RAW = os.getenv("LIVE_EVENT_MAX_FUTURE_SECONDS", "0").strip()
-LIVE_QUOTE_MAX_AGE_SECONDS_RAW = os.getenv("LIVE_QUOTE_MAX_AGE_SECONDS", "60").strip()
+LIVE_QUOTE_MAX_AGE_SECONDS_RAW = os.getenv("LIVE_QUOTE_MAX_AGE_SECONDS", "15").strip()
 LIVE_STATE_CLOCK_TOLERANCE_SECONDS_RAW = os.getenv(
     "LIVE_STATE_CLOCK_TOLERANCE_SECONDS",
     "180",
@@ -2988,9 +2989,11 @@ def _ensure_sharp_region(regions: List[str], sharp_key: str) -> List[str]:
     return normalized
 
 
-def _apply_commission(price: float, commission_rate: float, is_exchange: bool) -> float:
+def _apply_commission(price: float, bookmaker_key: str, default_commission_rate: float) -> float:
+    is_exchange = bookmaker_key in EXCHANGE_KEYS
     if not is_exchange:
         return price
+    commission_rate = PROVIDER_COMMISSION_RATES.get(bookmaker_key, default_commission_rate)
     edge = price - 1.0
     if edge <= 0:
         return price
@@ -3100,7 +3103,7 @@ def _build_sharp_reference(
             line_key = _line_key(market_key, outcome)
             if not line_key:
                 continue
-            adjusted_price = _apply_commission(price_val, commission_rate, is_exchange)
+            adjusted_price = _apply_commission(price_val, bookmaker.get("key"), commission_rate)
             name_norm = _normalize_line_component(outcome.get("name"))
             if not name_norm:
                 continue
@@ -3568,7 +3571,7 @@ def _record_line_offers(
                     continue
                 display_name = _outcome_display_name(outcome)
                 is_exchange = bookmaker_key_normalized in EXCHANGE_KEYS
-                effective_price = _apply_commission(display_price, commission_rate, is_exchange)
+                effective_price = _apply_commission(display_price, bookmaker_key_normalized, commission_rate)
                 entry.setdefault(outcome_key, []).append(
                     {
                         "effective_price": effective_price,
@@ -3825,7 +3828,7 @@ def _collect_middle_opportunities(
                 except (TypeError, ValueError):
                     continue
                 is_exchange = bookmaker_key in EXCHANGE_KEYS
-                effective_price = _apply_commission(display_price, commission_rate, is_exchange)
+                effective_price = _apply_commission(display_price, bookmaker_key, commission_rate)
                 offers.append(
                     {
                         "pair_key": f"{bookmaker_key}:{name}:{point_value}",
@@ -3946,7 +3949,7 @@ def _collect_plus_ev_opportunities(
                 if has_point and not _points_match(soft_point, sharp_point):
                     continue
                 display_price = entry["price"]
-                effective_price = _apply_commission(display_price, commission_rate, is_exchange)
+                effective_price = _apply_commission(display_price, key, commission_rate)
                 fair_odds = sharp_outcome["fair_odds"]
                 gross_edge = _calculate_edge_percent(display_price, fair_odds)
                 net_edge = _calculate_edge_percent(effective_price, fair_odds)
@@ -4369,7 +4372,7 @@ def _positive_arb_opportunities(opportunities: Sequence[dict]) -> List[dict]:
         if not isinstance(opportunity, dict):
             continue
         roi = _safe_float(opportunity.get("roi_percent"))
-        if roi is None:
+        if roi is None or roi <= 0.0:
             continue
         filtered.append(opportunity)
     return filtered

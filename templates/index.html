@@ -7162,6 +7162,186 @@
       }
     }
 
+    function syncArbOpportunityNodes(container, entries, buildNode) {
+      if (!container) return;
+      const existingByStableKey = new Map();
+      Array.from(container.children).forEach((child) => {
+        const stableKey = child?.dataset?.arbStableKey || '';
+        if (stableKey) {
+          existingByStableKey.set(stableKey, child);
+        }
+      });
+      const nextNodes = [];
+      entries.forEach((entry) => {
+        const stableKey = buildArbOpportunityStableKey(entry?.opp);
+        const existingNode = stableKey ? existingByStableKey.get(stableKey) : null;
+        const nextNode = buildNode(entry, existingNode || null);
+        if (!nextNode) return;
+        if (stableKey) {
+          nextNode.dataset.arbStableKey = stableKey;
+          existingByStableKey.delete(stableKey);
+        } else {
+          delete nextNode.dataset.arbStableKey;
+        }
+        nextNodes.push(nextNode);
+      });
+      nextNodes.forEach((node) => {
+        container.appendChild(node);
+      });
+      existingByStableKey.forEach((node) => {
+        if (node?.parentNode === container) {
+          container.removeChild(node);
+        }
+      });
+      Array.from(container.children).forEach((child) => {
+        if (!nextNodes.includes(child)) {
+          container.removeChild(child);
+        }
+      });
+    }
+
+    function buildArbOpportunityActivationHandler(opp, oppKey) {
+      return () => {
+        const wasSame = selectedArbKey === oppKey;
+        selectedArbKey = oppKey;
+        selectedArbOpp = opp;
+        if (!wasSame || !arbCalculatorState || arbCalculatorState.key !== oppKey) {
+          initializeArbCalculatorFromOpportunity(opp, oppKey);
+        } else {
+          renderArbCalculator();
+        }
+        renderArbitrage();
+      };
+    }
+
+    function renderArbDesktopOpportunityCard(entry, existingNode = null) {
+      const opp = entry.opp;
+      const calcNet = entry.calcNet;
+      const netRoi = entry.netRoi;
+      const oppKey = buildArbOpportunityKey(opp);
+      const rowBandClass = roiBandClass(netRoi);
+      const commence = formatDateTime(opp.commence_time);
+      const kickoffParts = formatCompactDateParts(opp.commence_time);
+      const kickoffLabel = [kickoffParts.date, kickoffParts.time].filter(Boolean).join(' ') || t('tbd');
+      const kickoffCountdown = formatKickoffCountdown(opp.commence_time);
+      const calcGross = opp.has_exchange ? calculateStakes(opp, entry.stakeValue, false) : null;
+      const grossRoi = opp.has_exchange ? calcGross?.roi_percent ?? opp.gross_roi_percent : null;
+      const netNegative = typeof netRoi === 'number' && netRoi < 0;
+      const breakdown = Array.isArray(calcNet?.breakdown) ? calcNet.breakdown : [];
+      const legs = buildArbDisplayLegs(opp, breakdown);
+      const profitValue = entry.profitValue ?? 0;
+      const profitClass = profitValue > 0 ? 'gain' : profitValue < 0 ? 'loss' : '';
+      const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
+      const marketLabel = formatMarket(opp);
+      const hasOpenTargets = collectBookTargets(opp).length > 0;
+      const isSelected = Boolean(selectedArbKey && selectedArbKey === oppKey);
+      const activateOpportunity = buildArbOpportunityActivationHandler(opp, oppKey);
+      const desktopCard = existingNode || document.createElement('article');
+      desktopCard.dataset.arbKey = oppKey;
+      desktopCard.tabIndex = 0;
+      desktopCard.className = `arb-opportunity-card ${rowBandClass}`;
+      desktopCard.classList.toggle('roi-negative', netNegative);
+      desktopCard.classList.toggle('arb-opportunity-card-selected', isSelected);
+      const legRows = legs
+        .map((leg, legIndex) => formatArbDesktopLegRow(leg, {
+          legIndex,
+          opp,
+          sportLabel,
+          marketLabel,
+        }))
+        .join('');
+      desktopCard.innerHTML = `
+        <div class="arb-opportunity-strip">
+          <div class="arb-opportunity-strip-score">
+            <span class="arb-opportunity-roi">${escapeHtml(formatPercent(netRoi))}</span>
+            ${netNegative ? `<span class="roi-warning" title="${t('net_roi_negative')}">&#9888;</span>` : ''}
+          </div>
+          <div class="arb-opportunity-strip-sport">${escapeHtml(sportLabel || t('unknown'))}</div>
+          <div class="arb-opportunity-strip-right">
+            <div class="arb-opportunity-strip-badges">
+              <span class="arb-opportunity-stat-chip arb-opportunity-kickoff-chip" title="${escapeHtml(commence)}">${escapeHtml(kickoffLabel)}</span>
+              <span class="arb-opportunity-countdown" title="${escapeHtml(commence)}">${arbIcon('clock')}<span>${escapeHtml(kickoffCountdown)}</span></span>
+              ${grossRoi !== null && grossRoi !== undefined ? `<span class="arb-opportunity-stat-chip">${escapeHtml(t('gross'))} ${escapeHtml(formatPercent(grossRoi))}</span>` : ''}
+              <span class="arb-opportunity-stat-chip arb-opportunity-profit-chip ${profitClass}">${escapeHtml(calcNet ? formatProfit(profitValue) : '-')}</span>
+            </div>
+            <div class="arb-opportunity-strip-actions">
+              <button type="button" class="arb-strip-icon-btn arb-open-all-btn" title="${escapeHtml(t('open_books'))}" aria-label="${escapeHtml(t('open_books'))}" ${hasOpenTargets ? '' : 'disabled'}>${arbIcon('external')}</button>
+            </div>
+          </div>
+        </div>
+        <div class="arb-opportunity-body">
+          ${legRows}
+        </div>`;
+      bindArbDesktopCardActions(desktopCard, opp);
+      desktopCard.onclick = activateOpportunity;
+      desktopCard.onkeydown = (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        activateOpportunity();
+      };
+      return desktopCard;
+    }
+
+    function renderArbMobileOpportunityCard(entry, existingNode = null) {
+      const opp = entry.opp;
+      const calcNet = entry.calcNet;
+      const netRoi = entry.netRoi;
+      const oppKey = buildArbOpportunityKey(opp);
+      const rowBandClass = roiBandClass(netRoi);
+      const commence = formatDateTime(opp.commence_time);
+      const calcGross = opp.has_exchange ? calculateStakes(opp, entry.stakeValue, false) : null;
+      const grossRoi = opp.has_exchange ? calcGross?.roi_percent ?? opp.gross_roi_percent : null;
+      const netNegative = typeof netRoi === 'number' && netRoi < 0;
+      const breakdown = Array.isArray(calcNet?.breakdown) ? calcNet.breakdown : [];
+      const legs = buildArbDisplayLegs(opp, breakdown);
+      const profitValue = entry.profitValue ?? 0;
+      const profitClass = profitValue > 0 ? 'gain' : profitValue < 0 ? 'loss' : '';
+      const grossCell = opp.has_exchange ? formatRoiBadge(grossRoi) : '-';
+      const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
+      const marketLabel = formatMarket(opp);
+      const isSelected = Boolean(selectedArbKey && selectedArbKey === oppKey);
+      const activateOpportunity = buildArbOpportunityActivationHandler(opp, oppKey);
+      const mobileCard = existingNode || document.createElement('article');
+      mobileCard.dataset.arbKey = oppKey;
+      mobileCard.tabIndex = 0;
+      mobileCard.className = `arb-mobile-card ${rowBandClass}`;
+      mobileCard.classList.toggle('roi-negative', netNegative);
+      mobileCard.classList.toggle('has-exchange', Boolean(opp.has_exchange));
+      mobileCard.classList.toggle('arb-mobile-card-selected', isSelected);
+      const safeMarketLabel = escapeHtml(marketLabel);
+      const safeSport = escapeHtml(sportLabel);
+      const safeTime = escapeHtml(commence);
+      const outcomeCards = legs
+        .map((item, idx) => `<div class="arb-mobile-outcome">${formatOutcome(item, { legIndex: idx, opp })}</div>`)
+        .join('');
+      mobileCard.innerHTML = `
+        <div class="arb-mobile-card-head">
+          <div class="arb-mobile-primary">
+            <span class="roi-badge">${formatPercent(netRoi)}</span>
+            ${grossCell}
+          </div>
+          <strong class="profit-cell ${profitClass}">${calcNet ? formatProfit(profitValue) : '-'}</strong>
+        </div>
+        <div class="arb-mobile-card-body">
+          <p class="arb-mobile-event">${escapeHtml(opp.event || '')}</p>
+          <p class="arb-mobile-meta">${safeSport} · ${safeMarketLabel}</p>
+          <p class="arb-mobile-meta">${safeTime}</p>
+        </div>
+        <div class="arb-mobile-outcomes">${outcomeCards}</div>
+        <div class="arb-mobile-card-foot">
+          <div class="arb-mobile-exchange">${formatExchangeCell(opp)}</div>
+          <span class="arb-mobile-hint">${t('arb_mobile_hint')}</span>
+        </div>`;
+      bindArbLegOpenLinks(mobileCard);
+      mobileCard.onclick = activateOpportunity;
+      mobileCard.onkeydown = (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        activateOpportunity();
+      };
+      return mobileCard;
+    }
+
     function renderArbitrage() {
       const modePayload = getArbitrageModeData();
       const arbData = modePayload?.arbitrage;
@@ -7182,6 +7362,7 @@
           netRoi,
           profitValue,
           timeValue,
+          stakeValue,
         };
       });
       renderArbQuickBandButtons(prepared);
@@ -7231,9 +7412,7 @@
         minRoi,
         selectedVisible,
       });
-      if (arbDesktopList) arbDesktopList.innerHTML = '';
-      if (arbMobileList) arbMobileList.innerHTML = '';
-      tableCount.textContent = t('results_count', { count: filtered.length });
+      if (tableCount) tableCount.textContent = t('results_count', { count: filtered.length });
       if (!filtered.length) {
         if (!hasArbPayload) {
           renderArbitrageEmptyState('pre_scan');
@@ -7243,138 +7422,27 @@
           renderArbitrageEmptyState('filtered', { minRoi });
         }
         emptyState.classList.remove('hidden');
-        if (arbMobileList) arbMobileList.classList.add('hidden');
+        if (arbDesktopList) syncArbOpportunityNodes(arbDesktopList, [], () => null);
+        if (arbMobileList) {
+          syncArbOpportunityNodes(arbMobileList, [], () => null);
+          arbMobileList.classList.add('hidden');
+        }
       } else {
         emptyState.classList.add('hidden');
         if (arbMobileList) arbMobileList.classList.remove('hidden');
-        let runningProfit = 0;
-        filtered.forEach((entry) => {
-          const opp = entry.opp;
-          const calcNet = entry.calcNet;
-          const netRoi = entry.netRoi;
-          const oppKey = buildArbOpportunityKey(opp);
-          const rowBandClass = roiBandClass(netRoi);
-          const commence = formatDateTime(opp.commence_time);
-          const kickoffParts = formatCompactDateParts(opp.commence_time);
-          const kickoffLabel = [kickoffParts.date, kickoffParts.time].filter(Boolean).join(' ') || t('tbd');
-          const kickoffCountdown = formatKickoffCountdown(opp.commence_time);
-          const calcGross = opp.has_exchange ? calculateStakes(opp, stakeValue, false) : null;
-          const grossRoi = opp.has_exchange ? calcGross?.roi_percent ?? opp.gross_roi_percent : null;
-          const netNegative = typeof netRoi === 'number' && netRoi < 0;
-          const breakdown = Array.isArray(calcNet?.breakdown) ? calcNet.breakdown : [];
-          const legs = buildArbDisplayLegs(opp, breakdown);
-          const profitValue = entry.profitValue ?? 0;
-          runningProfit += profitValue || 0;
-          const profitClass = profitValue > 0 ? 'gain' : profitValue < 0 ? 'loss' : '';
-          const grossCell = opp.has_exchange ? formatRoiBadge(grossRoi) : '-';
-          const sportLabel = translateSportLabel(opp.sport_display || opp.sport || '');
-          const marketLabel = formatMarket(opp);
-          const hasOpenTargets = collectBookTargets(opp).length > 0;
-          const isSelected = Boolean(selectedArbKey && selectedArbKey === oppKey);
-          const activateOpportunity = () => {
-            const wasSame = selectedArbKey === oppKey;
-            selectedArbKey = oppKey;
-            selectedArbOpp = opp;
-            if (!wasSame || !arbCalculatorState || arbCalculatorState.key !== oppKey) {
-              initializeArbCalculatorFromOpportunity(opp, oppKey);
-            } else {
-              renderArbCalculator();
-            }
-            renderArbitrage();
-          };
-          if (arbDesktopList) {
-            const desktopCard = document.createElement('article');
-            desktopCard.dataset.arbKey = oppKey;
-            desktopCard.tabIndex = 0;
-            desktopCard.className = `arb-opportunity-card ${rowBandClass}`;
-            if (netNegative) desktopCard.classList.add('roi-negative');
-            if (isSelected) desktopCard.classList.add('arb-opportunity-card-selected');
-            const legRows = legs
-              .map((leg, legIndex) => formatArbDesktopLegRow(leg, {
-                legIndex,
-                opp,
-                sportLabel,
-                marketLabel,
-              }))
-              .join('');
-            desktopCard.innerHTML = `
-              <div class="arb-opportunity-strip">
-                <div class="arb-opportunity-strip-score">
-                  <span class="arb-opportunity-roi">${escapeHtml(formatPercent(netRoi))}</span>
-                  ${netNegative ? `<span class="roi-warning" title="${t('net_roi_negative')}">&#9888;</span>` : ''}
-                </div>
-                <div class="arb-opportunity-strip-sport">${escapeHtml(sportLabel || t('unknown'))}</div>
-                <div class="arb-opportunity-strip-right">
-                  <div class="arb-opportunity-strip-badges">
-                    <span class="arb-opportunity-stat-chip arb-opportunity-kickoff-chip" title="${escapeHtml(commence)}">${escapeHtml(kickoffLabel)}</span>
-                    <span class="arb-opportunity-countdown" title="${escapeHtml(commence)}">${arbIcon('clock')}<span>${escapeHtml(kickoffCountdown)}</span></span>
-                    ${grossRoi !== null && grossRoi !== undefined ? `<span class="arb-opportunity-stat-chip">${escapeHtml(t('gross'))} ${escapeHtml(formatPercent(grossRoi))}</span>` : ''}
-                    <span class="arb-opportunity-stat-chip arb-opportunity-profit-chip ${profitClass}">${escapeHtml(calcNet ? formatProfit(profitValue) : '-')}</span>
-                  </div>
-                  <div class="arb-opportunity-strip-actions">
-                    <button type="button" class="arb-strip-icon-btn arb-open-all-btn" title="${escapeHtml(t('open_books'))}" aria-label="${escapeHtml(t('open_books'))}" ${hasOpenTargets ? '' : 'disabled'}>${arbIcon('external')}</button>
-                  </div>
-                </div>
-              </div>
-              <div class="arb-opportunity-body">
-                ${legRows}
-              </div>`;
-            bindArbDesktopCardActions(desktopCard, opp);
-            desktopCard.addEventListener('click', activateOpportunity);
-            desktopCard.addEventListener('keydown', (event) => {
-              if (event.key !== 'Enter' && event.key !== ' ') return;
-              event.preventDefault();
-              activateOpportunity();
-            });
-            arbDesktopList.appendChild(desktopCard);
-          }
-          if (arbMobileList) {
-            const mobileCard = document.createElement('article');
-            mobileCard.className = `arb-mobile-card ${rowBandClass}`;
-            if (netNegative) mobileCard.classList.add('roi-negative');
-            if (opp.has_exchange) mobileCard.classList.add('has-exchange');
-            if (isSelected) {
-              mobileCard.classList.add('arb-mobile-card-selected');
-            }
-            const safeMarketLabel = escapeHtml(marketLabel);
-            const safeSport = escapeHtml(sportLabel);
-            const safeTime = escapeHtml(commence);
-            const outcomeCards = legs
-              .map((item, idx) => `<div class="arb-mobile-outcome">${formatOutcome(item, { legIndex: idx, opp })}</div>`)
-              .join('');
-            mobileCard.tabIndex = 0;
-            mobileCard.innerHTML = `
-              <div class="arb-mobile-card-head">
-                <div class="arb-mobile-primary">
-                  <span class="roi-badge">${formatPercent(netRoi)}</span>
-                  ${grossCell}
-                </div>
-                <strong class="profit-cell ${profitClass}">${calcNet ? formatProfit(profitValue) : '-'}</strong>
-              </div>
-              <div class="arb-mobile-card-body">
-                <p class="arb-mobile-event">${escapeHtml(opp.event || '')}</p>
-                <p class="arb-mobile-meta">${safeSport} · ${safeMarketLabel}</p>
-                <p class="arb-mobile-meta">${safeTime}</p>
-              </div>
-              <div class="arb-mobile-outcomes">${outcomeCards}</div>
-              <div class="arb-mobile-card-foot">
-                <div class="arb-mobile-exchange">${formatExchangeCell(opp)}</div>
-                <span class="arb-mobile-hint">${t('arb_mobile_hint')}</span>
-              </div>`;
-            bindArbLegOpenLinks(mobileCard);
-            mobileCard.addEventListener('click', activateOpportunity);
-            mobileCard.addEventListener('keydown', (event) => {
-              if (event.key !== 'Enter' && event.key !== ' ') return;
-              event.preventDefault();
-              activateOpportunity();
-            });
-            arbMobileList.appendChild(mobileCard);
-          }
-        });
-        tableCount.textContent = t('results_profit', {
-          count: filtered.length,
-          profit: formatCurrency(runningProfit),
-        });
+        const runningProfit = filtered.reduce((sum, item) => sum + (item.profitValue || 0), 0);
+        if (arbDesktopList) {
+          syncArbOpportunityNodes(arbDesktopList, filtered, (entry, existingNode) => renderArbDesktopOpportunityCard(entry, existingNode));
+        }
+        if (arbMobileList) {
+          syncArbOpportunityNodes(arbMobileList, filtered, (entry, existingNode) => renderArbMobileOpportunityCard(entry, existingNode));
+        }
+        if (tableCount) {
+          tableCount.textContent = t('results_profit', {
+            count: filtered.length,
+            profit: formatCurrency(runningProfit),
+          });
+        }
       }
       if (selectedArbKey) {
         renderArbCalculator();

@@ -86,11 +86,18 @@ EXCHANGE_BOOKMAKERS = {
     "sportsbet_ex": {"name": "Sportsbet Exchange"},
     "matchbook": {"name": "Matchbook"},
     "betdex": {"name": "BetDEX"},
+    "sx_bet": {"name": "SX Bet"},
+    "polymarket": {"name": "Polymarket"},
 }
 
 EXCHANGE_KEYS = set(EXCHANGE_BOOKMAKERS.keys())
 
 DEFAULT_COMMISSION = _env_float("DEFAULT_COMMISSION", 0.05)  # 5%
+PROVIDER_COMMISSION_RATES = {
+    "betdex": 0.03,
+    "sx_bet": 0.02,
+    "polymarket": 0.02,
+}
 DEFAULT_MIN_ROI = _env_float("DEFAULT_MIN_ROI", 0.0)
 DEFAULT_EXCHANGE_ONLY = _env_bool("DEFAULT_EXCHANGE_ONLY", False)
 DEFAULT_ARBITRAGE_SORT = _normalize_choice(
