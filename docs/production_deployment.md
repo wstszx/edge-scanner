@@ -110,6 +110,14 @@ Why:
 - keeps the app port private
 - allows multiple web workers without multiplying background auto-scan threads
 
+Security:
+
+- set `APP_ADMIN_TOKEN` for any deployment reachable outside your machine
+- protected endpoints accept the token as `X-Admin-Token` or `Authorization: Bearer <token>`
+- protected endpoints include `/scan`, `/scan/jobs/*`, `/server-auto-scan-config`, `/history*`, `/provider-snapshots/*`, `/provider-runtime/*`, and `/cross-provider-report`
+- set `SCAN_RATE_LIMIT_PER_MINUTE` to cap repeated `/scan` starts from a single client IP
+- use `/healthz` for load balancer or deploy checks; it does not start provider background services
+
 ## Background Scanner
 
 Example:

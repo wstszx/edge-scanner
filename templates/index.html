@@ -360,6 +360,21 @@
                     </div>
                   </section>
                 </div>
+                <section class="advanced-panel">
+                  <div class="panel-head">
+                    <div class="panel-title">
+                      <span class="field-label" data-i18n="admin_access_label">Admin Access</span>
+                      <p class="helper" data-i18n="admin_access_helper">Only needed when the server has APP_ADMIN_TOKEN set.</p>
+                    </div>
+                  </div>
+                  <div class="panel-body two-col">
+                    <div class="field">
+                      <label class="field-label" data-i18n="admin_token_label">Admin Token</label>
+                      <input type="password" id="admin-token-input" autocomplete="off" />
+                      <p class="helper" data-i18n="admin_token_helper">Stored in this browser and sent as X-Admin-Token.</p>
+                    </div>
+                  </div>
+                </section>
                 <div class="advanced-actions">
                   <button type="button" id="close-advanced" class="secondary-btn" aria-label="Close"
                     data-i18n="close">Close</button>
@@ -1386,6 +1401,7 @@
     const themeToggle = document.getElementById('theme-toggle');
     const toggleKeyBtn = document.getElementById('toggle-key');
     const apiKeyField = document.getElementById('api-key-field');
+    const adminTokenInput = document.getElementById('admin-token-input');
     let currencyFormatter;
     const partialWarning = document.getElementById('partial-warning');
     const commissionInput = document.getElementById('commission-input');
@@ -1627,6 +1643,10 @@
         advanced_settings: 'Advanced settings',
         advanced_hint: 'Less frequently adjusted options live here.',
         advanced_summary: 'Sports {sports} | Books {books}',
+        admin_access_label: 'Admin Access',
+        admin_access_helper: 'Only needed when the server has APP_ADMIN_TOKEN set.',
+        admin_token_label: 'Admin Token',
+        admin_token_helper: 'Stored in this browser and sent as X-Admin-Token.',
         summary_all: 'All',
         notify_label: 'Notifications',
         notify_sound: 'Sound alert',
@@ -2285,6 +2305,10 @@
         advanced_settings: '高级设置',
         advanced_hint: '不常调整的选项放在这里。',
         advanced_summary: '项目 {sports} | 平台 {books}',
+        admin_access_label: '管理访问',
+        admin_access_helper: '仅在服务器设置了 APP_ADMIN_TOKEN 时需要。',
+        admin_token_label: '管理令牌',
+        admin_token_helper: '保存在当前浏览器，并作为 X-Admin-Token 发送。',
         summary_all: '全部',
         notify_label: '通知',
         notify_sound: '铃声提示',
@@ -3242,6 +3266,20 @@
       toggleKeyBtn.setAttribute('aria-label', t(key));
       const shortKey = apiKeyInput.type === 'password' ? 'show_short' : 'hide_short';
       toggleKeyBtn.textContent = t(shortKey);
+    }
+
+    function adminToken() {
+      return (adminTokenInput?.value || localStorage.getItem('edge-admin-token') || '').trim();
+    }
+
+    function authFetch(url, options = {}) {
+      const token = adminToken();
+      if (!token) return fetch(url, options);
+      const nextOptions = { ...(options || {}) };
+      const headers = new Headers(nextOptions.headers || {});
+      headers.set('X-Admin-Token', token);
+      nextOptions.headers = headers;
+      return fetch(url, nextOptions);
     }
 
     function collectCheckedLabels(name) {
@@ -4519,7 +4557,7 @@
     async function syncServerAutoScanConfig() {
       if (!form) return;
       try {
-        await fetch('/server-auto-scan-config', {
+        await authFetch('/server-auto-scan-config', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(buildServerAutoScanConfigPayload()),
@@ -4672,6 +4710,7 @@
         bankroll: bankrollInput ? bankrollInput.value : '',
         kellyFraction: kellySelect ? kellySelect.value : '',
         plusEvSort: plusEvSortSelect ? plusEvSortSelect.value : '',
+        adminToken: adminTokenInput ? adminTokenInput.value.trim() : '',
         bookmakerUrls: collectBookmakerLinks(),
         autoScanEnabled: autoScanToggle ? autoScanToggle.checked : false,
         autoScanMinutes: autoScanIntervalInput ? autoScanIntervalInput.value : '',
@@ -4715,6 +4754,7 @@
       if (bankrollInput && settings.bankroll !== undefined) bankrollInput.value = settings.bankroll;
       if (kellySelect && settings.kellyFraction !== undefined) kellySelect.value = settings.kellyFraction;
       if (plusEvSortSelect && settings.plusEvSort) plusEvSortSelect.value = settings.plusEvSort;
+      if (adminTokenInput && settings.adminToken !== undefined) adminTokenInput.value = settings.adminToken || '';
       if (autoScanToggle && settings.autoScanEnabled !== undefined) {
         autoScanToggle.checked = Boolean(settings.autoScanEnabled);
       }
@@ -4750,12 +4790,18 @@
 
     function loadSettings() {
       const raw = localStorage.getItem('edge-scan-settings');
-      if (!raw) return;
+      if (!raw) {
+        if (adminTokenInput) adminTokenInput.value = localStorage.getItem('edge-admin-token') || '';
+        return;
+      }
       try {
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object' && 'activeTab' in parsed) {
           delete parsed.activeTab;
           localStorage.setItem('edge-scan-settings', JSON.stringify(parsed));
+        }
+        if (adminTokenInput && parsed.adminToken === undefined) {
+          parsed.adminToken = localStorage.getItem('edge-admin-token') || '';
         }
         applySettings(parsed);
       } catch (err) {
@@ -4766,6 +4812,13 @@
     function persistSettings() {
       const payload = collectSettings();
       localStorage.setItem('edge-scan-settings', JSON.stringify(payload));
+      if (adminTokenInput) {
+        if (payload.adminToken) {
+          localStorage.setItem('edge-admin-token', payload.adminToken);
+        } else {
+          localStorage.removeItem('edge-admin-token');
+        }
+      }
       queueServerAutoScanSync();
     }
 
@@ -4987,7 +5040,7 @@
     async function runScan(payload) {
       setScanning(true, payload);
       try {
-        const response = await fetch('/scan', {
+        const response = await authFetch('/scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -5106,7 +5159,7 @@
 
       const executePoll = async () => {
         try {
-          const response = await fetch(`/scan/jobs/${encodeURIComponent(activeScanJobId)}`);
+          const response = await authFetch(`/scan/jobs/${encodeURIComponent(activeScanJobId)}`);
           const payload = await response.json();
           if (!response.ok || !payload?.success) {
             throw new Error(payload?.error || t('scan_failed'));
@@ -5159,7 +5212,7 @@
 
     async function recoverCurrentScanJob() {
       try {
-        const response = await fetch('/scan/jobs/current');
+        const response = await authFetch('/scan/jobs/current');
         const payload = await response.json();
         if (!response.ok || !payload?.success) return;
         const job = payload.job || {};
@@ -6078,7 +6131,7 @@
       }
 
       const promise = (async () => {
-        const response = await fetch(`/provider-snapshots/${encodeURIComponent(normalized)}`);
+        const response = await authFetch(`/provider-snapshots/${encodeURIComponent(normalized)}`);
         const payload = await response.json();
         if (!response.ok || !payload || payload.success !== true) {
           throw new Error(payload?.error || t('unknown_error'));
@@ -7141,7 +7194,7 @@
         providerMatchContent.classList.add('hidden');
       }
       try {
-        const response = await fetch('/cross-provider-report');
+        const response = await authFetch('/cross-provider-report');
         const payload = await response.json();
         if (!response.ok || !payload || payload.success !== true) {
           throw new Error(payload?.error || t('unknown_error'));
@@ -11118,7 +11171,7 @@
       }
 
       function fetchHistoryJson(url) {
-        return fetch(url)
+        return authFetch(url)
           .then((res) => res.json().then((payload) => ({ ok: res.ok, payload })))
           .then(({ ok, payload }) => {
             if (!ok || !payload?.success) {

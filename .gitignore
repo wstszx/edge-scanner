@@ -11,6 +11,8 @@ venv/
 .worktrees/
 .codex/
 tmp_app_*.log
+pytest_out*.txt
+pytest_output*.txt
 docs/superpowers/specs/2026-04-11-scan-job-partial-results-design.md
 scripts/repair_history_roi.py
 tests/test_history_roi_repair.py

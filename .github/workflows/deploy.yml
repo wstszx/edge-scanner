@@ -10,6 +10,21 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest -q
+
       - name: SSH into VPS and Deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -18,14 +33,16 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT }}
           script: |
+            set -euo pipefail
+
             # 1. 进入项目目录
             cd /root/edge-scanner
+            PREVIOUS_REV="$(git rev-parse HEAD)"
             
             # 2. 拉取最新代码（使用强制覆盖模式，避免因为在 VPS 上误碰了代码导致冲突）
             # 注：这不会删除你的 .env 配置文件，因为它在 .gitignore 中
             git fetch --all
             git reset --hard origin/main
-            git pull origin main
             
             # 3. 激活虚拟环境并更新依赖（如果有新依赖的话）
             source venv/bin/activate
@@ -33,3 +50,17 @@ jobs:
             
             # 4. 重启后端的 Web 和 Worker 两个服务
             systemctl restart edge-scanner edge-scanner-worker
+
+            # 5. 健康检查；失败时回滚到部署前版本并重启
+            for attempt in 1 2 3 4 5; do
+              if curl --fail --silent --show-error http://127.0.0.1:5000/healthz >/dev/null; then
+                exit 0
+              fi
+              sleep 2
+            done
+
+            echo "Health check failed; rolling back to ${PREVIOUS_REV}"
+            git reset --hard "$PREVIOUS_REV"
+            pip install -r requirements.txt
+            systemctl restart edge-scanner edge-scanner-worker
+            exit 1

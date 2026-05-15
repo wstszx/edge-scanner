@@ -78,6 +78,71 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(payload.get('status'), 'running')
         mocked_start.assert_called_once()
 
+    def test_healthz_returns_ok_without_starting_background_services(self) -> None:
+        with patch.object(app_module, "_start_background_provider_services") as mocked_start:
+            response = self.client.get("/healthz")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"success": True, "status": "ok"})
+        mocked_start.assert_not_called()
+
+    def test_scan_requires_admin_token_when_configured(self) -> None:
+        with (
+            patch.object(app_module, "APP_ADMIN_TOKEN", "secret-token"),
+            patch.object(app_module, "_start_scan_job") as mocked_start,
+        ):
+            response = self.client.post("/scan", json={"sports": ["basketball_nba"]})
+
+        self.assertEqual(response.status_code, 401)
+        payload = response.get_json() or {}
+        self.assertFalse(payload.get("success"))
+        self.assertEqual(payload.get("error_code"), 401)
+        mocked_start.assert_not_called()
+
+    def test_scan_accepts_admin_token_header_when_configured(self) -> None:
+        with (
+            patch.object(app_module, "APP_ADMIN_TOKEN", "secret-token"),
+            patch.object(app_module, "_start_scan_job", return_value={"success": True, "job_id": "job-123", "status": "running"}) as mocked_start,
+        ):
+            response = self.client.post(
+                "/scan",
+                json={"sports": ["basketball_nba"]},
+                headers={"X-Admin-Token": "secret-token"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue((response.get_json() or {}).get("success"))
+        mocked_start.assert_called_once()
+
+    def test_scan_accepts_admin_bearer_token_when_configured(self) -> None:
+        with (
+            patch.object(app_module, "APP_ADMIN_TOKEN", "secret-token"),
+            patch.object(app_module, "_start_scan_job", return_value={"success": True, "job_id": "job-123", "status": "running"}) as mocked_start,
+        ):
+            response = self.client.post(
+                "/scan",
+                json={"sports": ["basketball_nba"]},
+                headers={"Authorization": "Bearer secret-token"},
+            )
+
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue((response.get_json() or {}).get("success"))
+        mocked_start.assert_called_once()
+
+    def test_scan_rate_limit_blocks_excess_requests_when_configured(self) -> None:
+        with (
+            patch.object(app_module, "SCAN_RATE_LIMIT_PER_MINUTE", 1),
+            patch.object(app_module, "_SCAN_RATE_LIMIT_BUCKETS", {}),
+            patch.object(app_module, "_start_scan_job", return_value={"success": True, "job_id": "job-123", "status": "running"}) as mocked_start,
+        ):
+            first = self.client.post("/scan", json={"sports": ["basketball_nba"]})
+            second = self.client.post("/scan", json={"sports": ["basketball_nba"]})
+
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 429)
+        self.assertEqual((second.get_json() or {}).get("error_code"), 429)
+        mocked_start.assert_called_once()
+
     def test_scan_returns_conflict_with_running_job_id(self) -> None:
         with patch.object(
             app_module,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import argparse
 import copy
+import hmac
 import json
 import logging
 import os
@@ -90,6 +91,8 @@ _SCAN_JOB_LOCK = threading.Lock()
 _SCAN_JOBS: dict[str, dict] = {}
 _CURRENT_SCAN_JOB_ID: Optional[str] = None
 _LATEST_SCAN_JOB_ID: Optional[str] = None
+_SCAN_RATE_LIMIT_LOCK = threading.Lock()
+_SCAN_RATE_LIMIT_BUCKETS: dict[str, list[float]] = {}
 try:
     SCAN_JOB_HISTORY_LIMIT = max(
         0,
@@ -97,9 +100,22 @@ try:
     )
 except (TypeError, ValueError):
     SCAN_JOB_HISTORY_LIMIT = 20
+APP_ADMIN_TOKEN = os.getenv("APP_ADMIN_TOKEN", "").strip()
+APP_ADMIN_TOKEN_HEADER = (
+    os.getenv("APP_ADMIN_TOKEN_HEADER", "X-Admin-Token").strip()
+    or "X-Admin-Token"
+)
+try:
+    SCAN_RATE_LIMIT_PER_MINUTE = max(
+        0,
+        int(float(os.getenv("SCAN_RATE_LIMIT_PER_MINUTE", "0").strip())),
+    )
+except (TypeError, ValueError):
+    SCAN_RATE_LIMIT_PER_MINUTE = 0
 
 CONTINUOUS_AUTO_SCAN_BACKOFF_SECONDS = 5.0
 CONTINUOUS_AUTO_SCAN_IDLE_WAIT_SECONDS = 0.1
+SCAN_RATE_LIMIT_WINDOW_SECONDS = 60.0
 
 ARB_CALC_SUPPORTED_CURRENCIES = (
     "USD",
@@ -145,6 +161,11 @@ def favicon():
         "favicon.ico",
         mimetype="image/vnd.microsoft.icon",
     )
+
+
+@app.route("/healthz", methods=["GET"])
+def healthz() -> tuple:
+    return jsonify({"success": True, "status": "ok"}), 200
 
 
 def _coerce_bool(value: object, default: bool = False) -> bool:
@@ -206,6 +227,67 @@ def _payload_api_keys(payload: dict) -> list[str]:
     if isinstance(single, str):
         return _split_api_keys(single)
     return []
+
+
+def _admin_auth_enabled() -> bool:
+    return bool(APP_ADMIN_TOKEN)
+
+
+def _request_admin_token() -> str:
+    header_value = request.headers.get(APP_ADMIN_TOKEN_HEADER, "")
+    if header_value:
+        return header_value.strip()
+    auth_value = request.headers.get("Authorization", "")
+    if auth_value.lower().startswith("bearer "):
+        return auth_value[7:].strip()
+    return ""
+
+
+def _require_admin_auth():
+    if not _admin_auth_enabled():
+        return None
+    token = _request_admin_token()
+    if token and hmac.compare_digest(token, APP_ADMIN_TOKEN):
+        return None
+    return jsonify({"success": False, "error": "Unauthorized", "error_code": 401}), 401
+
+
+def _rate_limit_key() -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        first = forwarded.split(",", 1)[0].strip()
+        if first:
+            return first
+    return request.remote_addr or "unknown"
+
+
+def _check_scan_rate_limit():
+    if SCAN_RATE_LIMIT_PER_MINUTE <= 0:
+        return None
+    now = time.time()
+    cutoff = now - SCAN_RATE_LIMIT_WINDOW_SECONDS
+    key = _rate_limit_key()
+    with _SCAN_RATE_LIMIT_LOCK:
+        timestamps = [
+            value
+            for value in _SCAN_RATE_LIMIT_BUCKETS.get(key, [])
+            if value >= cutoff
+        ]
+        if len(timestamps) >= SCAN_RATE_LIMIT_PER_MINUTE:
+            _SCAN_RATE_LIMIT_BUCKETS[key] = timestamps
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "error": "Too many scan requests",
+                        "error_code": 429,
+                    }
+                ),
+                429,
+            )
+        timestamps.append(now)
+        _SCAN_RATE_LIMIT_BUCKETS[key] = timestamps
+    return None
 
 
 ENV_API_KEYS = _split_api_keys(
@@ -1626,6 +1708,12 @@ def index() -> str:
 
 @app.route("/scan", methods=["POST"])
 def scan() -> tuple:
+    auth_error = _require_admin_auth()
+    if auth_error is not None:
+        return auth_error
+    rate_limit_error = _check_scan_rate_limit()
+    if rate_limit_error is not None:
+        return rate_limit_error
     raw_body = request.get_data(cache=True, as_text=False)
     if raw_body:
         try:
@@ -1697,6 +1785,9 @@ def scan() -> tuple:
 
 @app.route("/scan/jobs/<job_id>", methods=["GET"])
 def scan_job(job_id: str) -> tuple:
+    auth_error = _require_admin_auth()
+    if auth_error is not None:
+        return auth_error
     snapshot = _get_scan_job_snapshot(job_id)
     if not isinstance(snapshot, dict):
         return jsonify({"success": False, "error": "Scan job not found", "error_code": 404}), 404
@@ -1705,6 +1796,9 @@ def scan_job(job_id: str) -> tuple:
 
 @app.route("/scan/jobs/current", methods=["GET"])
 def scan_job_current() -> tuple:
+    auth_error = _require_admin_auth()
+    if auth_error is not None:
+        return auth_error
     snapshot = _get_current_or_latest_scan_job_snapshot()
     if not isinstance(snapshot, dict):
         return jsonify({"success": False, "error": "Scan job not found", "error_code": 404}), 404
@@ -1713,6 +1807,9 @@ def scan_job_current() -> tuple:
 
 @app.route("/server-auto-scan-config", methods=["GET", "POST"])
 def server_auto_scan_config() -> tuple:
+    auth_error = _require_admin_auth()
+    if auth_error is not None:
+        return auth_error
     if request.method == "GET":
         config, _ = _get_server_auto_scan_config()
         return _jsonify_client_payload({"success": True, "config": config}), 200
@@ -1794,6 +1891,9 @@ def server_auto_scan_config() -> tuple:
 
 @app.route("/history", methods=["GET"])
 def history() -> tuple:
+    auth_error = _require_admin_auth()
+    if auth_error is not None:
+        return auth_error
     """Return recent scan history opportunities.
 
     Query params:
@@ -1814,6 +1914,9 @@ def history() -> tuple:
 
 @app.route("/history/scans", methods=["GET"])
 def history_scans() -> tuple:
+    auth_error = _require_admin_auth()
+    if auth_error is not None:
+        return auth_error
     """Return recent per-scan diagnostic summaries."""
     try:
         limit = min(1000, max(1, int(request.args.get("limit", "100"))))
@@ -1828,6 +1931,9 @@ def history_scans() -> tuple:
 
 @app.route("/history/stats", methods=["GET"])
 def history_stats() -> tuple:
+    auth_error = _require_admin_auth()
+    if auth_error is not None:
+        return auth_error
     """Return history storage statistics."""
     try:
         stats = get_history_manager().get_stats()
@@ -1838,6 +1944,9 @@ def history_stats() -> tuple:
 
 @app.route("/provider-snapshots/<provider_key>", methods=["GET"])
 def provider_snapshot(provider_key: str) -> tuple:
+    auth_error = _require_admin_auth()
+    if auth_error is not None:
+        return auth_error
     snapshot_path = _provider_snapshot_path(provider_key)
     if snapshot_path is None:
         return jsonify({"success": False, "error": "Invalid provider key"}), 400
@@ -1870,6 +1979,9 @@ def provider_snapshot(provider_key: str) -> tuple:
 
 @app.route("/provider-runtime/<provider_key>", methods=["GET"])
 def provider_runtime(provider_key: str) -> tuple:
+    auth_error = _require_admin_auth()
+    if auth_error is not None:
+        return auth_error
     _start_background_provider_services(wait_timeout=0.0)
     status = _provider_runtime_status(provider_key)
     if status is None:
@@ -1887,6 +1999,9 @@ def provider_runtime(provider_key: str) -> tuple:
 
 @app.route("/cross-provider-report", methods=["GET"])
 def cross_provider_report() -> tuple:
+    auth_error = _require_admin_auth()
+    if auth_error is not None:
+        return auth_error
     report_path = _cross_provider_report_path()
     if report_path is None:
         return jsonify({"success": False, "error": "Invalid report path"}), 400

@@ -103,6 +103,34 @@ class ServerAutoScanAppTests(unittest.TestCase):
         self.assertTrue(body.get("success"))
         self.assertEqual(body.get("config"), expected_config)
 
+    def test_server_auto_scan_config_requires_admin_token_when_configured(self) -> None:
+        with (
+            patch.object(app_module, "APP_ADMIN_TOKEN", "secret-token"),
+            patch.object(app_module, "_set_server_auto_scan_config") as mocked_set,
+        ):
+            response = self.client.post(
+                "/server-auto-scan-config",
+                json={"enabled": True},
+            )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual((response.get_json() or {}).get("error_code"), 401)
+        mocked_set.assert_not_called()
+
+    def test_server_auto_scan_config_accepts_admin_token_when_configured(self) -> None:
+        with (
+            patch.object(app_module, "APP_ADMIN_TOKEN", "secret-token"),
+            patch.object(app_module, "_persist_server_auto_scan_config"),
+        ):
+            response = self.client.post(
+                "/server-auto-scan-config",
+                json={"enabled": False},
+                headers={"X-Admin-Token": "secret-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue((response.get_json() or {}).get("success"))
+
     def test_server_auto_scan_config_accepts_zero_interval_for_continuous_mode(self) -> None:
         payload = {
             "enabled": True,
