@@ -96,7 +96,8 @@ DEFAULT_COMMISSION = _env_float("DEFAULT_COMMISSION", 0.05)  # 5%
 PROVIDER_COMMISSION_RATES = {
     "betdex": 0.03,
     "sx_bet": 0.02,
-    "polymarket": 0.02,
+    # Polymarket sports markets use a taker fee formula, not linear profit commission.
+    "polymarket": _env_float("POLYMARKET_TAKER_FEE_RATE", 0.03),
 }
 DEFAULT_MIN_ROI = _env_float("DEFAULT_MIN_ROI", 0.0)
 DEFAULT_EXCHANGE_ONLY = _env_bool("DEFAULT_EXCHANGE_ONLY", False)

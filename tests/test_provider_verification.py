@@ -237,6 +237,40 @@ class ProviderVerificationTests(unittest.TestCase):
         self.assertEqual(summary["arbitrage_count"], 1)
         self.assertIn("liquidity-limited", summary["top_arbitrage"][0]["note"])
 
+    def test_summarize_scan_surfaces_execution_quality_notes(self) -> None:
+        result = {
+            "success": True,
+            "partial": False,
+            "arbitrage": {
+                "opportunities_count": 1,
+                "opportunities": [
+                    {
+                        "event": "A vs B",
+                        "market": "h2h",
+                        "roi_percent": 4.2,
+                        "best_odds": [
+                            {"bookmaker": "Book A", "price": 2.2},
+                            {"bookmaker": "Book B", "price": 2.2},
+                        ],
+                        "stakes": {"limited_by_max_stake": False},
+                        "execution_quality": {
+                            "status": "low",
+                            "flags": ["missing_quote_time", "missing_liquidity"],
+                        },
+                    }
+                ],
+            },
+            "middles": {"opportunities_count": 0, "opportunities": []},
+            "plus_ev": {"opportunities_count": 0, "opportunities": []},
+        }
+
+        summary = pv.summarize_scan(result, top_n=1)
+
+        top = summary["top_arbitrage"][0]
+        self.assertEqual(top["execution_quality"]["status"], "low")
+        self.assertIn("missing quote timestamps", top["note"])
+        self.assertIn("missing liquidity", top["note"])
+
     def test_summarize_scan_exposes_positive_only_counts(self) -> None:
         result = {
             "success": True,

@@ -1996,6 +1996,17 @@
         quote_updated_label: 'Updated {time}',
       quote_time_unknown_label: 'Update time unknown',
       quote_time_unknown_title: 'This leg has no verified quote timestamp, so treat it as lower confidence.',
+        execution_quality_high: 'Execution: high',
+        execution_quality_medium: 'Execution: medium',
+        execution_quality_low: 'Execution: low',
+        execution_quality_unknown: 'Execution: unknown',
+        execution_quality_title: 'Execution confidence: {status}. Flags: {flags}',
+        execution_quality_no_flags: 'no execution warnings',
+        execution_flag_missing_quote_time: 'missing quote time',
+        execution_flag_missing_liquidity: 'missing liquidity',
+        execution_flag_limited_by_liquidity: 'liquidity-limited',
+        execution_flag_below_min_executable_stake: 'below min stake',
+        execution_flag_quote_time_skew: 'quote time skew',
         arb_empty_pre_scan_title: 'Run a scan to populate the board.',
         arb_empty_pre_scan_copy: 'The arbitrage workspace will fill in once scan results arrive.',
         arb_empty_scan_title: 'This scan returned no arbitrage.',
@@ -3602,6 +3613,32 @@
         updatedTitle: hasUnknownTime ? t('quote_time_unknown_title') : '',
         makerLabel: formatMakerProbabilityLabel(rawPercentageOdds),
         makerTitle: formatRawPercentageOddsTitle(rawPercentageOdds),
+      };
+    }
+
+    function formatExecutionFlag(flag) {
+      const token = `${flag || ''}`.trim();
+      if (!token) return '';
+      const key = `execution_flag_${token}`;
+      const translated = t(key);
+      return translated === key ? token.replace(/_/g, ' ') : translated;
+    }
+
+    function buildExecutionQualityMeta(opp) {
+      const quality = opp?.execution_quality || opp?.executionQuality || {};
+      const rawStatus = `${quality.status || 'unknown'}`.toLowerCase();
+      const status = ['high', 'medium', 'low'].includes(rawStatus) ? rawStatus : 'unknown';
+      const flags = Array.isArray(quality.flags) ? quality.flags.map(formatExecutionFlag).filter(Boolean) : [];
+      const labelKey = `execution_quality_${status}`;
+      const label = t(labelKey);
+      return {
+        status,
+        label: label === labelKey ? t('execution_quality_unknown') : label,
+        title: t('execution_quality_title', {
+          status,
+          flags: flags.length ? flags.join(', ') : t('execution_quality_no_flags'),
+        }),
+        flags,
       };
     }
 
@@ -7289,6 +7326,7 @@
       const hasOpenTargets = collectBookTargets(opp).length > 0;
       const isSelected = Boolean(selectedArbKey && selectedArbKey === oppKey);
       const activateOpportunity = buildArbOpportunityActivationHandler(opp, oppKey);
+      const executionMeta = buildExecutionQualityMeta(opp);
       const desktopCard = existingNode || document.createElement('article');
       desktopCard.dataset.arbKey = oppKey;
       desktopCard.tabIndex = 0;
@@ -7315,6 +7353,7 @@
               <span class="arb-opportunity-stat-chip arb-opportunity-kickoff-chip" title="${escapeHtml(commence)}">${escapeHtml(kickoffLabel)}</span>
               <span class="arb-opportunity-countdown" title="${escapeHtml(commence)}">${arbIcon('clock')}<span>${escapeHtml(kickoffCountdown)}</span></span>
               ${grossRoi !== null && grossRoi !== undefined ? `<span class="arb-opportunity-stat-chip">${escapeHtml(t('gross'))} ${escapeHtml(formatPercent(grossRoi))}</span>` : ''}
+              <span class="arb-opportunity-stat-chip execution-quality-chip execution-quality-${escapeHtml(executionMeta.status)}" title="${escapeHtml(executionMeta.title)}">${escapeHtml(executionMeta.label)}</span>
               <span class="arb-opportunity-stat-chip arb-opportunity-profit-chip ${profitClass}">${escapeHtml(calcNet ? formatProfit(profitValue) : '-')}</span>
             </div>
             <div class="arb-opportunity-strip-actions">
@@ -7354,6 +7393,7 @@
       const marketLabel = formatMarket(opp);
       const isSelected = Boolean(selectedArbKey && selectedArbKey === oppKey);
       const activateOpportunity = buildArbOpportunityActivationHandler(opp, oppKey);
+      const executionMeta = buildExecutionQualityMeta(opp);
       const mobileCard = existingNode || document.createElement('article');
       mobileCard.dataset.arbKey = oppKey;
       mobileCard.tabIndex = 0;
@@ -7372,6 +7412,7 @@
           <div class="arb-mobile-primary">
             <span class="roi-badge">${formatPercent(netRoi)}</span>
             ${grossCell}
+            <span class="arb-calc-leg-chip execution-quality-chip execution-quality-${escapeHtml(executionMeta.status)}" title="${escapeHtml(executionMeta.title)}">${escapeHtml(executionMeta.label)}</span>
           </div>
           <strong class="profit-cell ${profitClass}">${calcNet ? formatProfit(profitValue) : '-'}</strong>
         </div>

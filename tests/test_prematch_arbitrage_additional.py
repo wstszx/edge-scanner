@@ -184,6 +184,162 @@ class PrematchArbitrageAdditionalTests(unittest.TestCase):
         self.assertAlmostEqual(best["roi_percent"], 25.0, places=2)
         self.assertAlmostEqual(best["stakes"]["guaranteed_profit"], 25.0, places=2)
 
+    def test_collect_market_entries_marks_high_execution_quality_when_quotes_and_liquidity_are_known(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "book_home",
+                    "title": "Book Home",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.2, "max_stake": 100.0, "last_updated": 1000},
+                                {"name": "Away Team", "price": 1.7, "max_stake": 100.0, "last_updated": 1000},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_away",
+                    "title": "Book Away",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 1.7, "max_stake": 100.0, "last_updated": 1010},
+                                {"name": "Away Team", "price": 2.2, "max_stake": 100.0, "last_updated": 1010},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        with patch("scanner.time.time", return_value=1020.0):
+            entries = scanner._collect_market_entries(
+                game,
+                market_key="h2h",
+                stake_total=100.0,
+                commission_rate=0.0,
+                scan_mode="prematch",
+            )
+
+        quality = entries[0].get("execution_quality") or {}
+        self.assertEqual(quality.get("status"), "high")
+        self.assertEqual(quality.get("flags"), [])
+        self.assertEqual(quality.get("missing_quote_time_count"), 0)
+        self.assertEqual(quality.get("missing_liquidity_count"), 0)
+        self.assertEqual(quality.get("quote_time_skew_seconds"), 10.0)
+
+    def test_collect_market_entries_applies_polymarket_sports_taker_fee_when_generic_commission_is_zero(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "book_a",
+                    "title": "Book A",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.1},
+                                {"name": "Away Team", "price": 1.8},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "polymarket",
+                    "title": "Polymarket",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 1.8},
+                                {"name": "Away Team", "price": 2.0},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.0,
+        )
+
+        self.assertTrue(entries)
+        polymarket_leg = next(
+            leg
+            for leg in entries[0].get("best_odds") or []
+            if leg.get("bookmaker_key") == "polymarket"
+        )
+        self.assertEqual(polymarket_leg.get("price"), 2.0)
+        self.assertAlmostEqual(polymarket_leg.get("effective_price"), 1.9925, places=6)
+
+    def test_collect_market_entries_marks_low_execution_quality_for_missing_timestamps_and_liquidity_limit(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "book_home",
+                    "title": "Book Home",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.2, "max_stake": 10.0},
+                                {"name": "Away Team", "price": 1.7, "max_stake": 10.0},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_away",
+                    "title": "Book Away",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 1.7},
+                                {"name": "Away Team", "price": 2.2},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.0,
+            scan_mode="prematch",
+        )
+
+        quality = entries[0].get("execution_quality") or {}
+        self.assertEqual(quality.get("status"), "low")
+        self.assertIn("missing_quote_time", quality.get("flags") or [])
+        self.assertIn("missing_liquidity", quality.get("flags") or [])
+        self.assertIn("limited_by_liquidity", quality.get("flags") or [])
+        self.assertEqual(quality.get("missing_quote_time_count"), 2)
+        self.assertEqual(quality.get("missing_liquidity_count"), 1)
+
     def test_collect_market_entries_rejects_single_bookmaker_only_combo(self) -> None:
         game = {
             "sport_key": "basketball_nba",

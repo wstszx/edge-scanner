@@ -263,6 +263,24 @@ def _stake_limit_note(stakes: dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _execution_quality_note(quality: object) -> Optional[str]:
+    if not isinstance(quality, dict):
+        return None
+    flags = [str(flag) for flag in (quality.get("flags") or []) if str(flag or "").strip()]
+    if not flags:
+        return None
+    labels = {
+        "missing_quote_time": "missing quote timestamps",
+        "missing_liquidity": "missing liquidity",
+        "limited_by_liquidity": "liquidity-limited",
+        "below_min_executable_stake": "below min executable stake",
+        "quote_time_skew": "quote time skew",
+    }
+    status = str(quality.get("status") or "unknown")
+    details = ", ".join(labels.get(flag, flag.replace("_", " ")) for flag in flags)
+    return f"execution {status}: {details}"
+
+
 def _min_positive_max_stake(books: Sequence[dict[str, Any]]) -> Optional[float]:
     stakes = []
     for row in books:
@@ -291,13 +309,21 @@ def _arb_highlights(items: Sequence[dict[str, Any]], limit: int) -> list[dict[st
                     "max_stake": row.get("max_stake"),
                 }
             )
-        note = _stake_limit_note(item.get("stakes") or {})
+        note = "; ".join(
+            part
+            for part in (
+                _stake_limit_note(item.get("stakes") or {}),
+                _execution_quality_note(item.get("execution_quality")),
+            )
+            if part
+        ) or None
         highlights.append(
             {
                 "event": item.get("event"),
                 "market": item.get("market"),
                 "roi_percent": item.get("roi_percent"),
                 "books": books,
+                "execution_quality": item.get("execution_quality") or {},
                 "note": note,
             }
         )

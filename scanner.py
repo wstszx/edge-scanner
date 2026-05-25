@@ -53,6 +53,7 @@ from config import (
     MIN_MIDDLE_GAP,
     NFL_KEY_NUMBER_PROBABILITY,
     PROBABILITY_PER_INTEGER,
+    PROVIDER_COMMISSION_RATES,
     REGION_CONFIG,
     ROI_BANDS,
     SHARP_BOOKS,
@@ -96,6 +97,14 @@ DEFAULT_LIVE_PROVIDER_KEYS = (
 LIVE_SUPPORTED_PROVIDER_KEYS = DEFAULT_LIVE_PROVIDER_KEYS
 MIDDLE_MARKETS = {"spreads", "totals"}
 PREMATCH_QUOTE_MAX_AGE_SECONDS_RAW = os.getenv("PREMATCH_QUOTE_MAX_AGE_SECONDS", "7200").strip()
+ARBITRAGE_QUOTE_TIME_SKEW_WARN_SECONDS_RAW = os.getenv(
+    "ARBITRAGE_QUOTE_TIME_SKEW_WARN_SECONDS",
+    "300",
+).strip()
+ARBITRAGE_MIN_EXECUTABLE_STAKE_RAW = os.getenv(
+    "ARBITRAGE_MIN_EXECUTABLE_STAKE",
+    "1",
+).strip()
 ODDS_API_ALL_MARKETS_RAW = os.getenv("ODDS_API_ALL_MARKETS", "").strip()
 ODDS_API_MARKET_BATCH_SIZE_RAW = os.getenv("ODDS_API_MARKET_BATCH_SIZE", "8").strip()
 ODDS_API_INVALID_MARKET_STATUS_CODES = {400, 422}
@@ -2055,6 +2064,20 @@ def _safe_float(value) -> Optional[float]:
         return None
 
 
+def _arbitrage_quote_time_skew_warn_seconds() -> float:
+    try:
+        return max(0.0, float(ARBITRAGE_QUOTE_TIME_SKEW_WARN_SECONDS_RAW))
+    except (TypeError, ValueError):
+        return 300.0
+
+
+def _arbitrage_min_executable_stake() -> float:
+    try:
+        return max(0.0, float(ARBITRAGE_MIN_EXECUTABLE_STAKE_RAW))
+    except (TypeError, ValueError):
+        return 1.0
+
+
 def _normalize_text(value: Optional[str]) -> str:
     if not value:
         return ""
@@ -2342,6 +2365,84 @@ def _is_live_quote_fresh(
     return age <= max_age
 
 
+def _quote_timestamp_seconds_from_iso(value: object) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    return _parse_timestamp_seconds(value)
+
+
+def _arbitrage_execution_quality(
+    best_odds: Sequence[dict],
+    stake_info: dict,
+) -> dict:
+    leg_count = len([row for row in best_odds if isinstance(row, dict)])
+    missing_quote_time = 0
+    missing_liquidity = 0
+    timestamps: List[float] = []
+    min_leg_liquidity: Optional[float] = None
+    for row in best_odds:
+        if not isinstance(row, dict):
+            continue
+        timestamp = _quote_timestamp_seconds_from_iso(
+            row.get("quote_updated_at") or row.get("last_updated")
+        )
+        if timestamp is None:
+            missing_quote_time += 1
+        else:
+            timestamps.append(timestamp)
+        max_stake = _safe_float(row.get("max_stake"))
+        if max_stake is None:
+            missing_liquidity += 1
+            continue
+        max_stake = max(0.0, max_stake)
+        min_leg_liquidity = max_stake if min_leg_liquidity is None else min(min_leg_liquidity, max_stake)
+
+    executable_total = _safe_float(stake_info.get("total")) or 0.0
+    requested_total = _safe_float(stake_info.get("requested_total")) or 0.0
+    quote_time_skew_seconds = None
+    if len(timestamps) >= 2:
+        quote_time_skew_seconds = round(max(timestamps) - min(timestamps), 3)
+
+    flags: List[str] = []
+    if missing_quote_time:
+        flags.append("missing_quote_time")
+    if missing_liquidity:
+        flags.append("missing_liquidity")
+    if bool(stake_info.get("limited_by_max_stake")):
+        flags.append("limited_by_liquidity")
+    min_executable_stake = _arbitrage_min_executable_stake()
+    if min_executable_stake > 0 and executable_total > 0 and executable_total < min_executable_stake:
+        flags.append("below_min_executable_stake")
+    skew_limit = _arbitrage_quote_time_skew_warn_seconds()
+    if (
+        quote_time_skew_seconds is not None
+        and skew_limit > 0
+        and quote_time_skew_seconds > skew_limit
+    ):
+        flags.append("quote_time_skew")
+
+    if not flags:
+        status = "high"
+    elif set(flags).issubset({"missing_liquidity"}):
+        status = "medium"
+    else:
+        status = "low"
+
+    return {
+        "status": status,
+        "flags": flags,
+        "leg_count": leg_count,
+        "missing_quote_time_count": missing_quote_time,
+        "missing_liquidity_count": missing_liquidity,
+        "quote_time_skew_seconds": quote_time_skew_seconds,
+        "quote_time_skew_warn_seconds": skew_limit,
+        "min_leg_liquidity": round(min_leg_liquidity, 2) if min_leg_liquidity is not None else None,
+        "requested_total": round(requested_total, 2),
+        "executable_total": round(executable_total, 2),
+        "min_executable_stake": min_executable_stake,
+    }
+
+
 def _bookmaker_live_state(game: Optional[dict], bookmaker: Optional[dict]) -> dict:
     if isinstance(bookmaker, dict):
         payload = bookmaker.get("live_state")
@@ -2604,13 +2705,24 @@ def _apply_commission(price: float, bookmaker_key_or_rate, default_commission_ra
     if isinstance(default_commission_rate, bool):
         commission_rate = _safe_float(bookmaker_key_or_rate) or 0.0
         is_exchange = bool(default_commission_rate)
+        bookmaker_key = ""
     else:
         bookmaker_key = _normalize_line_component(bookmaker_key_or_rate)
         is_exchange = bookmaker_key in EXCHANGE_KEYS
-        commission_rate = _safe_float(default_commission_rate) or 0.0
+        configured_rate = _safe_float(default_commission_rate)
+        provider_rate = _safe_float(PROVIDER_COMMISSION_RATES.get(bookmaker_key))
+        if bookmaker_key == "polymarket":
+            commission_rate = max(provider_rate or 0.0, configured_rate or 0.0)
+        else:
+            commission_rate = configured_rate or 0.0
     edge = price - 1.0
     if not is_exchange or edge <= 0:
         return price
+    if bookmaker_key == "polymarket":
+        probability = 1.0 / price
+        fee_per_share = commission_rate * probability * (1.0 - probability)
+        net_profit_per_share = edge - fee_per_share
+        return 1.0 + max(0.0, net_profit_per_share)
     return 1.0 + edge * (1.0 - commission_rate)
 
 
@@ -3378,6 +3490,7 @@ def _collect_market_entries(
             if o.get("is_exchange")
         }
         exchange_books = sorted(name for name in exchange_names if name)
+        execution_quality = _arbitrage_execution_quality(outcome_payload, net_stake_info)
         entry = {
             "sport": game.get("sport_key"),
             "sport_display": game.get("sport_display")
@@ -3400,6 +3513,7 @@ def _collect_market_entries(
             "gross_stakes": gross_stake_info,
             "has_exchange": has_exchange,
             "exchange_books": exchange_books,
+            "execution_quality": execution_quality,
         }
         entries.append(entry)
     return entries

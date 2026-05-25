@@ -82,6 +82,8 @@ python provider_verification.py --sport basketball_nba
 
 For code-declared provider sport/market coverage, see the generated support matrix at `docs/provider_support_matrix.md`. It reflects `providers.PROVIDER_CAPABILITIES` and declared support in code, not guaranteed real-time provider availability.
 
+Provider candidate research for Mainland-China friendliness lives in `docs/provider_candidate_research_zh.md`. Use it before adding new executable platforms; it currently recommends strengthening existing Azuro/bookmaker.xyz coverage before adding another sportsbook.
+
 Windows shortcuts:
 
 ```powershell
@@ -215,6 +217,7 @@ BETDEX_SOURCE=file
 BETDEX_SAMPLE_PATH=data/betdex_sample.json
 ```
 BetDEX is treated as an exchange in scanner settings, so exchange commission applies.
+Polymarket sports markets use provider-specific taker-fee modeling by default (`POLYMARKET_TAKER_FEE_RATE=0.03`). This is applied to net arbitrage/+EV calculations even when the generic UI exchange commission is set to `0`.
 You can also override per request with `includeProviders`:
 ```json
 {
@@ -242,6 +245,13 @@ ODDS_API_MARKET_BATCH_SIZE=8
 ```
 When enabled, scanner expands API requests beyond base `h2h/spreads/totals` and batches
 market calls automatically. Unsupported market keys are skipped per sport.
+
+Optional: tune arbitrage execution-quality warnings:
+```
+ARBITRAGE_QUOTE_TIME_SKEW_WARN_SECONDS=300
+ARBITRAGE_MIN_EXECUTABLE_STAKE=1
+```
+Each arbitrage result includes `execution_quality`. Treat `low` quality as a warning that the opportunity needs manual verification before actioning it.
 
 Optional custom market list override (comma/space separated or JSON array):
 ```

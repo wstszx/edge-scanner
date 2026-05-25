@@ -21,6 +21,14 @@ function loadQuoteMetaHelpers() {
     "  quote_updated_label: 'Updated {time}',",
     "  quote_time_unknown_label: 'Update time unknown',",
     "  quote_time_unknown_title: 'This leg has no verified quote timestamp, so treat it as lower confidence.',",
+    "  execution_quality_high: 'Execution: high',",
+    "  execution_quality_medium: 'Execution: medium',",
+    "  execution_quality_low: 'Execution: low',",
+    "  execution_quality_unknown: 'Execution: unknown',",
+    "  execution_quality_title: 'Execution confidence: {status}. Flags: {flags}',",
+    "  execution_quality_no_flags: 'no execution warnings',",
+    "  execution_flag_missing_quote_time: 'missing quote time',",
+    "  execution_flag_missing_liquidity: 'missing liquidity',",
     "};",
     "const t = (key, params = {}) => {",
     "  let text = translations[key] || key;",
@@ -31,7 +39,7 @@ function loadQuoteMetaHelpers() {
     "};",
     "const formatDateTime = (value) => value ? String(value) : '';",
     snippet,
-    "return { buildQuoteMeta };",
+    "return { buildQuoteMeta, buildExecutionQualityMeta };",
   ].join('\n');
   return new Function(source)();
 }
@@ -43,4 +51,19 @@ test('buildQuoteMeta marks quote time as unknown when timestamp is missing', () 
   assert.equal(meta.sourceLabel, 'Snapshot');
   assert.equal(meta.updatedLabel, 'Update time unknown');
   assert.equal(meta.updatedTitle, 'This leg has no verified quote timestamp, so treat it as lower confidence.');
+});
+
+test('buildExecutionQualityMeta labels low-confidence execution flags', () => {
+  const { buildExecutionQualityMeta } = loadQuoteMetaHelpers();
+  const meta = buildExecutionQualityMeta({
+    execution_quality: {
+      status: 'low',
+      flags: ['missing_quote_time', 'missing_liquidity', 'custom_warning'],
+    },
+  });
+
+  assert.equal(meta.status, 'low');
+  assert.equal(meta.label, 'Execution: low');
+  assert.deepEqual(meta.flags, ['missing quote time', 'missing liquidity', 'custom warning']);
+  assert.equal(meta.title, 'Execution confidence: low. Flags: missing quote time, missing liquidity, custom warning');
 });
