@@ -108,6 +108,23 @@ def _book_summary(item: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _leg_quality_flags(legs: Iterable[dict[str, Any]], stake: dict[str, Any] | None = None) -> list[str]:
+    flags: set[str] = set()
+    for leg in legs:
+        if not isinstance(leg, dict):
+            continue
+        if not leg.get("quote_updated_at"):
+            flags.add("missing_quote_time")
+        max_stake = _safe_float(leg.get("max_stake"))
+        if max_stake is None:
+            flags.add("missing_liquidity")
+        elif max_stake <= 0:
+            flags.add("zero_liquidity")
+    if isinstance(stake, dict) and stake.get("limited_by_max_stake"):
+        flags.add("stake_limited")
+    return sorted(flags)
+
+
 def _compact_arb(item: dict[str, Any], sport: str, providers: Sequence[str], all_markets: bool) -> dict[str, Any]:
     return {
         "sport": sport,
@@ -123,6 +140,95 @@ def _compact_arb(item: dict[str, Any], sport: str, providers: Sequence[str], all
         "execution_quality": item.get("execution_quality"),
         "books": _book_summary(item),
     }
+
+
+def _compact_middle(item: dict[str, Any], sport: str, providers: Sequence[str], all_markets: bool) -> dict[str, Any]:
+    side_a = item.get("side_a") if isinstance(item.get("side_a"), dict) else {}
+    side_b = item.get("side_b") if isinstance(item.get("side_b"), dict) else {}
+    stake = item.get("stakes") if isinstance(item.get("stakes"), dict) else {}
+    books = []
+    for side in (side_a, side_b):
+        books.append(
+            {
+                "bookmaker": side.get("bookmaker"),
+                "price": side.get("price"),
+                "effective_price": side.get("effective_price"),
+                "line": side.get("line"),
+                "max_stake": side.get("max_stake"),
+                "quote_updated_at": side.get("quote_updated_at"),
+                "is_exchange": side.get("is_exchange"),
+            }
+        )
+    return {
+        "sport": sport,
+        "providers": list(providers),
+        "all_markets": bool(all_markets),
+        "event": item.get("event"),
+        "market": item.get("market"),
+        "middle_zone": item.get("middle_zone"),
+        "probability_percent": item.get("probability_percent"),
+        "ev_percent": item.get("ev_percent"),
+        "gross_ev_percent": item.get("gross_ev_percent"),
+        "gap": item.get("gap") or {},
+        "stake": {
+            "total": stake.get("total"),
+            "max_executable_total": stake.get("max_executable_total"),
+            "limited_by_max_stake": bool(stake.get("limited_by_max_stake")),
+        },
+        "books": books,
+        "risk_flags": _leg_quality_flags(books, stake),
+    }
+
+
+def _compact_plus_ev(item: dict[str, Any], sport: str, providers: Sequence[str], all_markets: bool) -> dict[str, Any]:
+    bet = item.get("bet") if isinstance(item.get("bet"), dict) else {}
+    sharp = item.get("sharp") if isinstance(item.get("sharp"), dict) else {}
+    bet_leg = {
+        "bookmaker": bet.get("soft_book"),
+        "bookmaker_key": bet.get("soft_key"),
+        "outcome": bet.get("outcome"),
+        "odds": bet.get("soft_odds"),
+        "effective_odds": bet.get("effective_odds"),
+        "point": bet.get("point"),
+        "quote_updated_at": bet.get("quote_updated_at"),
+        "is_exchange": bet.get("is_exchange"),
+        "max_stake": bet.get("max_stake"),
+    }
+    reference_leg = {
+        "bookmaker": sharp.get("book"),
+        "bookmaker_key": sharp.get("key"),
+        "fair_odds": sharp.get("fair_odds"),
+        "true_probability_percent": sharp.get("true_probability_percent"),
+        "vig_percent": sharp.get("vig_percent"),
+        "quote_updated_at": sharp.get("quote_updated_at"),
+    }
+    return {
+        "sport": sport,
+        "providers": list(providers),
+        "all_markets": bool(all_markets),
+        "event": item.get("event"),
+        "market": item.get("market"),
+        "market_point": item.get("market_point"),
+        "edge_percent": item.get("edge_percent"),
+        "net_edge_percent": item.get("net_edge_percent", item.get("edge_percent")),
+        "gross_edge_percent": item.get("gross_edge_percent"),
+        "ev_per_100": item.get("ev_per_100"),
+        "bet": bet_leg,
+        "reference": reference_leg,
+        "kelly": item.get("kelly") or {},
+        "risk_flags": _leg_quality_flags([bet_leg, reference_leg]),
+    }
+
+
+def _positive_count(items: Iterable[dict[str, Any]], metric_key: str) -> int:
+    count = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        value = _safe_float(item.get(metric_key))
+        if value is not None and value > 0:
+            count += 1
+    return count
 
 
 def _scan_once(
@@ -153,12 +259,28 @@ def _scan_once(
     opportunities = []
     if isinstance(arb_payload, dict):
         opportunities = [item for item in (arb_payload.get("opportunities") or []) if isinstance(item, dict)]
+    middle_payload = result.get("middles") if isinstance(result, dict) else {}
+    middle_opportunities: list[dict[str, Any]] = []
+    if isinstance(middle_payload, dict):
+        middle_opportunities = [
+            item for item in (middle_payload.get("opportunities") or []) if isinstance(item, dict)
+        ]
+    plus_ev_payload = result.get("plus_ev") if isinstance(result, dict) else {}
+    plus_ev_opportunities: list[dict[str, Any]] = []
+    if isinstance(plus_ev_payload, dict):
+        plus_ev_opportunities = [
+            item for item in (plus_ev_payload.get("opportunities") or []) if isinstance(item, dict)
+        ]
     candidates = [
         _compact_arb(item, sport, providers, all_markets)
         for item in opportunities
         if _is_candidate(item, min_roi=min_roi, allowed_quality=allowed_quality)
     ]
     candidates.sort(key=lambda item: _safe_float(item.get("roi_percent")) or -999.0, reverse=True)
+    top_middles = [_compact_middle(item, sport, providers, all_markets) for item in middle_opportunities]
+    top_middles.sort(key=lambda item: _safe_float(item.get("ev_percent")) or -999.0, reverse=True)
+    top_plus_ev = [_compact_plus_ev(item, sport, providers, all_markets) for item in plus_ev_opportunities]
+    top_plus_ev.sort(key=lambda item: _safe_float(item.get("edge_percent")) or -999.0, reverse=True)
     return {
         "sport": sport,
         "providers": list(providers),
@@ -170,6 +292,11 @@ def _scan_once(
         "arbitrage_count": len(opportunities),
         "positive_candidates": len(candidates),
         "top_candidate": candidates[0] if candidates else None,
+        "middle_count": len(middle_opportunities),
+        "positive_middle_count": _positive_count(middle_opportunities, "ev_percent"),
+        "top_middles": top_middles[:5],
+        "plus_ev_count": len(plus_ev_opportunities),
+        "top_plus_ev": top_plus_ev[:5],
         "scan_diagnostics": result.get("scan_diagnostics") if isinstance(result, dict) else {},
         "custom_providers": result.get("custom_providers") if isinstance(result, dict) else {},
         "sport_errors": result.get("sport_errors") if isinstance(result, dict) else [],
@@ -217,6 +344,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     allowed_quality = {str(item).strip().lower() for item in args.allow_quality if str(item).strip()}
     scans: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
+    middle_candidates: list[dict[str, Any]] = []
+    plus_ev_candidates: list[dict[str, Any]] = []
     if args.api_only:
         provider_sets = [[]]
     for sport in args.sports:
@@ -236,27 +365,61 @@ def main(argv: Sequence[str] | None = None) -> int:
             top = row.get("top_candidate")
             if isinstance(top, dict):
                 candidates.append(top)
+            middle_candidates.extend(row.get("top_middles") or [])
+            plus_ev_candidates.extend(row.get("top_plus_ev") or [])
             print(
                 f"{sport} providers={','.join(providers) or '-'} all_markets={bool(args.all_markets)} "
                 f"api_books={','.join(api_bookmakers) or '-'} "
                 f"success={row['success']} partial={row['partial']} "
                 f"arb={row['arbitrage_count']} candidates={row['positive_candidates']} "
+                f"middles={row['middle_count']} positive_middles={row['positive_middle_count']} "
+                f"plus_ev={row['plus_ev_count']} "
                 f"elapsed={row['elapsed_seconds']}s"
             )
             if args.stop_on_first and candidates:
-                payload = {"scans": scans, "candidates": candidates}
+                middle_candidates.sort(key=lambda item: _safe_float(item.get("ev_percent")) or -999.0, reverse=True)
+                plus_ev_candidates.sort(key=lambda item: _safe_float(item.get("edge_percent")) or -999.0, reverse=True)
+                payload = {
+                    "scans": scans,
+                    "candidates": candidates,
+                    "top_middles": middle_candidates[:20],
+                    "top_plus_ev": plus_ev_candidates[:20],
+                }
                 _write_json(Path(args.out), payload)
                 print(f"FOUND candidate; wrote {args.out}")
                 print(json.dumps(candidates[0], ensure_ascii=False, indent=2))
                 return 0
     candidates.sort(key=lambda item: _safe_float(item.get("roi_percent")) or -999.0, reverse=True)
-    payload = {"scans": scans, "candidates": candidates}
+    middle_candidates.sort(key=lambda item: _safe_float(item.get("ev_percent")) or -999.0, reverse=True)
+    plus_ev_candidates.sort(key=lambda item: _safe_float(item.get("edge_percent")) or -999.0, reverse=True)
+    payload = {
+        "scans": scans,
+        "candidates": candidates,
+        "top_middles": middle_candidates[:20],
+        "top_plus_ev": plus_ev_candidates[:20],
+    }
     _write_json(Path(args.out), payload)
+    positive_middles = [
+        item
+        for item in middle_candidates
+        if (_safe_float(item.get("ev_percent")) or -999.0) > 0
+    ]
+    positive_plus_ev = [
+        item
+        for item in plus_ev_candidates
+        if (_safe_float(item.get("edge_percent")) or -999.0) > 0
+    ]
     if candidates:
         print(f"FOUND {len(candidates)} candidate(s); wrote {args.out}")
         print(json.dumps(candidates[0], ensure_ascii=False, indent=2))
         return 0
-    print(f"No candidate found; wrote {args.out}")
+    if positive_middles or positive_plus_ev:
+        print(
+            f"No arbitrage candidate found; wrote {args.out} "
+            f"with positive_middles={len(positive_middles)} positive_plus_ev={len(positive_plus_ev)}"
+        )
+    else:
+        print(f"No candidate found; wrote {args.out}")
     return 1
 
 
