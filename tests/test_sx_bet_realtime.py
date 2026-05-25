@@ -12,6 +12,11 @@ class _FakeRealtimeMessage:
         self.data = data
 
 
+class _FakePublicationContext:
+    def __init__(self, data) -> None:
+        self.pub = type("Publication", (), {"data": data})()
+
+
 class _FakeRealtimeManager:
     def __init__(self, odds_map=None):
         self.odds_map = dict(odds_map or {})
@@ -57,52 +62,71 @@ class _FakeRealtimeManager:
         return merged
 
 
-class _FakeAsyncConnectionState:
-    def __init__(self, value: str = "connected") -> None:
-        self.value = value
-
-
-class _FakeAsyncConnection:
-    def __init__(self) -> None:
-        self.state = _FakeAsyncConnectionState()
-        self.error_reason = None
-
-
-class _FakeAsyncChannel:
+class _FakeAsyncSubscription:
     def __init__(self, manager: sx_bet.SXBetRealtimeManager, rows) -> None:
         self._manager = manager
         self._rows = rows
-        self.subscribed = False
-        self.unsubscribed = False
+        self.connected = False
+        self.disconnected = False
+        self.publication_handler = None
+        self.subscribe_calls = 0
+        self.unsubscribe_calls = 0
 
-    async def subscribe(self, listener) -> None:
-        self.subscribed = True
-        listener(_FakeRealtimeMessage(self._rows))
+    async def subscribe(self) -> None:
+        self.subscribe_calls += 1
+        self.connected = True
+        if self.publication_handler is not None:
+            await self.publication_handler.on_subscribed(object())
+            await self.publication_handler.on_publication(_FakePublicationContext(self._rows))
         asyncio.get_running_loop().call_later(0.05, self._manager._stop_requested.set)
 
-    def unsubscribe(self, *args, **kwargs) -> None:
+    async def unsubscribe(self, *args, **kwargs) -> None:
         _ = args, kwargs
-        self.unsubscribed = True
+        self.unsubscribe_calls += 1
+        self.disconnected = True
 
 
-class _FakeAsyncRealtimeClient:
+class _FakeAsyncCentrifugoClient:
     def __init__(self, manager: sx_bet.SXBetRealtimeManager, rows) -> None:
-        self.connection = _FakeAsyncConnection()
-        self._channel = _FakeAsyncChannel(manager, rows)
-        self.channels = self
+        self._subscription = _FakeAsyncSubscription(manager, rows)
         self.closed = False
+        self.connected = False
         self.channel_names: list[str] = []
+        self.event_handlers: dict[str, object] = {}
 
-    def get(self, channel_name: str):
+    def new_subscription(self, channel_name: str, events=None, **kwargs):
+        _ = kwargs
         self.channel_names.append(channel_name)
-        return self._channel
+        self._subscription.publication_handler = events
+        return self._subscription
+
+    async def connect(self) -> None:
+        self.connected = True
+
+    async def disconnect(self) -> None:
+        self.closed = True
 
     async def close(self) -> None:
         self.closed = True
-        self.connection.state.value = "closed"
+
+
+async def _fake_realtime_token_async(*args, **kwargs) -> str:
+    _ = args, kwargs
+    return "test-realtime-token"
 
 
 class SXBetRealtimeTests(unittest.TestCase):
+    def test_fetch_realtime_token_accepts_nested_token_payload(self) -> None:
+        async def _run() -> str:
+            async def _fake_request_json_async(*args, **kwargs):
+                _ = args, kwargs
+                return {"status": "success", "data": {"token": "centrifugo-token"}}, 0
+
+            with patch.object(sx_bet, "_request_json_async", new=_fake_request_json_async):
+                return await sx_bet._fetch_realtime_token_async(object())
+
+        self.assertEqual(asyncio.run(_run()), "centrifugo-token")
+
     def test_realtime_manager_maps_maker_side_to_taker_outcomes(self) -> None:
         manager = sx_bet.SXBetRealtimeManager()
 
@@ -482,7 +506,7 @@ class SXBetRealtimeTests(unittest.TestCase):
 
     def test_ensure_started_runs_async_client_in_thread(self) -> None:
         manager = sx_bet.SXBetRealtimeManager()
-        fake_client = _FakeAsyncRealtimeClient(
+        fake_client = _FakeAsyncCentrifugoClient(
             manager,
             rows=[
                 {
@@ -496,7 +520,8 @@ class SXBetRealtimeTests(unittest.TestCase):
 
         with (
             patch.object(sx_bet, "_sx_best_odds_ws_enabled", return_value=True),
-            patch.object(manager, "_create_ably_client", return_value=fake_client),
+            patch.object(sx_bet, "_fetch_realtime_token_async", new=_fake_realtime_token_async),
+            patch.object(manager, "_create_centrifugo_client", return_value=fake_client),
         ):
             self.assertTrue(manager.ensure_started())
             self.assertTrue(manager.wait_until_ready(1.0))
@@ -504,10 +529,11 @@ class SXBetRealtimeTests(unittest.TestCase):
 
         odds_map = manager.get_best_odds_map(["thread-live-1"], max_age_seconds=0.0)
         self.assertAlmostEqual(odds_map["thread-live-1"]["odds_one"], 1.860465, places=6)
-        self.assertTrue(fake_client._channel.subscribed)
-        self.assertTrue(fake_client._channel.unsubscribed)
+        self.assertTrue(fake_client.connected)
+        self.assertEqual(fake_client._subscription.subscribe_calls, 1)
+        self.assertEqual(fake_client._subscription.unsubscribe_calls, 1)
         self.assertTrue(fake_client.closed)
-        self.assertIn(f"best_odds:{sx_bet.SX_BET_BASE_TOKEN}", fake_client.channel_names)
+        self.assertIn("best_odds:global", fake_client.channel_names)
 
 
 if __name__ == "__main__":

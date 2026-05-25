@@ -20,6 +20,7 @@ PROVIDER_TITLE = "SX Bet"
 
 SX_BET_SOURCE = os.getenv("SX_BET_SOURCE", "api").strip().lower()
 SX_BET_API_BASE = os.getenv("SX_BET_API_BASE", "https://api.sx.bet").strip()
+SX_BET_WS_URL = os.getenv("SX_BET_WS_URL", "wss://ws.sx.bet/connection/websocket").strip()
 SX_BET_PUBLIC_BASE = os.getenv("SX_BET_PUBLIC_BASE", "https://sx.bet").strip()
 SX_BET_BASE_TOKEN = os.getenv(
     "SX_BET_BASE_TOKEN",
@@ -53,6 +54,8 @@ SX_BET_USER_AGENT = os.getenv(
 SX_BET_BEARER_TOKEN = os.getenv("SX_BET_BEARER_TOKEN", "").strip()
 SX_BET_API_KEY = os.getenv("SX_BET_API_KEY", "").strip()
 SX_BET_COOKIE = os.getenv("SX_BET_COOKIE", "").strip()
+SX_BET_REALTIME_TOKEN_PATH = os.getenv("SX_BET_REALTIME_TOKEN_PATH", "user/realtime-token/api-key").strip()
+SX_BET_REALTIME_CHANNEL = os.getenv("SX_BET_REALTIME_CHANNEL", "best_odds:global").strip()
 SX_BET_LEAGUE_MAP_RAW = os.getenv("SX_BET_LEAGUE_MAP", "").strip()
 SX_BET_WS_ENABLED = os.getenv("SX_BET_WS_ENABLED", "1").strip().lower() not in {
     "0",
@@ -162,6 +165,42 @@ REALTIME_MANAGER: Optional["SXBetRealtimeManager"] = None
 REALTIME_MANAGER_LOCK = threading.Lock()
 
 
+class _SXBetSubscriptionHandler:
+    def __init__(self, manager: "SXBetRealtimeManager") -> None:
+        self._manager = manager
+
+    async def on_publication(self, ctx) -> None:
+        payload = getattr(ctx, "data", None)
+        if payload is None:
+            payload = getattr(getattr(ctx, "pub", None), "data", None)
+        self._manager._handle_best_odds_payload(payload)
+
+    async def on_subscribing(self, ctx) -> None:
+        _ = ctx
+
+    async def on_subscribed(self, ctx) -> None:
+        _ = ctx
+        with self._manager._state_lock:
+            self._manager._connected = True
+            self._manager._last_error = ""
+        self._manager._ready_event.set()
+
+    async def on_unsubscribed(self, ctx) -> None:
+        _ = ctx
+        with self._manager._state_lock:
+            self._manager._connected = False
+
+    async def on_error(self, ctx) -> None:
+        with self._manager._state_lock:
+            self._manager._last_error = str(getattr(ctx, "error", ctx))
+
+    async def on_join(self, ctx) -> None:
+        _ = ctx
+
+    async def on_leave(self, ctx) -> None:
+        _ = ctx
+
+
 class ProviderError(Exception):
     """Raised for provider-specific recoverable issues."""
 
@@ -232,6 +271,21 @@ def _public_base() -> str:
     return base.rstrip("/")
 
 
+def _ws_url() -> str:
+    value = (SX_BET_WS_URL or "").strip() or "wss://ws.sx.bet/connection/websocket"
+    if not re.match(r"^wss?://", value, flags=re.IGNORECASE):
+        value = f"wss://{value}"
+    return value
+
+
+def _realtime_token_path() -> str:
+    return (SX_BET_REALTIME_TOKEN_PATH or "user/realtime-token/api-key").strip().lstrip("/")
+
+
+def _realtime_channel() -> str:
+    return (SX_BET_REALTIME_CHANNEL or "best_odds:global").strip()
+
+
 def _headers() -> Dict[str, str]:
     headers: Dict[str, str] = {}
     if SX_BET_USER_AGENT:
@@ -250,7 +304,36 @@ def _sx_best_odds_ws_enabled() -> bool:
 
 
 def _sx_token_url() -> str:
-    return f"{_api_base()}/user/token"
+    return f"{_api_base()}/{_realtime_token_path()}"
+
+
+async def _fetch_realtime_token_async(client: httpx.AsyncClient) -> str:
+    payload, _ = await _request_json_async(
+        client,
+        _realtime_token_path(),
+        retries=_int_or_default(SX_BET_RETRIES_RAW, 2, min_value=0),
+        backoff_seconds=_float_or_default(SX_BET_RETRY_BACKOFF_RAW, 0.5, min_value=0.0),
+    )
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        candidates = [
+            payload.get("token"),
+            payload.get("realtimeToken"),
+            payload.get("jwt"),
+        ]
+        if isinstance(data, dict):
+            candidates.extend(
+                [
+                    data.get("token"),
+                    data.get("realtimeToken"),
+                    data.get("jwt"),
+                ]
+            )
+        for candidate in candidates:
+            token = _normalize_text(candidate)
+            if token:
+                return token
+    raise ProviderError("SX Bet realtime token response missing token")
 
 
 def _request_json(
@@ -1583,63 +1666,61 @@ class SXBetRealtimeManager:
 
     async def _run_session_async(self) -> None:
         client = None
-        channel = None
+        subscription = None
         try:
-            client = self._create_ably_client()
-            channel_name = f"best_odds:{_normalize_text(SX_BET_BASE_TOKEN)}"
-            channel = client.channels.get(channel_name)
-            await channel.subscribe(self._handle_best_odds_message)
+            token_client = await get_shared_client("sx_bet_realtime_token", timeout=10.0, follow_redirects=True)
+            token = await _fetch_realtime_token_async(token_client)
+            client = self._create_centrifugo_client(token)
+            channel_name = _realtime_channel()
+            subscription = client.new_subscription(channel_name, events=_SXBetSubscriptionHandler(self))
+            await client.connect()
+            await subscription.subscribe()
             with self._state_lock:
+                self._connected = True
                 self._last_channel = channel_name
                 self._last_error = ""
+            self._ready_event.set()
             while not self._stop_requested.is_set():
-                state = getattr(client.connection, "state", None)
-                state_token = _normalize_text(getattr(state, "value", state)).lower()
-                error_reason = getattr(client.connection, "error_reason", None)
-                with self._state_lock:
-                    self._connected = state_token == "connected"
-                    if self._connected:
-                        self._last_error = ""
-                    elif error_reason:
-                        self._last_error = str(error_reason)
-                if state_token == "connected":
-                    self._ready_event.set()
-                elif state_token in {"closed", "failed"}:
-                    break
                 await asyncio.sleep(0.25)
         finally:
             with self._state_lock:
                 self._connected = False
             self._ready_event.clear()
             try:
-                if channel is not None:
-                    channel.unsubscribe()
+                if subscription is not None:
+                    maybe_awaitable = subscription.unsubscribe()
+                    if hasattr(maybe_awaitable, "__await__"):
+                        await maybe_awaitable
             except Exception:
                 pass
             try:
                 if client is not None:
-                    await client.close()
+                    if hasattr(client, "disconnect"):
+                        await client.disconnect()
+                    elif hasattr(client, "close"):
+                        maybe_awaitable = client.close()
+                        if hasattr(maybe_awaitable, "__await__"):
+                            await maybe_awaitable
             except Exception:
                 pass
 
-    def _create_ably_client(self):
+    def _create_centrifugo_client(self, token: str):
         try:
-            from ably.realtime.realtime import AblyRealtime
+            from centrifuge import Client
         except Exception as exc:
-            raise ProviderError(f"SX Bet realtime requires the 'ably' package: {exc}") from exc
-        auth_headers = {"X-Api-Key": SX_BET_API_KEY}
-        if SX_BET_USER_AGENT:
-            auth_headers["User-Agent"] = SX_BET_USER_AGENT
-        return AblyRealtime(
+            raise ProviderError(f"SX Bet realtime requires the 'centrifuge-python' package: {exc}") from exc
+        return Client(
+            _ws_url(),
+            token=_normalize_text(token),
+            headers=_headers(),
             loop=asyncio.get_running_loop(),
-            use_token_auth=True,
-            auth_url=_sx_token_url(),
-            auth_headers=auth_headers,
-            auto_connect=True,
         )
 
     def _handle_best_odds_message(self, message) -> None:
-        rows = self._decode_realtime_rows(getattr(message, "data", None))
+        self._handle_best_odds_payload(getattr(message, "data", None))
+
+    def _handle_best_odds_payload(self, payload) -> None:
+        rows = self._decode_realtime_rows(payload)
         if not rows:
             return
         now = time.time()
