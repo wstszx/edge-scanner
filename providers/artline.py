@@ -60,6 +60,10 @@ PROVIDER_CAPABILITY = ProviderCapability(
         ("h2h", "h2h_3_way", "spreads", "totals", "team_totals")
     ),
     live_mode_supported=True,
+    liquidity_confidence="quote_only",
+    notes=(
+        "Current integration is useful as a quote source but does not provide verified executable stake.",
+    ),
 )
 
 

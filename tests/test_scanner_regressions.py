@@ -1073,6 +1073,142 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertEqual(source_by_book.get("sx_bet"), "ws")
         self.assertEqual(source_by_book.get("book_b"), "rest_snapshot")
 
+    def test_collect_market_entries_surfaces_observed_at_as_quote_time_for_snapshot_sources(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "book_a",
+                    "title": "Book A",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {
+                                    "name": "Home Team",
+                                    "price": 2.2,
+                                    "quote_source": "rest_snapshot",
+                                    "observed_at": 1770000000.0,
+                                },
+                                {
+                                    "name": "Away Team",
+                                    "price": 1.8,
+                                    "quote_source": "rest_snapshot",
+                                    "observed_at": 1770000000.0,
+                                },
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_b",
+                    "title": "Book B",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {
+                                    "name": "Home Team",
+                                    "price": 1.8,
+                                    "last_updated": 1770000001.0,
+                                },
+                                {
+                                    "name": "Away Team",
+                                    "price": 2.2,
+                                    "last_updated": 1770000001.0,
+                                },
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        with patch("scanner.time.time", return_value=1770000002.0):
+            entries = scanner._collect_market_entries(
+                game,
+                market_key="h2h",
+                stake_total=100.0,
+                commission_rate=0.0,
+            )
+
+        self.assertTrue(entries)
+        best_odds = entries[0].get("best_odds") or []
+        quote_by_book = {
+            str(item.get("bookmaker_key") or item.get("bookmaker") or "").strip().lower(): item.get("quote_updated_at")
+            for item in best_odds
+            if isinstance(item, dict)
+        }
+        self.assertEqual(quote_by_book.get("book_a"), "2026-02-02T02:40:00Z")
+
+    def test_collect_market_entries_prefers_observed_at_over_last_updated_for_snapshot_sources(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "sx_bet",
+                    "title": "SX Bet",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {
+                                    "name": "Home Team",
+                                    "price": 2.2,
+                                    "quote_source": "rest_snapshot",
+                                    "last_updated": 1770000000.0,
+                                    "observed_at": 1770000060.0,
+                                },
+                                {
+                                    "name": "Away Team",
+                                    "price": 1.8,
+                                    "quote_source": "rest_snapshot",
+                                    "last_updated": 1770000000.0,
+                                    "observed_at": 1770000060.0,
+                                },
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "book_b",
+                    "title": "Book B",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 1.8, "last_updated": 1770000061.0},
+                                {"name": "Away Team", "price": 2.2, "last_updated": 1770000061.0},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        with patch("scanner.time.time", return_value=1770000062.0):
+            entries = scanner._collect_market_entries(
+                game,
+                market_key="h2h",
+                stake_total=100.0,
+                commission_rate=0.0,
+            )
+
+        self.assertTrue(entries)
+        best_odds = entries[0].get("best_odds") or []
+        quote_by_book = {
+            str(item.get("bookmaker_key") or item.get("bookmaker") or "").strip().lower(): item.get("quote_updated_at")
+            for item in best_odds
+            if isinstance(item, dict)
+        }
+        self.assertEqual(quote_by_book.get("sx_bet"), "2026-02-02T02:41:00Z")
+
     def test_collect_market_entries_preserves_raw_percentage_odds(self) -> None:
         game = {
             "sport_key": "basketball_nba",

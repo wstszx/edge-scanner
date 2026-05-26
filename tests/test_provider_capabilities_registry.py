@@ -25,6 +25,11 @@ class ProviderCapabilitiesRegistryTests(unittest.TestCase):
             self.assertTrue(capability.supported_sport_keys)
             self.assertTrue(capability.supported_markets)
             self.assertIsInstance(capability.live_mode_supported, bool)
+            self.assertIn(
+                capability.liquidity_confidence,
+                {"explicit", "estimated", "quote_only", "unknown"},
+            )
+            self.assertIsInstance(capability.notes, tuple)
 
     def test_registry_preserves_shared_and_distinct_market_capabilities(self) -> None:
         for capability in PROVIDER_CAPABILITIES.values():
@@ -48,6 +53,11 @@ class ProviderCapabilitiesRegistryTests(unittest.TestCase):
             {"betdex", "bookmaker_xyz", "polymarket", "sx_bet"},
             both_teams_to_score_support,
         )
+
+    def test_registry_marks_provider_liquidity_confidence(self) -> None:
+        self.assertEqual(PROVIDER_CAPABILITIES["bookmaker_xyz"].liquidity_confidence, "quote_only")
+        self.assertEqual(PROVIDER_CAPABILITIES["polymarket"].liquidity_confidence, "explicit")
+        self.assertEqual(PROVIDER_CAPABILITIES["sx_bet"].liquidity_confidence, "explicit")
 
 
 if __name__ == "__main__":

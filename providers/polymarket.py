@@ -185,6 +185,10 @@ PROVIDER_CAPABILITY = ProviderCapability(
         ("h2h", "h2h_3_way", "spreads", "totals", "both_teams_to_score")
     ),
     live_mode_supported=True,
+    liquidity_confidence="explicit",
+    notes=(
+        "CLOB order books expose executable quote depth for best ask levels used by the scanner.",
+    ),
 )
 
 TEAM_LOOKUP_STOPWORDS = {

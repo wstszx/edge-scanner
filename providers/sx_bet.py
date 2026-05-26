@@ -114,6 +114,10 @@ PROVIDER_CAPABILITY = ProviderCapability(
         )
     ),
     live_mode_supported=True,
+    liquidity_confidence="explicit",
+    notes=(
+        "Exchange orders include executable stake/depth metadata when quote detail is available.",
+    ),
 )
 
 SX_PUBLIC_SPORT_SLUGS_BY_PREFIX: Dict[str, str] = {

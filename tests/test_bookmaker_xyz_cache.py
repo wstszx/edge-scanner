@@ -89,6 +89,73 @@ class BookmakerXyzCacheTests(unittest.TestCase):
         self.assertEqual(totals_market["outcomes"][0]["name"], "Over")
         self.assertEqual(totals_market["outcomes"][0]["point"], 231.0)
 
+    def test_normalize_condition_market_attaches_quote_metadata_without_inventing_stake(self) -> None:
+        dictionaries = {
+            "marketNames": {"3-76-76": "Handicap incl. OT"},
+            "outcomes": {
+                "2441": {"selectionId": 7, "marketId": 3, "gamePeriodId": 76, "gameTypeId": 76, "pointsId": 180, "teamPlayerId": 1},
+                "2442": {"selectionId": 8, "marketId": 3, "gamePeriodId": 76, "gameTypeId": 76, "pointsId": 181, "teamPlayerId": 2},
+            },
+            "selections": {"7": "H1", "8": "H2"},
+            "teamPlayers": {"1": "H1", "2": "H2"},
+            "points": {"180": "-1.5", "181": "2.5"},
+        }
+
+        spreads_market = bookmaker_xyz._normalize_condition_market(
+            {
+                "observed_at": 1770000000.0,
+                "turnover": "12345.67",
+                "margin": "250.5",
+                "outcomes": [
+                    {"outcomeId": "2441", "odds": "2.30"},
+                    {"outcomeId": "2442", "odds": "1.70"},
+                ],
+            },
+            home_team="Home",
+            away_team="Away",
+            requested_markets={"spreads"},
+            dictionaries=dictionaries,
+        )
+
+        first = spreads_market["outcomes"][0]
+        self.assertEqual(first["observed_at"], 1770000000.0)
+        self.assertEqual(first["quote_source"], "rest_snapshot")
+        self.assertNotIn("max_stake", first)
+        self.assertEqual(first["liquidity_provenance"]["turnover"], 12345.67)
+        self.assertEqual(first["liquidity_provenance"]["margin"], 250.5)
+
+    def test_normalize_condition_market_uses_available_liquidity_as_max_stake(self) -> None:
+        dictionaries = {
+            "marketNames": {"3-76-76": "Handicap incl. OT"},
+            "outcomes": {
+                "2441": {"selectionId": 7, "marketId": 3, "gamePeriodId": 76, "gameTypeId": 76, "pointsId": 180, "teamPlayerId": 1},
+                "2442": {"selectionId": 8, "marketId": 3, "gamePeriodId": 76, "gameTypeId": 76, "pointsId": 181, "teamPlayerId": 2},
+            },
+            "selections": {"7": "H1", "8": "H2"},
+            "teamPlayers": {"1": "H1", "2": "H2"},
+            "points": {"180": "-1.5", "181": "2.5"},
+        }
+
+        spreads_market = bookmaker_xyz._normalize_condition_market(
+            {
+                "observed_at": 1770000000.0,
+                "availableLiquidity": "88.75",
+                "outcomes": [
+                    {"outcomeId": "2441", "odds": "2.30"},
+                    {"outcomeId": "2442", "odds": "1.70"},
+                ],
+            },
+            home_team="Home",
+            away_team="Away",
+            requested_markets={"spreads"},
+            dictionaries=dictionaries,
+        )
+
+        first = spreads_market["outcomes"][0]
+        self.assertEqual(first["max_stake"], 88.75)
+        self.assertEqual(first["liquidity"], 88.75)
+        self.assertEqual(first["liquidity_source"], "condition_available_liquidity")
+
     def test_normalize_condition_market_rejects_team_totals_from_base_totals(self) -> None:
         dictionaries = {
             'marketNames': {

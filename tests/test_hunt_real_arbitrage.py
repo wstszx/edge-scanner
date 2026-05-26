@@ -72,6 +72,39 @@ def test_compact_middle_surfaces_execution_risk_fields() -> None:
     assert "stake_limited" in compact["risk_flags"]
 
 
+def test_is_actionable_arbitrage_requires_positive_roi_and_clean_execution_quality() -> None:
+    actionable = {
+        "event": "Away vs Home",
+        "roi_percent": 0.75,
+        "execution_quality": {"status": "high", "flags": []},
+        "stakes": {"limited_by_max_stake": False},
+    }
+    missing_liquidity = {
+        **actionable,
+        "execution_quality": {"status": "medium", "flags": ["missing_liquidity"]},
+    }
+    model_negative = {**actionable, "roi_percent": 0.0}
+
+    assert hunt_real_arbitrage._is_actionable_arbitrage(actionable)
+    assert not hunt_real_arbitrage._is_actionable_arbitrage(missing_liquidity)
+    assert not hunt_real_arbitrage._is_actionable_arbitrage(model_negative)
+
+
+def test_is_actionable_middle_requires_positive_ev_and_no_execution_risks() -> None:
+    actionable = {
+        "event": "Away vs Home",
+        "ev_percent": 1.25,
+        "stake": {"limited_by_max_stake": False},
+        "risk_flags": [],
+    }
+    missing_quote = {**actionable, "risk_flags": ["missing_quote_time"]}
+    model_negative = {**actionable, "ev_percent": -0.1}
+
+    assert hunt_real_arbitrage._is_actionable_middle(actionable)
+    assert not hunt_real_arbitrage._is_actionable_middle(missing_quote)
+    assert not hunt_real_arbitrage._is_actionable_middle(model_negative)
+
+
 def test_compact_plus_ev_surfaces_fee_adjusted_edge_and_reference() -> None:
     item = {
         "event": "Away vs Home",
@@ -130,7 +163,8 @@ def test_scan_once_includes_value_and_middle_report_fields(monkeypatch) -> None:
                         "market": "h2h",
                         "roi_percent": 1.5,
                         "best_odds": [],
-                        "execution_quality": {"status": "high"},
+                        "execution_quality": {"status": "high", "flags": []},
+                        "stakes": {"limited_by_max_stake": False},
                     }
                 ]
             },
@@ -182,10 +216,14 @@ def test_scan_once_includes_value_and_middle_report_fields(monkeypatch) -> None:
 
     assert row["arbitrage_count"] == 1
     assert row["positive_candidates"] == 1
+    assert row["actionable_arbitrage_count"] == 1
+    assert row["actionable_arbitrage"][0]["roi_percent"] == 1.5
     assert row["middle_count"] == 1
     assert row["positive_middle_count"] == 1
+    assert row["actionable_middle_count"] == 1
     assert row["plus_ev_count"] == 1
     assert row["top_middles"][0]["ev_percent"] == 0.75
+    assert row["actionable_middles"][0]["ev_percent"] == 0.75
     assert row["top_plus_ev"][0]["edge_percent"] == 2.5
 
 
@@ -201,10 +239,14 @@ def test_main_reports_positive_middles_when_no_arbitrage_candidate(monkeypatch, 
             "partial": False,
             "arbitrage_count": 0,
             "positive_candidates": 0,
+            "actionable_arbitrage_count": 0,
+            "actionable_arbitrage": [],
             "top_candidate": None,
             "middle_count": 1,
             "positive_middle_count": 1,
+            "actionable_middle_count": 1,
             "top_middles": [{"event": "Away vs Home", "ev_percent": 1.25}],
+            "actionable_middles": [{"event": "Away vs Home", "ev_percent": 1.25}],
             "plus_ev_count": 0,
             "top_plus_ev": [],
             "scan_diagnostics": {},
@@ -230,3 +272,60 @@ def test_main_reports_positive_middles_when_no_arbitrage_candidate(monkeypatch, 
     assert exit_code == 1
     assert "No arbitrage candidate found" in captured.out
     assert "positive_middles=1" in captured.out
+
+
+def test_main_writes_actionable_middles_and_runs_cleanup(monkeypatch, tmp_path) -> None:
+    def fake_scan_once(*args, **kwargs):
+        return {
+            "sport": "basketball_nba",
+            "providers": ["sx_bet", "polymarket"],
+            "api_bookmakers": [],
+            "all_markets": False,
+            "elapsed_seconds": 0.01,
+            "success": True,
+            "partial": False,
+            "arbitrage_count": 0,
+            "positive_candidates": 0,
+            "actionable_arbitrage_count": 0,
+            "actionable_arbitrage": [],
+            "top_candidate": None,
+            "middle_count": 1,
+            "positive_middle_count": 1,
+            "actionable_middle_count": 1,
+            "top_middles": [{"event": "Away vs Home", "ev_percent": 1.25, "risk_flags": []}],
+            "actionable_middles": [{"event": "Away vs Home", "ev_percent": 1.25, "risk_flags": []}],
+            "plus_ev_count": 0,
+            "top_plus_ev": [],
+            "scan_diagnostics": {},
+            "custom_providers": {},
+            "sport_errors": [],
+        }
+
+    cleanup_calls = []
+    monkeypatch.setattr(hunt_real_arbitrage, "_scan_once", fake_scan_once)
+    monkeypatch.setattr(hunt_real_arbitrage, "_shutdown_runtime_resources", lambda: cleanup_calls.append("cleanup"))
+    out = tmp_path / "hunt.json"
+
+    exit_code = hunt_real_arbitrage.main(
+        [
+            "--sports",
+            "basketball_nba",
+            "--provider-sets",
+            "sx_bet,polymarket",
+            "--out",
+            str(out),
+        ]
+    )
+
+    assert exit_code == 1
+    assert cleanup_calls == ["cleanup"]
+    assert '"actionable_middles"' in out.read_text(encoding="utf-8")
+    assert '"actionable_arbitrage"' in out.read_text(encoding="utf-8")
+
+
+def test_provider_capability_summary_marks_quote_only_provider() -> None:
+    summary = hunt_real_arbitrage._provider_capability_summary(["bookmaker_xyz", "polymarket"])
+
+    by_key = {item["key"]: item for item in summary}
+    assert by_key["bookmaker_xyz"]["liquidity_confidence"] == "quote_only"
+    assert by_key["polymarket"]["liquidity_confidence"] in {"explicit", "estimated"}

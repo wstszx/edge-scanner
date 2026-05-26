@@ -356,6 +356,10 @@ PROVIDER_CAPABILITY = ProviderCapability(
         ("h2h", "spreads", "totals", "both_teams_to_score")
     ),
     live_mode_supported=True,
+    liquidity_confidence="quote_only",
+    notes=(
+        "Market-manager snapshots expose observed_at quote provenance but no reliable executable stake.",
+    ),
 )
 
 GRAPHQL_CONDITIONS_QUERY = """
@@ -1941,6 +1945,75 @@ def _find_selection(parsed_outcomes: Sequence[dict], aliases: set[str]) -> Optio
     return None
 
 
+def _condition_observed_at(condition: dict) -> object:
+    if not isinstance(condition, dict):
+        return None
+    observed_at = condition.get("observed_at")
+    if observed_at in (None, ""):
+        observed_at = condition.get("__observed_at")
+    return observed_at
+
+
+def _condition_liquidity_metadata(condition: dict) -> dict:
+    if not isinstance(condition, dict):
+        return {}
+    liquidity_candidates = (
+        ("liquidity", "condition_liquidity"),
+        ("availableLiquidity", "condition_available_liquidity"),
+        ("maxStake", "condition_max_stake"),
+    )
+    metadata: dict = {}
+    for field, source in liquidity_candidates:
+        value = _safe_float(condition.get(field))
+        if value is not None and value > 0:
+            rounded = round(float(value), 6)
+            metadata.update(
+                {
+                    "max_stake": rounded,
+                    "liquidity": rounded,
+                    "liquidity_source": source,
+                }
+            )
+            break
+    provenance = {}
+    for field in ("turnover", "margin"):
+        value = _safe_float(condition.get(field))
+        if value is not None:
+            provenance[field] = round(float(value), 6)
+    if provenance:
+        metadata["liquidity_provenance"] = provenance
+    return metadata
+
+
+def _outcome_liquidity_metadata(outcome: dict) -> dict:
+    if not isinstance(outcome, dict):
+        return {}
+    for field, source in (
+        ("maxStake", "outcome_max_stake"),
+        ("availableLiquidity", "outcome_available_liquidity"),
+        ("liquidity", "outcome_liquidity"),
+    ):
+        value = _safe_float(outcome.get(field))
+        if value is not None and value > 0:
+            rounded = round(float(value), 6)
+            return {
+                "max_stake": rounded,
+                "liquidity": rounded,
+                "liquidity_source": source,
+            }
+    return {}
+
+
+def _quote_metadata(condition: dict) -> dict:
+    metadata = {}
+    observed_at = _condition_observed_at(condition)
+    if observed_at not in (None, ""):
+        metadata["observed_at"] = observed_at
+        metadata["quote_source"] = "rest_snapshot"
+    metadata.update(_condition_liquidity_metadata(condition))
+    return metadata
+
+
 def _normalize_condition_market(
     condition: dict,
     home_team: str,
@@ -1959,7 +2032,7 @@ def _normalize_condition_market(
     raw_outcomes = condition.get("outcomes")
     if not isinstance(raw_outcomes, list) or len(raw_outcomes) < 2:
         return None
-    observed_at = condition.get("observed_at") if condition.get("observed_at") not in (None, "") else condition.get("__observed_at")
+    quote_metadata = _quote_metadata(condition)
 
     parsed_outcomes: List[dict] = []
     market_meta: Optional[dict] = None
@@ -2004,6 +2077,7 @@ def _normalize_condition_market(
         sort_order = _safe_float(raw_outcome.get("sortOrder"))
         if sort_order is None:
             sort_order = float(index)
+        outcome_metadata = _outcome_liquidity_metadata(raw_outcome)
         parsed_outcomes.append(
             {
                 "outcome_id": outcome_id,
@@ -2013,6 +2087,7 @@ def _normalize_condition_market(
                 "selection_name": selection_name,
                 "point": point_value,
                 "sort_order": sort_order,
+                "metadata": outcome_metadata,
             }
         )
         if market_meta is None:
@@ -2064,12 +2139,14 @@ def _normalize_condition_market(
                     {
                         "name": home_team,
                         "price": home_selection["price"],
-                        **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                        **quote_metadata,
+                        **(home_selection.get("metadata") or {}),
                     },
                     {
                         "name": away_team,
                         "price": away_selection["price"],
-                        **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                        **quote_metadata,
+                        **(away_selection.get("metadata") or {}),
                     },
                 ],
             }
@@ -2092,13 +2169,15 @@ def _normalize_condition_market(
                             "name": home_team,
                             "price": home_selection["price"],
                             "point": round(float(point_1), 6),
-                            **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                            **quote_metadata,
+                            **(home_selection.get("metadata") or {}),
                         },
                         {
                             "name": away_team,
                             "price": away_selection["price"],
                             "point": round(float(point_2), 6),
-                            **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                            **quote_metadata,
+                            **(away_selection.get("metadata") or {}),
                         },
                     ],
                 }
@@ -2130,13 +2209,15 @@ def _normalize_condition_market(
                             "name": "Over",
                             "price": over_selection["price"],
                             "point": point,
-                            **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                            **quote_metadata,
+                            **(over_selection.get("metadata") or {}),
                         },
                         {
                             "name": "Under",
                             "price": under_selection["price"],
                             "point": point,
-                            **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                            **quote_metadata,
+                            **(under_selection.get("metadata") or {}),
                         },
                     ],
                 }
@@ -2168,8 +2249,8 @@ def _normalize_condition_market(
                 row["point"] = round(float(point), 6)
             if market_name:
                 row["description"] = _normalize_text(market_meta.get("market_name"))
-            if observed_at not in (None, ""):
-                row["observed_at"] = observed_at
+            row.update(quote_metadata)
+            row.update(item.get("metadata") or {})
             dynamic_outcomes.append(row)
         return {"key": dynamic_key, "outcomes": dynamic_outcomes}
 
@@ -2207,19 +2288,19 @@ def _fallback_h2h_market(condition: dict, home_team: str, away_team: str) -> Opt
             sort_order = float(index)
         parsed.append({"price": round(float(price), 6), "sort_order": sort_order})
     parsed.sort(key=lambda item: item.get("sort_order") if item.get("sort_order") is not None else 9999.0)
-    observed_at = condition.get("observed_at") if condition.get("observed_at") not in (None, "") else condition.get("__observed_at")
+    quote_metadata = _quote_metadata(condition)
     return {
         "key": "h2h",
         "outcomes": [
             {
                 "name": home_team,
                 "price": parsed[0]["price"],
-                **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                **quote_metadata,
             },
             {
                 "name": away_team,
                 "price": parsed[1]["price"],
-                **({"observed_at": observed_at} if observed_at not in (None, "") else {}),
+                **quote_metadata,
             },
         ],
     }

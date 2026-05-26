@@ -16,3 +16,5 @@ class ProviderCapability:
     supported_sport_keys: Tuple[str, ...]
     supported_markets: Tuple[str, ...]
     live_mode_supported: bool
+    liquidity_confidence: str = "unknown"
+    notes: Tuple[str, ...] = ()

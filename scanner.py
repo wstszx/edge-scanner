@@ -2256,6 +2256,34 @@ def _quote_updated_at_seconds(
     return None
 
 
+def _quote_display_timestamp_seconds(
+    game: Optional[dict],
+    bookmaker: Optional[dict],
+    market: Optional[dict],
+    outcome: Optional[dict],
+) -> Optional[float]:
+    if _prematch_quote_prefers_observed_at(game, bookmaker, market, outcome):
+        timestamp = _quote_freshness_timestamp_seconds(
+            game,
+            bookmaker,
+            market,
+            outcome,
+            prefer_observed_at=True,
+        )
+        if timestamp is not None:
+            return timestamp
+    timestamp = _quote_updated_at_seconds(game, bookmaker, market, outcome)
+    if timestamp is not None:
+        return timestamp
+    return _quote_freshness_timestamp_seconds(
+        game,
+        bookmaker,
+        market,
+        outcome,
+        prefer_observed_at=True,
+    )
+
+
 def _quote_freshness_timestamp_seconds(
     game: Optional[dict],
     bookmaker: Optional[dict],
@@ -2842,7 +2870,7 @@ def _build_sharp_reference(
                     "raw_percentage_odds": outcome.get("raw_percentage_odds"),
                     "point": outcome.get("point"),
                     "quote_updated_at": _epoch_to_iso(
-                        _quote_updated_at_seconds(game, bookmaker, market, outcome) or 0.0
+                        _quote_display_timestamp_seconds(game, bookmaker, market, outcome) or 0.0
                     ),
                     "live_state": bookmaker_live_state,
                 }
@@ -2931,7 +2959,7 @@ def _two_way_outcomes(
                     "point": outcome.get("point"),
                     "raw_percentage_odds": outcome.get("raw_percentage_odds"),
                     "quote_updated_at": _epoch_to_iso(
-                        _quote_updated_at_seconds(game, bookmaker, market, outcome) or 0.0
+                        _quote_display_timestamp_seconds(game, bookmaker, market, outcome) or 0.0
                     ),
                     "live_state": bookmaker_live_state,
                 }
@@ -3304,7 +3332,7 @@ def _record_line_offers(
                         "display_price": display_price,
                         "raw_percentage_odds": outcome.get("raw_percentage_odds"),
                         "quote_updated_at": _epoch_to_iso(
-                            _quote_updated_at_seconds(game, book, market, outcome) or 0.0
+                            _quote_display_timestamp_seconds(game, book, market, outcome) or 0.0
                         ),
                         "quote_source": outcome.get("quote_source") or outcome.get("source"),
                         "live_state": book_live_state,
@@ -3567,9 +3595,11 @@ def _collect_middle_opportunities(
                         "display_price": display_price,
                         "effective_price": effective_price,
                         "quote_updated_at": _epoch_to_iso(
-                            _quote_updated_at_seconds(game, book, market, outcome) or 0.0
+                            _quote_display_timestamp_seconds(game, book, market, outcome) or 0.0
                         ),
+                        "quote_source": outcome.get("quote_source") or outcome.get("source"),
                         "raw_percentage_odds": outcome.get("raw_percentage_odds"),
+                        "liquidity_provenance": outcome.get("liquidity_provenance"),
                         "live_state": book_live_state,
                         "max_stake": _safe_float(
                             outcome.get("stake")
@@ -3890,6 +3920,8 @@ def _build_middle_entry(
             "max_stake": side_a.get("max_stake"),
             "is_exchange": side_a["is_exchange"],
             "quote_updated_at": side_a.get("quote_updated_at"),
+            "quote_source": side_a.get("quote_source"),
+            "liquidity_provenance": side_a.get("liquidity_provenance"),
             "raw_percentage_odds": side_a.get("raw_percentage_odds"),
         },
         {
@@ -3901,6 +3933,8 @@ def _build_middle_entry(
             "max_stake": side_b.get("max_stake"),
             "is_exchange": side_b["is_exchange"],
             "quote_updated_at": side_b.get("quote_updated_at"),
+            "quote_source": side_b.get("quote_source"),
+            "liquidity_provenance": side_b.get("liquidity_provenance"),
             "raw_percentage_odds": side_b.get("raw_percentage_odds"),
         },
     )

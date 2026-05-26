@@ -118,6 +118,10 @@ PROVIDER_CAPABILITY = ProviderCapability(
         )
     ),
     live_mode_supported=True,
+    liquidity_confidence="explicit",
+    notes=(
+        "Exchange-style market data can carry executable price depth for matched betting checks.",
+    ),
 )
 
 
