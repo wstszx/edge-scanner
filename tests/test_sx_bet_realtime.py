@@ -115,6 +115,23 @@ async def _fake_realtime_token_async(*args, **kwargs) -> str:
     return "test-realtime-token"
 
 
+class _FakeLoop:
+    def __init__(self) -> None:
+        self.default_contexts = []
+
+    def default_exception_handler(self, context) -> None:
+        self.default_contexts.append(context)
+
+
+class _FakeReconnectTask:
+    def get_coro(self):
+        return type("FakeCoro", (), {"__qualname__": "Client._reconnect"})()
+
+
+class ClientDisconnectedError(Exception):
+    __module__ = "centrifuge.exceptions"
+
+
 class SXBetRealtimeTests(unittest.TestCase):
     def test_fetch_realtime_token_accepts_nested_token_payload(self) -> None:
         async def _run() -> str:
@@ -154,6 +171,46 @@ class SXBetRealtimeTests(unittest.TestCase):
         self.assertAlmostEqual(odds_map["m1"]["odds_two"], 2.056555, places=6)
         self.assertEqual(odds_map["m1"]["updated_at_one"], 1773592013439)
         self.assertEqual(odds_map["m1"]["updated_at_two"], 1773592882711)
+
+    def test_loop_exception_handler_suppresses_centrifugo_reconnect_timeout(self) -> None:
+        manager = sx_bet.SXBetRealtimeManager()
+        loop = _FakeLoop()
+        context = {
+            "message": "Task exception was never retrieved",
+            "exception": TimeoutError("timed out during opening handshake"),
+            "future": _FakeReconnectTask(),
+        }
+
+        manager._handle_loop_exception(loop, context)
+
+        self.assertEqual(loop.default_contexts, [])
+        self.assertIn("timed out during opening handshake", manager.snapshot()["last_error"])
+
+    def test_loop_exception_handler_suppresses_centrifugo_disconnect_cancel(self) -> None:
+        manager = sx_bet.SXBetRealtimeManager()
+        loop = _FakeLoop()
+        context = {
+            "message": "Future exception was never retrieved",
+            "exception": ClientDisconnectedError("command 1 canceled due to disconnect"),
+        }
+
+        manager._handle_loop_exception(loop, context)
+
+        self.assertEqual(loop.default_contexts, [])
+        self.assertEqual(manager.snapshot()["last_error"], "")
+
+    def test_loop_exception_handler_keeps_unrelated_exceptions_visible(self) -> None:
+        manager = sx_bet.SXBetRealtimeManager()
+        loop = _FakeLoop()
+        context = {
+            "message": "Task exception was never retrieved",
+            "exception": RuntimeError("boom"),
+            "future": _FakeReconnectTask(),
+        }
+
+        manager._handle_loop_exception(loop, context)
+
+        self.assertEqual(loop.default_contexts, [context])
 
     def test_fetch_events_async_prefers_realtime_best_odds_in_live_mode(self) -> None:
         fixtures = [

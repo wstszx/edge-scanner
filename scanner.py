@@ -3346,6 +3346,9 @@ def _record_line_offers(
                         "is_exchange": is_exchange,
                         "book_event_id": book_event_id,
                         "book_event_url": book_event_url,
+                        "execution_diagnostics": copy.deepcopy(book.get("execution_diagnostics"))
+                        if isinstance(book.get("execution_diagnostics"), dict)
+                        else None,
                     }
                 )
     normalized: LineOfferMap = {}
@@ -3408,6 +3411,9 @@ def _collect_market_entries(
             "event_id": book.get("event_id") or book.get("eventId") or book.get("id"),
             "event_url": book.get("event_url") or book.get("eventUrl") or book.get("url"),
             "live_state": copy.deepcopy(book.get("live_state")) if isinstance(book.get("live_state"), dict) else None,
+            "execution_diagnostics": copy.deepcopy(book.get("execution_diagnostics"))
+            if isinstance(book.get("execution_diagnostics"), dict)
+            else None,
             "markets": book.get("markets", []),
         }
         for book in bookmakers
@@ -3497,6 +3503,7 @@ def _collect_market_entries(
                 "quote_updated_at": o.get("quote_updated_at"),
                 "quote_source": o.get("quote_source"),
                 "raw_percentage_odds": o.get("raw_percentage_odds"),
+                "execution_diagnostics": o.get("execution_diagnostics"),
             }
             for o in outcomes
         ]
@@ -3600,6 +3607,9 @@ def _collect_middle_opportunities(
                         "quote_source": outcome.get("quote_source") or outcome.get("source"),
                         "raw_percentage_odds": outcome.get("raw_percentage_odds"),
                         "liquidity_provenance": outcome.get("liquidity_provenance"),
+                        "execution_diagnostics": copy.deepcopy(book.get("execution_diagnostics"))
+                        if isinstance(book.get("execution_diagnostics"), dict)
+                        else None,
                         "live_state": book_live_state,
                         "max_stake": _safe_float(
                             outcome.get("stake")

@@ -36,6 +36,7 @@ CORE_SPORT_ORDER = [
 DEFAULT_PROVIDERS = [
     "betdex",
     "bookmaker_xyz",
+    "artline",
     "sx_bet",
     "polymarket",
 ]
@@ -164,6 +165,7 @@ def _book_summary(item: dict[str, Any]) -> list[dict[str, Any]]:
                 "quote_updated_at": leg.get("quote_updated_at"),
                 "quote_source": leg.get("quote_source"),
                 "is_exchange": leg.get("is_exchange"),
+                "execution_diagnostics": leg.get("execution_diagnostics"),
             }
         )
     return rows
@@ -220,6 +222,7 @@ def _compact_middle(item: dict[str, Any], sport: str, providers: Sequence[str], 
                 "quote_source": side.get("quote_source"),
                 "is_exchange": side.get("is_exchange"),
                 "liquidity_provenance": side.get("liquidity_provenance"),
+                "execution_diagnostics": side.get("execution_diagnostics"),
             }
         )
     return {
@@ -346,6 +349,8 @@ def _scan_once(
         plus_ev_opportunities = [
             item for item in (plus_ev_payload.get("opportunities") or []) if isinstance(item, dict)
         ]
+    top_arbitrage = [_compact_arb(item, sport, providers, all_markets) for item in opportunities]
+    top_arbitrage.sort(key=lambda item: _safe_float(item.get("roi_percent")) or -999.0, reverse=True)
     candidates = [
         _compact_arb(item, sport, providers, all_markets)
         for item in opportunities
@@ -375,6 +380,7 @@ def _scan_once(
         "positive_candidates": len(candidates),
         "actionable_arbitrage_count": len(actionable_arbitrage),
         "top_candidate": candidates[0] if candidates else None,
+        "top_arbitrage": top_arbitrage[:5],
         "actionable_arbitrage": actionable_arbitrage[:5],
         "middle_count": len(middle_opportunities),
         "positive_middle_count": _positive_count(middle_opportunities, "ev_percent"),

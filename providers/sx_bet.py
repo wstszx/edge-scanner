@@ -1637,6 +1637,7 @@ class SXBetRealtimeManager:
 
     def _run_loop_thread(self) -> None:
         loop = asyncio.new_event_loop()
+        loop.set_exception_handler(self._handle_loop_exception)
         asyncio.set_event_loop(loop)
         with self._state_lock:
             self._loop = loop
@@ -1655,6 +1656,38 @@ class SXBetRealtimeManager:
                 self._loop = None
                 self._connected = False
                 self._started = False
+
+    def _handle_loop_exception(self, loop: asyncio.AbstractEventLoop, context: dict) -> None:
+        exception = context.get("exception")
+        task = context.get("future") or context.get("task")
+        coroutine = task.get_coro() if hasattr(task, "get_coro") else None
+        coroutine_name = _normalize_text(
+            getattr(coroutine, "__qualname__", "")
+            or getattr(getattr(coroutine, "cr_code", None), "co_qualname", "")
+            or getattr(type(coroutine), "__qualname__", "")
+        )
+        message = _normalize_text(context.get("message"))
+        exception_text = _normalize_text(exception)
+        is_centrifugo_reconnect_timeout = (
+            "Client._reconnect" in coroutine_name
+            and isinstance(exception, TimeoutError)
+            and "opening handshake" in exception_text.lower()
+        )
+        exception_type = type(exception)
+        exception_type_name = _normalize_text(getattr(exception_type, "__name__", ""))
+        exception_module = _normalize_text(getattr(exception_type, "__module__", ""))
+        is_centrifugo_disconnect_cancel = (
+            exception_type_name == "ClientDisconnectedError"
+            and exception_module.startswith("centrifuge")
+            and "canceled due to disconnect" in exception_text.lower()
+        )
+        if is_centrifugo_reconnect_timeout:
+            with self._state_lock:
+                self._last_error = f"{message}: {exception_text}".strip(": ")
+            return
+        if is_centrifugo_disconnect_cancel:
+            return
+        loop.default_exception_handler(context)
 
     async def _run_forever_async(self) -> None:
         while not self._stop_requested.is_set():

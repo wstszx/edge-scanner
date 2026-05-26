@@ -21,6 +21,7 @@ ARTLINE_TIMEOUT_RAW = os.getenv("ARTLINE_TIMEOUT_SECONDS", "20").strip()
 ARTLINE_RETRIES_RAW = os.getenv("ARTLINE_RETRIES", "2").strip()
 ARTLINE_RETRY_BACKOFF_RAW = os.getenv("ARTLINE_RETRY_BACKOFF", "0.5").strip()
 ARTLINE_DETAIL_MAX_CONCURRENCY_RAW = os.getenv("ARTLINE_DETAIL_MAX_CONCURRENCY", "8").strip()
+ARTLINE_MIN_BET_RAW = os.getenv("ARTLINE_MIN_BET", "5").strip()
 ARTLINE_USER_AGENT = os.getenv(
     "ARTLINE_USER_AGENT",
     (
@@ -110,6 +111,13 @@ def _safe_float(value: object) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _artline_min_bet() -> float:
+    value = _safe_float(ARTLINE_MIN_BET_RAW)
+    if value is None:
+        return 5.0
+    return max(0.0, value)
 
 
 def _bool_or_none(value: object) -> Optional[bool]:
@@ -256,6 +264,23 @@ def _game_live_state_payload(game: object, games_type: str) -> Optional[dict]:
     if raw_status not in (None, ""):
         payload["provider_status"] = raw_status
     return payload or None
+
+
+def _execution_diagnostics(game: object) -> dict:
+    if not isinstance(game, dict):
+        return {}
+    max_bet = _safe_float(game.get("max_bet"))
+    if max_bet is None:
+        return {}
+    min_bet = _artline_min_bet()
+    diagnostics = {
+        "artline_max_bet": round(float(max_bet), 6),
+        "artline_min_bet": round(float(min_bet), 6),
+        "executable": bool(max_bet >= min_bet),
+    }
+    if max_bet < min_bet:
+        diagnostics["reason"] = "max_bet_below_min_bet"
+    return diagnostics
 
 
 def _outcome_row(name: str, price: float) -> dict:
@@ -565,6 +590,7 @@ async def fetch_events_async(
         "detail_enrichment_failed": 0,
         "events_with_market_count": 0,
         "events_returned_count": 0,
+        "max_bet_below_min_bet_count": 0,
         "retries_used": 0,
     }
     _set_last_stats(stats)
@@ -722,6 +748,25 @@ async def fetch_events_async(
             continue
 
         live_state = _game_live_state_payload(game, games_type)
+        execution_diagnostics = _execution_diagnostics(game)
+        if execution_diagnostics.get("reason") == "max_bet_below_min_bet":
+            stats["max_bet_below_min_bet_count"] += 1
+        bookmaker = {
+            "key": PROVIDER_KEY,
+            "title": PROVIDER_TITLE,
+            "event_id": event_id,
+            "event_url": _event_url(
+                {
+                    "event_id": event_id,
+                    "sport_key": sport_token,
+                    "live_state": live_state,
+                }
+            ),
+            "live_state": live_state,
+            "markets": normalized_markets,
+        }
+        if execution_diagnostics:
+            bookmaker["execution_diagnostics"] = execution_diagnostics
         normalized_event = {
             "id": event_id,
             "sport_key": sport_token,
@@ -729,22 +774,7 @@ async def fetch_events_async(
             "away_team": away_team,
             "commence_time": commence_time,
             "live_state": live_state,
-            "bookmakers": [
-                {
-                    "key": PROVIDER_KEY,
-                    "title": PROVIDER_TITLE,
-                    "event_id": event_id,
-                    "event_url": _event_url(
-                        {
-                            "event_id": event_id,
-                            "sport_key": sport_token,
-                            "live_state": live_state,
-                        }
-                    ),
-                    "live_state": live_state,
-                    "markets": normalized_markets,
-                }
-            ],
+            "bookmakers": [bookmaker],
         }
         stats["events_with_market_count"] += 1
         events_out.append(normalized_event)

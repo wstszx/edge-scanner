@@ -53,6 +53,52 @@ class ArtlineProviderTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_fetch_events_async_surfaces_artline_max_bet_diagnostics_without_max_stake(self) -> None:
+        payload = {
+            "data": {
+                "basketball": {
+                    "games": [
+                        {
+                            "id": 385680025900261,
+                            "is_live": False,
+                            "max_bet": 0.01,
+                            "start_at_timestamp": 1779841800,
+                            "team_1": {"value": "Oklahoma City Thunder"},
+                            "team_2": {"value": "San Antonio Spurs"},
+                            "events": [
+                                {"event_name_value": "0_ml_1", "value": 1.54, "status": 1},
+                                {"event_name_value": "0_ml_2", "value": 2.6, "status": 1},
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+
+        with (
+            patch.object(artline, "get_shared_client", new=_fake_shared_client),
+            patch.object(artline, "_request_json_async", return_value=(_deepcopy(payload), 0)),
+        ):
+            events = await artline.fetch_events_async(
+                "basketball_nba",
+                ["h2h"],
+                ["us"],
+                bookmakers=["artline"],
+            )
+
+        bookmaker = events[0]["bookmakers"][0]
+        self.assertNotIn("max_stake", bookmaker["markets"][0]["outcomes"][0])
+        self.assertEqual(
+            bookmaker["execution_diagnostics"],
+            {
+                "artline_max_bet": 0.01,
+                "artline_min_bet": 5.0,
+                "executable": False,
+                "reason": "max_bet_below_min_bet",
+            },
+        )
+        self.assertEqual(artline.fetch_events_async.last_stats.get("max_bet_below_min_bet_count"), 1)
+
     def test_normalize_game_markets_maps_hockey_detail_moneyline_prefix(self) -> None:
         markets = artline._normalize_game_markets(
             [

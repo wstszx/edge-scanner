@@ -38,6 +38,7 @@ def test_compact_middle_surfaces_execution_risk_fields() -> None:
             "max_stake": 30.0,
             "quote_updated_at": None,
             "is_exchange": True,
+            "execution_diagnostics": {"reason": "max_bet_below_min_bet"},
         },
         "side_b": {
             "bookmaker": "Polymarket",
@@ -66,6 +67,7 @@ def test_compact_middle_surfaces_execution_risk_fields() -> None:
     assert compact["middle_zone"] == "Total 45"
     assert compact["stake"]["limited_by_max_stake"] is True
     assert compact["books"][0]["bookmaker"] == "SX Bet"
+    assert compact["books"][0]["execution_diagnostics"] == {"reason": "max_bet_below_min_bet"}
     assert compact["books"][1]["bookmaker"] == "Polymarket"
     assert "missing_quote_time" in compact["risk_flags"]
     assert "missing_liquidity" in compact["risk_flags"]
@@ -88,6 +90,51 @@ def test_is_actionable_arbitrage_requires_positive_roi_and_clean_execution_quali
     assert hunt_real_arbitrage._is_actionable_arbitrage(actionable)
     assert not hunt_real_arbitrage._is_actionable_arbitrage(missing_liquidity)
     assert not hunt_real_arbitrage._is_actionable_arbitrage(model_negative)
+
+
+def test_scan_once_keeps_top_arbitrage_even_when_not_candidate(monkeypatch) -> None:
+    def fake_run_scan(**kwargs):
+        return {
+            "success": True,
+            "partial": False,
+            "arbitrage": {
+                "opportunities": [
+                    {
+                        "event": "Away vs Home",
+                        "market": "h2h",
+                        "roi_percent": -1.5,
+                        "best_odds": [
+                            {"bookmaker": "Artline", "bookmaker_key": "artline", "price": 2.6},
+                            {"bookmaker": "SX Bet", "bookmaker_key": "sx_bet", "price": 1.58},
+                        ],
+                        "execution_quality": {"status": "low", "flags": ["missing_liquidity"]},
+                        "stakes": {"limited_by_max_stake": False},
+                    }
+                ]
+            },
+            "middles": {"opportunities": [], "summary": {}},
+            "plus_ev": {"opportunities": [], "summary": {}},
+            "scan_diagnostics": {},
+            "custom_providers": {},
+            "sport_errors": [],
+        }
+
+    monkeypatch.setattr(hunt_real_arbitrage, "run_scan", fake_run_scan)
+
+    row = hunt_real_arbitrage._scan_once(
+        "basketball_nba",
+        ["artline", "sx_bet"],
+        api_key="",
+        api_bookmakers=[],
+        all_markets=False,
+        stake=100.0,
+        min_roi=0.01,
+        allowed_quality={"high", "medium"},
+    )
+
+    assert row["arbitrage_count"] == 1
+    assert row["positive_candidates"] == 0
+    assert row["top_arbitrage"][0]["roi_percent"] == -1.5
 
 
 def test_is_actionable_middle_requires_positive_ev_and_no_execution_risks() -> None:
@@ -329,3 +376,13 @@ def test_provider_capability_summary_marks_quote_only_provider() -> None:
     by_key = {item["key"]: item for item in summary}
     assert by_key["bookmaker_xyz"]["liquidity_confidence"] == "quote_only"
     assert by_key["polymarket"]["liquidity_confidence"] in {"explicit", "estimated"}
+
+
+def test_default_dex_providers_include_artline_as_quote_source() -> None:
+    assert "artline" in hunt_real_arbitrage.DEFAULT_PROVIDERS
+    summary = {
+        row["key"]: row
+        for row in hunt_real_arbitrage._provider_capability_summary(hunt_real_arbitrage.DEFAULT_PROVIDERS)
+    }
+
+    assert summary["artline"]["liquidity_confidence"] == "quote_only"

@@ -18,6 +18,9 @@ if str(ROOT_DIR) not in sys.path:
 from tools import hunt_real_arbitrage as hunt
 
 
+DEFAULT_MIN_EXECUTABLE_STAKE = 25.0
+
+
 def _normalize_list(values: Sequence[str] | None) -> list[str]:
     rows: list[str] = []
     seen: set[str] = set()
@@ -241,8 +244,47 @@ def _deduplicate_rows(
     return result
 
 
-def _blocked_reasons(item: dict[str, Any]) -> list[str]:
-    reasons: set[str] = {str(flag).strip() for flag in item.get("risk_flags") or [] if str(flag).strip()}
+def _stake_limit_details(item: dict[str, Any], *, min_executable_stake: float) -> dict[str, Any] | None:
+    minimum_required = max(0.0, float(min_executable_stake))
+    if minimum_required <= 0:
+        return None
+    legs_below_minimum: list[dict[str, Any]] = []
+    available_stakes: list[float] = []
+    for book in item.get("books") or []:
+        if not isinstance(book, dict):
+            continue
+        max_stake = hunt._safe_float(book.get("max_stake"))
+        if max_stake is None:
+            continue
+        available_stakes.append(max_stake)
+        if max_stake < minimum_required:
+            legs_below_minimum.append(
+                {
+                    "bookmaker": book.get("bookmaker") or book.get("bookmaker_key"),
+                    "max_stake": max_stake,
+                }
+            )
+    if not legs_below_minimum:
+        return None
+    return {
+        "minimum_required": minimum_required,
+        "minimum_available": min(available_stakes) if available_stakes else None,
+        "legs_below_minimum": legs_below_minimum,
+    }
+
+
+def _risk_flags_from_item(item: dict[str, Any]) -> set[str]:
+    reasons = {str(flag).strip() for flag in item.get("risk_flags") or [] if str(flag).strip()}
+    quality = item.get("execution_quality") if isinstance(item.get("execution_quality"), dict) else {}
+    for flag in quality.get("flags") or []:
+        text = str(flag).strip()
+        if text:
+            reasons.add(text)
+    return reasons
+
+
+def _blocked_reasons(item: dict[str, Any], *, min_executable_stake: float = 0.0) -> list[str]:
+    reasons = _risk_flags_from_item(item)
     for book in item.get("books") or []:
         if not isinstance(book, dict):
             continue
@@ -251,16 +293,31 @@ def _blocked_reasons(item: dict[str, Any]) -> list[str]:
         max_stake = hunt._safe_float(book.get("max_stake"))
         if capability and capability.liquidity_confidence == "quote_only" and max_stake is None:
             reasons.add(f"{bookmaker_key}_quote_only")
+        diagnostics = book.get("execution_diagnostics")
+        if isinstance(diagnostics, dict) and diagnostics.get("reason") == "max_bet_below_min_bet":
+            reasons.add(f"{bookmaker_key}_max_bet_below_min_bet")
+    roi = hunt._safe_float(item.get("roi_percent"))
+    if roi is not None and roi <= 0:
+        reasons.add("non_positive_roi")
+    if _stake_limit_details(item, min_executable_stake=min_executable_stake):
+        reasons.add("stake_below_minimum")
     return sorted(reasons)
 
 
-def _annotate_blocked_reasons(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+def _annotate_blocked_reasons(
+    rows: Sequence[dict[str, Any]],
+    *,
+    min_executable_stake: float = 0.0,
+) -> list[dict[str, Any]]:
     annotated: list[dict[str, Any]] = []
     for row in rows:
         if not isinstance(row, dict):
             continue
         current = dict(row)
-        current["blocked_reasons"] = _blocked_reasons(current)
+        stake_limit = _stake_limit_details(current, min_executable_stake=min_executable_stake)
+        current["blocked_reasons"] = _blocked_reasons(current, min_executable_stake=min_executable_stake)
+        if stake_limit:
+            current["stake_limit"] = stake_limit
         annotated.append(current)
     return annotated
 
@@ -344,6 +401,16 @@ def _model_only_middles(middles: Sequence[dict[str, Any]]) -> list[dict[str, Any
     return rows
 
 
+def _model_only_arbitrage(arbitrage_rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = [
+        item
+        for item in arbitrage_rows
+        if isinstance(item, dict) and not hunt._is_actionable_arbitrage(item)
+    ]
+    rows.sort(key=lambda item: hunt._safe_float(item.get("roi_percent")) or -999.0, reverse=True)
+    return rows
+
+
 def _sort_desc(rows: list[dict[str, Any]], key: str) -> None:
     rows.sort(key=lambda item: hunt._safe_float(item.get(key)) or -999.0, reverse=True)
 
@@ -385,7 +452,9 @@ def _render_markdown_summary(payload: dict[str, Any], *, source_json: str) -> st
         f"- scan_count: {summary.get('scan_count', 0)}",
         f"- require_explicit_liquidity: {summary.get('require_explicit_liquidity', False)}",
         f"- max_quote_skew_seconds: {summary.get('max_quote_skew_seconds', 0)}",
+        f"- min_executable_stake: {summary.get('min_executable_stake', 0)}",
         f"- actionable_arbitrage_count: {summary.get('actionable_arbitrage_count', 0)}",
+        f"- model_only_arbitrage_count: {summary.get('model_only_arbitrage_count', 0)}",
         f"- actionable_middle_count: {summary.get('actionable_middle_count', 0)}",
         f"- execution_risky_middle_count: {summary.get('execution_risky_middle_count', 0)}",
         f"- model_only_middle_count: {summary.get('model_only_middle_count', 0)}",
@@ -408,6 +477,16 @@ def _render_markdown_summary(payload: dict[str, Any], *, source_json: str) -> st
     risky_middles = [item for item in payload.get("execution_risky_middles") or [] if isinstance(item, dict)]
     lines.extend(_format_opportunity_row(item, risk_key="execution_risks") for item in risky_middles[:5])
     if not risky_middles:
+        lines.append("- none")
+
+    lines.extend(["", "## Top Model-Only Arbitrage"])
+    model_only_arbitrage = [
+        item for item in payload.get("model_only_arbitrage") or [] if isinstance(item, dict)
+    ]
+    lines.extend(
+        _format_opportunity_row(item, risk_key="blocked_reasons") for item in model_only_arbitrage[:5]
+    )
+    if not model_only_arbitrage:
         lines.append("- none")
 
     lines.extend(["", "## Top Model-Only Middles"])
@@ -446,6 +525,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Only scan provider sets whose legs have explicit executable liquidity metadata.",
     )
+    parser.add_argument(
+        "--min-executable-stake",
+        type=float,
+        default=DEFAULT_MIN_EXECUTABLE_STAKE,
+        help="Minimum per-leg stake required before a model-only middle is considered executable-looking.",
+    )
     parser.add_argument("--out", default=str(Path("data") / "provider_verification" / "dex_opportunities_latest.json"))
     parser.add_argument(
         "--summary-out",
@@ -465,6 +550,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     scans: list[dict[str, Any]] = []
     candidates: list[dict[str, Any]] = []
+    top_arbitrage: list[dict[str, Any]] = []
     actionable_arbitrage: list[dict[str, Any]] = []
     top_middles: list[dict[str, Any]] = []
     actionable_middles: list[dict[str, Any]] = []
@@ -489,6 +575,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if isinstance(top_candidate, dict):
                     top_candidate["job_name"] = job["name"]
                     candidates.append(top_candidate)
+                for item in row.get("top_arbitrage") or []:
+                    if isinstance(item, dict):
+                        item["job_name"] = job["name"]
+                        top_arbitrage.append(item)
                 for item in row.get("actionable_arbitrage") or []:
                     if isinstance(item, dict):
                         item["job_name"] = job["name"]
@@ -515,6 +605,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
 
         candidates = _deduplicate_rows(candidates, key_factory=_arb_key, metric_key="roi_percent")
+        top_arbitrage = _deduplicate_rows(top_arbitrage, key_factory=_arb_key, metric_key="roi_percent")
         actionable_arbitrage = _deduplicate_rows(
             actionable_arbitrage,
             key_factory=_arb_key,
@@ -531,8 +622,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_quote_skew_seconds=max(0, int(args.max_quote_skew_seconds)),
         )
         plus_ev = _deduplicate_rows(plus_ev, key_factory=_plus_ev_key, metric_key="edge_percent")
-        model_only_middles = _annotate_blocked_reasons(_model_only_middles(top_middles))
-        blocked_reason_counts = _blocked_reason_counts(model_only_middles)
+        min_executable_stake = max(0.0, float(args.min_executable_stake))
+        model_only_arbitrage = _annotate_blocked_reasons(
+            _model_only_arbitrage(top_arbitrage),
+            min_executable_stake=min_executable_stake,
+        )
+        model_only_middles = _annotate_blocked_reasons(
+            _model_only_middles(top_middles),
+            min_executable_stake=min_executable_stake,
+        )
+        blocked_reason_counts = _blocked_reason_counts([*model_only_arbitrage, *model_only_middles])
         execution_risk_counts = _execution_risk_counts(execution_risky_middles)
 
         payload = {
@@ -540,6 +639,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "scan_count": len(scans),
                 "candidate_count": len(candidates),
                 "actionable_arbitrage_count": len(actionable_arbitrage),
+                "model_only_arbitrage_count": len(model_only_arbitrage),
                 "actionable_middle_count": len(actionable_middles),
                 "execution_risky_middle_count": len(execution_risky_middles),
                 "model_only_middle_count": len(model_only_middles),
@@ -548,14 +648,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "execution_risk_counts": execution_risk_counts,
                 "require_explicit_liquidity": bool(args.require_explicit_liquidity),
                 "max_quote_skew_seconds": max(0, int(args.max_quote_skew_seconds)),
+                "min_executable_stake": min_executable_stake,
             },
             "jobs": jobs,
             "scans": scans,
             "candidates": candidates[:20],
             "actionable_arbitrage": actionable_arbitrage[:20],
+            "model_only_arbitrage": model_only_arbitrage[:20],
             "actionable_middles": actionable_middles[:20],
             "execution_risky_middles": execution_risky_middles[:20],
             "model_only_middles": model_only_middles[:20],
+            "top_arbitrage": top_arbitrage[:20],
             "top_middles": top_middles[:20],
             "top_plus_ev": plus_ev[:20],
             "provider_capabilities": hunt._provider_capability_summary(hunt.DEFAULT_PROVIDERS),
@@ -575,6 +678,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"No actionable opportunity found; wrote {args.out} and {args.summary_out} "
             f"candidates={len(candidates)} "
+            f"model_only_arbitrage={len(model_only_arbitrage)} "
             f"execution_risky_middles={len(execution_risky_middles)} "
             f"model_only_middles={len(model_only_middles)} "
             f"plus_ev={len(plus_ev)}"

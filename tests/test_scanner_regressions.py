@@ -1073,6 +1073,69 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertEqual(source_by_book.get("sx_bet"), "ws")
         self.assertEqual(source_by_book.get("book_b"), "rest_snapshot")
 
+    def test_collect_market_entries_preserves_book_execution_diagnostics(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "artline",
+                    "title": "Artline",
+                    "execution_diagnostics": {
+                        "artline_max_bet": 0.01,
+                        "artline_min_bet": 5.0,
+                        "executable": False,
+                        "reason": "max_bet_below_min_bet",
+                    },
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 2.4},
+                                {"name": "Away Team", "price": 1.6},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "sx_bet",
+                    "title": "SX Bet",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {"name": "Home Team", "price": 1.6, "max_stake": 100.0},
+                                {"name": "Away Team", "price": 2.4, "max_stake": 100.0},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.0,
+        )
+
+        self.assertTrue(entries)
+        artline_leg = next(
+            item for item in entries[0]["best_odds"] if item.get("bookmaker_key") == "artline"
+        )
+        self.assertEqual(
+            artline_leg.get("execution_diagnostics"),
+            {
+                "artline_max_bet": 0.01,
+                "artline_min_bet": 5.0,
+                "executable": False,
+                "reason": "max_bet_below_min_bet",
+            },
+        )
+
     def test_collect_market_entries_surfaces_observed_at_as_quote_time_for_snapshot_sources(self) -> None:
         game = {
             "sport_key": "basketball_nba",
