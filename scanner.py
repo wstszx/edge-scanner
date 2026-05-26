@@ -65,6 +65,7 @@ from config import (
     normalize_supported_bookmakers,
 )
 from providers import PROVIDER_FETCHERS, PROVIDER_TITLES, resolve_provider_key
+from providers import _async_http as _provider_async_http
 import scanner_request_logging as _request_logging
 from scanner_request_logging import (
     SCAN_REQUEST_LOG_DIR,
@@ -348,6 +349,10 @@ class _ScanAsyncRuntime:
         try:
             loop.run_forever()
         finally:
+            try:
+                loop.run_until_complete(_provider_async_http.close_shared_clients_for_loop(loop))
+            except Exception:
+                pass
             pending = asyncio.all_tasks(loop)
             for task in pending:
                 task.cancel()
@@ -2754,6 +2759,17 @@ def _apply_commission(price: float, bookmaker_key_or_rate, default_commission_ra
     return 1.0 + edge * (1.0 - commission_rate)
 
 
+def _effective_commission_rate(bookmaker_key: object, default_commission_rate: object) -> float:
+    key = _normalize_line_component(bookmaker_key)
+    configured_rate = _safe_float(default_commission_rate) or 0.0
+    provider_rate = _safe_float(PROVIDER_COMMISSION_RATES.get(key)) or 0.0
+    if key == "polymarket":
+        return max(provider_rate, configured_rate)
+    if key in EXCHANGE_KEYS:
+        return configured_rate
+    return 0.0
+
+
 def _sharp_priority(selected_key: str) -> List[dict]:
     priority = []
     seen = set()
@@ -3326,15 +3342,24 @@ def _record_line_offers(
                 display_name = _outcome_display_name(outcome)
                 is_exchange = bookmaker_key_normalized in EXCHANGE_KEYS
                 effective_price = _apply_commission(display_price, bookmaker_key_normalized, commission_rate)
+                fee_rate = _effective_commission_rate(bookmaker_key_normalized, commission_rate)
                 entry.setdefault(outcome_key, []).append(
                     {
                         "effective_price": effective_price,
+                        "fee_rate": fee_rate,
                         "display_price": display_price,
                         "raw_percentage_odds": outcome.get("raw_percentage_odds"),
                         "quote_updated_at": _epoch_to_iso(
                             _quote_display_timestamp_seconds(game, book, market, outcome) or 0.0
                         ),
                         "quote_source": outcome.get("quote_source") or outcome.get("source"),
+                        "market_hash": outcome.get("market_hash") or outcome.get("marketHash"),
+                        "token_id": outcome.get("token_id") or outcome.get("tokenId"),
+                        "asset_id": outcome.get("asset_id") or outcome.get("assetId"),
+                        "condition_id": outcome.get("condition_id") or outcome.get("conditionId"),
+                        "outcome_index": outcome.get("outcome_index")
+                        if outcome.get("outcome_index") is not None
+                        else outcome.get("outcomeIndex"),
                         "live_state": book_live_state,
                         "bookmaker": bookmaker,
                         "bookmaker_key": bookmaker_key_normalized or bookmaker_key,
@@ -3495,6 +3520,7 @@ def _collect_market_entries(
                 "bookmaker_key": o.get("bookmaker_key"),
                 "price": o["display_price"],
                 "effective_price": o["effective_price"],
+                "fee_rate": o.get("fee_rate"),
                 "point": o.get("point"),
                 "max_stake": o.get("max_stake"),
                 "is_exchange": o.get("is_exchange", False),
@@ -3503,6 +3529,11 @@ def _collect_market_entries(
                 "quote_updated_at": o.get("quote_updated_at"),
                 "quote_source": o.get("quote_source"),
                 "raw_percentage_odds": o.get("raw_percentage_odds"),
+                "market_hash": o.get("market_hash"),
+                "token_id": o.get("token_id"),
+                "asset_id": o.get("asset_id"),
+                "condition_id": o.get("condition_id"),
+                "outcome_index": o.get("outcome_index"),
                 "execution_diagnostics": o.get("execution_diagnostics"),
             }
             for o in outcomes
@@ -3592,6 +3623,7 @@ def _collect_middle_opportunities(
                     continue
                 is_exchange = bookmaker_key in EXCHANGE_KEYS
                 effective_price = _apply_commission(display_price, bookmaker_key, commission_rate)
+                fee_rate = _effective_commission_rate(bookmaker_key, commission_rate)
                 offers.append(
                     {
                         "pair_key": f"{bookmaker_key}:{name}:{point_value}",
@@ -3601,11 +3633,19 @@ def _collect_middle_opportunities(
                         "line": point_value,
                         "display_price": display_price,
                         "effective_price": effective_price,
+                        "fee_rate": fee_rate,
                         "quote_updated_at": _epoch_to_iso(
                             _quote_display_timestamp_seconds(game, book, market, outcome) or 0.0
                         ),
                         "quote_source": outcome.get("quote_source") or outcome.get("source"),
                         "raw_percentage_odds": outcome.get("raw_percentage_odds"),
+                        "market_hash": outcome.get("market_hash") or outcome.get("marketHash"),
+                        "token_id": outcome.get("token_id") or outcome.get("tokenId"),
+                        "asset_id": outcome.get("asset_id") or outcome.get("assetId"),
+                        "condition_id": outcome.get("condition_id") or outcome.get("conditionId"),
+                        "outcome_index": outcome.get("outcome_index")
+                        if outcome.get("outcome_index") is not None
+                        else outcome.get("outcomeIndex"),
                         "liquidity_provenance": outcome.get("liquidity_provenance"),
                         "execution_diagnostics": copy.deepcopy(book.get("execution_diagnostics"))
                         if isinstance(book.get("execution_diagnostics"), dict)
@@ -3927,12 +3967,19 @@ def _build_middle_entry(
             "price": side_a["display_price"],
             "effective_price": side_a["effective_price"],
             "bookmaker": side_a["bookmaker"],
+            "bookmaker_key": side_a.get("bookmaker_key"),
             "max_stake": side_a.get("max_stake"),
+            "fee_rate": side_a.get("fee_rate"),
             "is_exchange": side_a["is_exchange"],
             "quote_updated_at": side_a.get("quote_updated_at"),
             "quote_source": side_a.get("quote_source"),
             "liquidity_provenance": side_a.get("liquidity_provenance"),
             "raw_percentage_odds": side_a.get("raw_percentage_odds"),
+            "market_hash": side_a.get("market_hash"),
+            "token_id": side_a.get("token_id"),
+            "asset_id": side_a.get("asset_id"),
+            "condition_id": side_a.get("condition_id"),
+            "outcome_index": side_a.get("outcome_index"),
         },
         {
             "team": side_b["team"],
@@ -3940,12 +3987,19 @@ def _build_middle_entry(
             "price": side_b["display_price"],
             "effective_price": side_b["effective_price"],
             "bookmaker": side_b["bookmaker"],
+            "bookmaker_key": side_b.get("bookmaker_key"),
             "max_stake": side_b.get("max_stake"),
+            "fee_rate": side_b.get("fee_rate"),
             "is_exchange": side_b["is_exchange"],
             "quote_updated_at": side_b.get("quote_updated_at"),
             "quote_source": side_b.get("quote_source"),
             "liquidity_provenance": side_b.get("liquidity_provenance"),
             "raw_percentage_odds": side_b.get("raw_percentage_odds"),
+            "market_hash": side_b.get("market_hash"),
+            "token_id": side_b.get("token_id"),
+            "asset_id": side_b.get("asset_id"),
+            "condition_id": side_b.get("condition_id"),
+            "outcome_index": side_b.get("outcome_index"),
         },
     )
     stakes_payload = {

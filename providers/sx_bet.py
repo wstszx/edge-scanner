@@ -3429,6 +3429,11 @@ async def fetch_events_async(
                 "price": round(float(odds_two), 6),
             },
         ]
+        if market_hash:
+            outcomes[0]["market_hash"] = str(market_hash)
+            outcomes[1]["market_hash"] = str(market_hash)
+        outcomes[0]["outcome_index"] = 0
+        outcomes[1]["outcome_index"] = 1
         point_one = _safe_float(candidate.get("outcome_one_point"))
         point_two = _safe_float(candidate.get("outcome_two_point"))
         if point_one is not None:

@@ -27,27 +27,37 @@ def test_compact_middle_surfaces_execution_risk_fields() -> None:
         "gross_ev_percent": 0.5,
         "stakes": {
             "total": 100.0,
+            "requested_total": 100.0,
             "limited_by_max_stake": True,
             "max_executable_total": 40.0,
+            "side_a": {"stake": 48.78, "bookmaker": "SX Bet"},
+            "side_b": {"stake": 51.22, "bookmaker": "Polymarket"},
         },
         "side_a": {
             "bookmaker": "SX Bet",
+            "bookmaker_key": "sx_bet",
             "price": 2.1,
             "effective_price": 2.05,
             "line": 44.5,
             "max_stake": 30.0,
             "quote_updated_at": None,
             "is_exchange": True,
+            "market_hash": "0xsxhash",
+            "outcome_index": 0,
             "execution_diagnostics": {"reason": "max_bet_below_min_bet"},
         },
         "side_b": {
             "bookmaker": "Polymarket",
+            "bookmaker_key": "polymarket",
             "price": 2.0,
             "effective_price": 1.96,
             "line": 46.0,
             "max_stake": None,
             "quote_updated_at": "2026-05-25T09:00:00Z",
             "is_exchange": True,
+            "token_id": "poly-total-under",
+            "asset_id": "poly-total-under",
+            "outcome_index": 1,
         },
         "gap": {
             "points": 1.5,
@@ -65,10 +75,20 @@ def test_compact_middle_surfaces_execution_risk_fields() -> None:
     assert compact["ev_percent"] == -1.25
     assert compact["gross_ev_percent"] == 0.5
     assert compact["middle_zone"] == "Total 45"
+    assert compact["stake"]["requested_total"] == 100.0
     assert compact["stake"]["limited_by_max_stake"] is True
+    assert compact["stake"]["side_a"] == {"stake": 48.78, "bookmaker": "SX Bet"}
+    assert compact["stake"]["side_b"] == {"stake": 51.22, "bookmaker": "Polymarket"}
     assert compact["books"][0]["bookmaker"] == "SX Bet"
+    assert compact["books"][0]["bookmaker_key"] == "sx_bet"
+    assert compact["books"][0]["market_hash"] == "0xsxhash"
+    assert compact["books"][0]["outcome_index"] == 0
     assert compact["books"][0]["execution_diagnostics"] == {"reason": "max_bet_below_min_bet"}
     assert compact["books"][1]["bookmaker"] == "Polymarket"
+    assert compact["books"][1]["bookmaker_key"] == "polymarket"
+    assert compact["books"][1]["token_id"] == "poly-total-under"
+    assert compact["books"][1]["asset_id"] == "poly-total-under"
+    assert compact["books"][1]["outcome_index"] == 1
     assert "missing_quote_time" in compact["risk_flags"]
     assert "missing_liquidity" in compact["risk_flags"]
     assert "stake_limited" in compact["risk_flags"]
@@ -135,6 +155,44 @@ def test_scan_once_keeps_top_arbitrage_even_when_not_candidate(monkeypatch) -> N
     assert row["arbitrage_count"] == 1
     assert row["positive_candidates"] == 0
     assert row["top_arbitrage"][0]["roi_percent"] == -1.5
+
+
+def test_compact_arb_surfaces_provider_execution_ids() -> None:
+    item = {
+        "event": "Away vs Home",
+        "market": "h2h",
+        "roi_percent": 1.2,
+        "best_odds": [
+            {
+                "outcome": "Home",
+                "bookmaker": "SX Bet",
+                "bookmaker_key": "sx_bet",
+                "price": 2.25,
+                "market_hash": "0xsxhash",
+                "outcome_index": 0,
+            },
+            {
+                "outcome": "Away",
+                "bookmaker": "Polymarket",
+                "bookmaker_key": "polymarket",
+                "price": 1.85,
+                "effective_price": 1.84,
+                "fee_rate": 0.03,
+                "token_id": "poly-token-away",
+                "asset_id": "poly-token-away",
+                "outcome_index": 1,
+            },
+        ],
+    }
+
+    compact = hunt_real_arbitrage._compact_arb(item, "basketball_nba", ["sx_bet", "polymarket"], False)
+
+    assert compact["books"][0]["market_hash"] == "0xsxhash"
+    assert compact["books"][0]["outcome_index"] == 0
+    assert compact["books"][1]["token_id"] == "poly-token-away"
+    assert compact["books"][1]["asset_id"] == "poly-token-away"
+    assert compact["books"][1]["outcome_index"] == 1
+    assert compact["books"][1]["fee_rate"] == 0.03
 
 
 def test_is_actionable_middle_requires_positive_ev_and_no_execution_risks() -> None:

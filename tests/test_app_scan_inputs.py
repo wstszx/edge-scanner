@@ -1,7 +1,10 @@
 import copy
+import json
+import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import app as app_module
@@ -755,6 +758,176 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(len(history_payload.get("opportunities") or []), 1)
         self.assertEqual(len(history_payload.get("middles") or []), 1)
         self.assertEqual(len(history_payload.get("plus_ev") or []), 1)
+
+    def test_execute_scan_payload_records_middle_paper_trades(self) -> None:
+        middle = {
+            "id": "middle-1",
+            "sport": "basketball_nba",
+            "event": "San Antonio Spurs vs Oklahoma City Thunder",
+            "market": "spreads",
+            "middle_zone": "Spurs by 4-5",
+            "ev_percent": 23.07,
+            "probability_percent": 5.0,
+            "stakes": {
+                "requested_total": 100.0,
+                "total": 100.0,
+                "limited_by_max_stake": False,
+                "max_executable_total": 209.84,
+                "side_a": {"stake": 37.59, "payout": 117.22},
+                "side_b": {"stake": 62.41, "payout": 117.2},
+            },
+            "side_a": {
+                "team": "San Antonio Spurs",
+                "bookmaker": "Polymarket",
+                "bookmaker_key": "polymarket",
+                "price": 3.125,
+                "effective_price": 3.118472,
+                "line": -3.5,
+                "max_stake": 244.2048,
+                "quote_updated_at": "2026-05-26T08:39:57Z",
+                "quote_source": "clob_book_best_ask",
+                "fee_rate": 0.03,
+                "token_id": "poly-token-spurs",
+                "asset_id": "poly-token-spurs",
+                "outcome_index": 0,
+                "is_exchange": True,
+            },
+            "side_b": {
+                "team": "Oklahoma City Thunder",
+                "bookmaker": "SX Bet",
+                "bookmaker_key": "sx_bet",
+                "price": 1.877934,
+                "effective_price": 1.877934,
+                "line": 5.5,
+                "max_stake": 130.96875,
+                "quote_updated_at": "2026-05-26T08:39:52Z",
+                "quote_source": "rest_snapshot",
+                "fee_rate": 0.0,
+                "market_hash": "0xsxhash",
+                "outcome_index": 1,
+                "is_exchange": True,
+            },
+        }
+        result_payload = {
+            "success": True,
+            "scan_time": "2026-05-26T08:40:00Z",
+            "arbitrage": {"opportunities": []},
+            "middles": {"opportunities": [middle]},
+            "plus_ev": {"opportunities": []},
+        }
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ledger_path = Path(temp_dir) / "paper_trades.jsonl"
+            with (
+                patch.object(app_module, "PAPER_TRADE_LEDGER_PATH", ledger_path),
+                patch.object(app_module, "run_scan", return_value=result_payload),
+                patch.object(app_module, "get_history_manager", return_value=history_manager),
+                patch.object(app_module, "get_notifier", return_value=notifier),
+            ):
+                payload = app_module._execute_scan_payload({})
+
+        self.assertEqual(payload["middle_execution_tickets"][0]["status"], "paper_ready")
+        self.assertEqual(payload["paper_trade_summary"]["created_count"], 1)
+        self.assertEqual(len(payload["paper_trades"]), 1)
+        self.assertEqual(payload["paper_trades"][0]["event"], "San Antonio Spurs vs Oklahoma City Thunder")
+
+    def test_execute_scan_payload_records_arbitrage_paper_trades(self) -> None:
+        arbitrage = {
+            "id": "arb-1",
+            "event_id": "event-1",
+            "sport": "basketball_nba",
+            "event": "Los Angeles Lakers vs Boston Celtics",
+            "market": "h2h",
+            "roi_percent": 7.36,
+            "stakes": {
+                "requested_total": 100.0,
+                "total": 100.0,
+                "limited_by_max_stake": False,
+                "breakdown": [
+                    {"outcome": "Los Angeles Lakers", "stake": 48.78, "payout": 107.32},
+                    {"outcome": "Boston Celtics", "stake": 51.22, "payout": 107.56},
+                ],
+            },
+            "execution_quality": {"status": "high", "flags": []},
+            "best_odds": [
+                {
+                    "outcome": "Los Angeles Lakers",
+                    "bookmaker": "SX Bet",
+                    "bookmaker_key": "sx_bet",
+                    "price": 2.2,
+                    "effective_price": 2.2,
+                    "max_stake": 150.0,
+                    "quote_updated_at": "2026-05-26T08:39:57Z",
+                    "quote_source": "rest_snapshot",
+                    "market_hash": "0xsxarb",
+                    "outcome_index": 0,
+                    "is_exchange": True,
+                },
+                {
+                    "outcome": "Boston Celtics",
+                    "bookmaker": "Polymarket",
+                    "bookmaker_key": "polymarket",
+                    "price": 2.1,
+                    "effective_price": 2.097,
+                    "max_stake": 160.0,
+                    "quote_updated_at": "2026-05-26T08:39:52Z",
+                    "quote_source": "clob_book_best_ask",
+                    "fee_rate": 0.03,
+                    "token_id": "poly-token-celtics",
+                    "asset_id": "poly-token-celtics",
+                    "outcome_index": 1,
+                    "is_exchange": True,
+                },
+            ],
+        }
+        result_payload = {
+            "success": True,
+            "scan_time": "2026-05-26T08:40:00Z",
+            "arbitrage": {"opportunities": [arbitrage]},
+            "middles": {"opportunities": []},
+            "plus_ev": {"opportunities": []},
+        }
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ledger_path = Path(temp_dir) / "paper_trades.jsonl"
+            with (
+                patch.object(app_module, "PAPER_TRADE_LEDGER_PATH", ledger_path),
+                patch.object(app_module, "run_scan", return_value=result_payload),
+                patch.object(app_module, "get_history_manager", return_value=history_manager),
+                patch.object(app_module, "get_notifier", return_value=notifier),
+            ):
+                payload = app_module._execute_scan_payload({})
+
+        self.assertEqual(payload["execution_tickets"][0]["status"], "paper_ready")
+        self.assertEqual(payload["paper_trade_summary"]["arbitrage_ready_count"], 1)
+        self.assertEqual(payload["paper_trades"][0]["execution_type"], "arbitrage")
+        self.assertEqual(payload["paper_trades"][0]["event"], "Los Angeles Lakers vs Boston Celtics")
+
+    def test_paper_trades_endpoint_reads_recent_ledger_records(self) -> None:
+        record = {
+            "paper_trade_key": "paper-1",
+            "created_at": "2026-05-26T08:40:00Z",
+            "status": "open",
+            "event": "San Antonio Spurs vs Oklahoma City Thunder",
+            "ticket": {"status": "paper_ready", "legs": []},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ledger_path = Path(temp_dir) / "paper_trades.jsonl"
+            ledger_path.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+            with patch.object(app_module, "PAPER_TRADE_LEDGER_PATH", ledger_path):
+                response = self.client.get("/paper-trades?limit=10")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["records"][0]["event"], "San Antonio Spurs vs Oklahoma City Thunder")
 
     def test_execute_scan_payload_preserves_negative_roi_arbitrage_results_from_run_scan(self) -> None:
         result_payload = {

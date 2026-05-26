@@ -791,6 +791,12 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcomes[1]["observed_at"], 1773593001.0)
         self.assertEqual(outcomes[0]["last_updated"], 1773593000.0)
         self.assertEqual(outcomes[1]["last_updated"], 1773593001.0)
+        self.assertEqual(outcomes[0].get("token_id"), "token-a")
+        self.assertEqual(outcomes[1].get("token_id"), "token-b")
+        self.assertEqual(outcomes[0].get("asset_id"), "token-a")
+        self.assertEqual(outcomes[1].get("asset_id"), "token-b")
+        self.assertEqual(outcomes[0].get("outcome_index"), 0)
+        self.assertEqual(outcomes[1].get("outcome_index"), 1)
         stats = polymarket.fetch_events_async.last_stats
         self.assertEqual(stats.get("realtime_market_books_hit"), 1)
         self.assertEqual(stats.get("realtime_market_books_missed"), 1)

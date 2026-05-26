@@ -3073,6 +3073,8 @@ def _market_outcome_row(
     quote_source: object = None,
     observed_at: object = None,
     last_updated: object = None,
+    token_id: object = None,
+    outcome_index: object = None,
 ) -> dict:
     row = {"name": name, "price": round(float(price), 6)}
     if stake is not None and stake > 0:
@@ -3086,6 +3088,12 @@ def _market_outcome_row(
         row["observed_at"] = observed_at
     if last_updated not in (None, ""):
         row["last_updated"] = last_updated
+    normalized_token_id = _normalize_text(token_id)
+    if normalized_token_id:
+        row["token_id"] = normalized_token_id
+        row["asset_id"] = normalized_token_id
+    if outcome_index is not None:
+        row["outcome_index"] = outcome_index
     return row
 
 
@@ -3153,6 +3161,8 @@ def _pick_match_markets(
                     "quote_source": quote_source,
                     "observed_at": quote_observed_at,
                     "last_updated": quote_last_updated,
+                    "token_id": token_ids[idx] if idx < len(token_ids) else None,
+                    "outcome_index": idx,
                 }
             )
         if len(quote_details) != 2:
@@ -3197,6 +3207,8 @@ def _pick_match_markets(
                         quote_details[direct_team_index].get("quote_source"),
                         quote_details[direct_team_index].get("observed_at"),
                         quote_details[direct_team_index].get("last_updated"),
+                        quote_details[direct_team_index].get("token_id"),
+                        quote_details[direct_team_index].get("outcome_index"),
                     ),
                     "point": spread_candidate["line"],
                 }
@@ -3209,6 +3221,8 @@ def _pick_match_markets(
                         quote_details[opposite_team_index].get("quote_source"),
                         quote_details[opposite_team_index].get("observed_at"),
                         quote_details[opposite_team_index].get("last_updated"),
+                        quote_details[opposite_team_index].get("token_id"),
+                        quote_details[opposite_team_index].get("outcome_index"),
                     ),
                     "point": round(-spread_candidate["line"], 6),
                 }
@@ -3242,6 +3256,8 @@ def _pick_match_markets(
                             quote_details[0]["quote_source"],
                             quote_details[0].get("observed_at"),
                             quote_details[0].get("last_updated"),
+                            quote_details[0].get("token_id"),
+                            quote_details[0].get("outcome_index"),
                         ),
                         _market_outcome_row(
                             outcomes[1],
@@ -3251,6 +3267,8 @@ def _pick_match_markets(
                             quote_details[1]["quote_source"],
                             quote_details[1].get("observed_at"),
                             quote_details[1].get("last_updated"),
+                            quote_details[1].get("token_id"),
+                            quote_details[1].get("outcome_index"),
                         ),
                     ],
                     "volume": _safe_float(market.get("volumeNum") or market.get("volume")) or 0.0,
@@ -3287,6 +3305,8 @@ def _pick_match_markets(
                     "quote_source": yes_quote.get("quote_source"),
                     "observed_at": yes_quote.get("observed_at"),
                     "last_updated": yes_quote.get("last_updated"),
+                    "token_id": yes_quote.get("token_id"),
+                    "outcome_index": yes_quote.get("outcome_index"),
                 }
                 continue
             if "draw" in question:
@@ -3303,11 +3323,15 @@ def _pick_match_markets(
                     yes_by_team[home_token] = {
                         **dict(yes_quote),
                         "tradeable_without_clob": _market_supports_gamma_tradeable_fallback(market),
+                        "token_id": yes_quote.get("token_id"),
+                        "outcome_index": yes_quote.get("outcome_index"),
                     }
                 elif team_token == away_token:
                     yes_by_team[away_token] = {
                         **dict(yes_quote),
                         "tradeable_without_clob": _market_supports_gamma_tradeable_fallback(market),
+                        "token_id": yes_quote.get("token_id"),
+                        "outcome_index": yes_quote.get("outcome_index"),
                     }
 
     if direct_candidates:
@@ -3332,6 +3356,8 @@ def _pick_match_markets(
                                 home_outcome.get("quote_source"),
                                 home_outcome.get("observed_at"),
                                 home_outcome.get("last_updated"),
+                                home_outcome.get("token_id"),
+                                home_outcome.get("outcome_index"),
                             ),
                             _market_outcome_row(
                                 away_team,
@@ -3341,6 +3367,8 @@ def _pick_match_markets(
                                 away_outcome.get("quote_source"),
                                 away_outcome.get("observed_at"),
                                 away_outcome.get("last_updated"),
+                                away_outcome.get("token_id"),
+                                away_outcome.get("outcome_index"),
                             ),
                         ],
                     }
@@ -3374,6 +3402,8 @@ def _pick_match_markets(
                                 home_data.get("quote_source"),
                                 home_data.get("observed_at"),
                                 home_data.get("last_updated"),
+                                home_data.get("token_id"),
+                                home_data.get("outcome_index"),
                             ),
                             _market_outcome_row(
                                 away_team,
@@ -3383,6 +3413,8 @@ def _pick_match_markets(
                                 away_data.get("quote_source"),
                                 away_data.get("observed_at"),
                                 away_data.get("last_updated"),
+                                away_data.get("token_id"),
+                                away_data.get("outcome_index"),
                             ),
                         ],
                     }
@@ -3400,6 +3432,8 @@ def _pick_match_markets(
                                 home_data.get("quote_source"),
                                 home_data.get("observed_at"),
                                 home_data.get("last_updated"),
+                                home_data.get("token_id"),
+                                home_data.get("outcome_index"),
                             ),
                             _market_outcome_row(
                                 "Draw",
@@ -3409,6 +3443,8 @@ def _pick_match_markets(
                                 draw_yes.get("quote_source"),
                                 draw_yes.get("observed_at"),
                                 draw_yes.get("last_updated"),
+                                draw_yes.get("token_id"),
+                                draw_yes.get("outcome_index"),
                             ),
                             _market_outcome_row(
                                 away_team,
@@ -3418,6 +3454,8 @@ def _pick_match_markets(
                                 away_data.get("quote_source"),
                                 away_data.get("observed_at"),
                                 away_data.get("last_updated"),
+                                away_data.get("token_id"),
+                                away_data.get("outcome_index"),
                             ),
                         ],
                     }
@@ -3446,6 +3484,8 @@ def _pick_match_markets(
                                 home_data.get("quote_source"),
                                 home_data.get("observed_at"),
                                 home_data.get("last_updated"),
+                                home_data.get("token_id"),
+                                home_data.get("outcome_index"),
                             ),
                             "point": round(float(canonical_line), 6),
                         },
@@ -3458,6 +3498,8 @@ def _pick_match_markets(
                                 away_data.get("quote_source"),
                                 away_data.get("observed_at"),
                                 away_data.get("last_updated"),
+                                away_data.get("token_id"),
+                                away_data.get("outcome_index"),
                             ),
                             "point": round(-float(canonical_line), 6),
                         },
@@ -3482,6 +3524,8 @@ def _pick_match_markets(
                         btts_yes.get("quote_source"),
                         btts_yes.get("observed_at"),
                         btts_yes.get("last_updated"),
+                        btts_yes.get("token_id"),
+                        btts_yes.get("outcome_index"),
                     ),
                     _market_outcome_row(
                         "No",
@@ -3491,6 +3535,8 @@ def _pick_match_markets(
                         btts_no.get("quote_source"),
                         btts_no.get("observed_at"),
                         btts_no.get("last_updated"),
+                        btts_no.get("token_id"),
+                        btts_no.get("outcome_index"),
                     ),
                 ],
             }
@@ -3516,6 +3562,8 @@ def _pick_match_markets(
                                 over_data.get("quote_source"),
                                 over_data.get("observed_at"),
                                 over_data.get("last_updated"),
+                                over_data.get("token_id"),
+                                over_data.get("outcome_index"),
                             ),
                             "point": line,
                         },
@@ -3528,6 +3576,8 @@ def _pick_match_markets(
                                 under_data.get("quote_source"),
                                 under_data.get("observed_at"),
                                 under_data.get("last_updated"),
+                                under_data.get("token_id"),
+                                under_data.get("outcome_index"),
                             ),
                             "point": line,
                         },

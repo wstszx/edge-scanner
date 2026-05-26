@@ -84,6 +84,24 @@ def shutdown_shared_clients(timeout_seconds: float = 2.0) -> None:
             continue
 
 
+async def close_shared_clients_for_loop(loop: asyncio.AbstractEventLoop) -> None:
+    with _SHARED_CLIENTS_LOCK:
+        matching_keys = [
+            key
+            for key, entry in _SHARED_CLIENTS.items()
+            if isinstance(entry, dict) and entry.get("loop") is loop
+        ]
+        entries = [_SHARED_CLIENTS.pop(key) for key in matching_keys]
+    for entry in entries:
+        client = entry.get("client") if isinstance(entry, dict) else None
+        if not isinstance(client, httpx.AsyncClient) or client.is_closed:
+            continue
+        try:
+            await client.aclose()
+        except Exception:
+            continue
+
+
 atexit.register(shutdown_shared_clients)
 
 

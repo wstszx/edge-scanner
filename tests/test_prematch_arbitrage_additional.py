@@ -287,6 +287,7 @@ class PrematchArbitrageAdditionalTests(unittest.TestCase):
         )
         self.assertEqual(polymarket_leg.get("price"), 2.0)
         self.assertAlmostEqual(polymarket_leg.get("effective_price"), 1.9925, places=6)
+        self.assertAlmostEqual(polymarket_leg.get("fee_rate"), 0.03, places=6)
 
     def test_collect_market_entries_marks_low_execution_quality_for_missing_timestamps_and_liquidity_limit(self) -> None:
         game = {

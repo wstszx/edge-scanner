@@ -72,6 +72,7 @@ from scanner import (  # noqa: E402
 from live_availability import write_live_scan_report  # noqa: E402
 from history import get_history_manager  # noqa: E402
 from notifier import get_notifier  # noqa: E402
+from paper_trading import DEFAULT_LEDGER_PATH, load_middle_paper_trades, record_scan_paper_trades  # noqa: E402
 
 app = Flask(__name__)
 _BACKGROUND_SERVICES_LOCK = threading.Lock()
@@ -328,6 +329,24 @@ ENV_SERVER_AUTO_SCAN_LEASE_PATH = os.getenv(
 ).strip()
 ENV_SAVE_SCAN = _env_flag(os.getenv("SCAN_SAVE_ENABLED"))
 ENV_SAVE_DIR = os.getenv("SCAN_SAVE_DIR", str(Path("data") / "scans")).strip()
+try:
+    PAPER_TRADE_MAX_QUOTE_SKEW_SECONDS = max(
+        0,
+        int(float(os.getenv("PAPER_TRADE_MAX_QUOTE_SKEW_SECONDS", "120").strip())),
+    )
+except (TypeError, ValueError):
+    PAPER_TRADE_MAX_QUOTE_SKEW_SECONDS = 120
+try:
+    PAPER_TRADE_MIN_EXECUTABLE_STAKE = max(
+        0.0,
+        float(os.getenv("PAPER_TRADE_MIN_EXECUTABLE_STAKE", "25").strip()),
+    )
+except (TypeError, ValueError):
+    PAPER_TRADE_MIN_EXECUTABLE_STAKE = 25.0
+PAPER_TRADE_LEDGER_PATH = Path(
+    os.getenv("PAPER_TRADE_LEDGER_PATH", str(DEFAULT_LEDGER_PATH)).strip()
+    or str(DEFAULT_LEDGER_PATH)
+)
 ENV_PROVIDER_SNAPSHOT_DIR = os.getenv(
     "CUSTOM_PROVIDER_SNAPSHOT_DIR", str(Path("data") / "provider_snapshots")
 ).strip()
@@ -1412,6 +1431,30 @@ def _execute_scan_payload(
                 arbitrage_items = _extract_opportunity_list(result.get("opportunities"))
             middle_items = _extract_opportunity_list(result.get("middles"))
             plus_ev_items = _extract_opportunity_list(result.get("plus_ev"))
+            try:
+                paper_payload = record_scan_paper_trades(
+                    arbitrage_items,
+                    middle_items,
+                    scan_time=scan_time,
+                    ledger_path=PAPER_TRADE_LEDGER_PATH,
+                    max_quote_skew_seconds=PAPER_TRADE_MAX_QUOTE_SKEW_SECONDS,
+                    min_executable_stake=PAPER_TRADE_MIN_EXECUTABLE_STAKE,
+                )
+                result["execution_tickets"] = paper_payload.get("execution_tickets") or []
+                result["middle_execution_tickets"] = paper_payload.get("middle_execution_tickets") or []
+                result["paper_trades"] = paper_payload.get("records") or []
+                result["paper_trade_summary"] = paper_payload.get("summary") or {}
+            except Exception:
+                logging.warning("Failed to record middle paper trades", exc_info=True)
+                result["execution_tickets"] = []
+                result["middle_execution_tickets"] = []
+                result["paper_trades"] = []
+                result["paper_trade_summary"] = {
+                    "created_count": 0,
+                    "ready_count": 0,
+                    "blocked_count": 0,
+                    "error": "Failed to record middle paper trades",
+                }
             history_manager = get_history_manager()
             try:
                 history_manager.save_opportunities(
@@ -1938,6 +1981,22 @@ def history_stats() -> tuple:
     try:
         stats = get_history_manager().get_stats()
         return _jsonify_client_payload({"success": True, **stats}), 200
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/paper-trades", methods=["GET"])
+def paper_trades() -> tuple:
+    auth_error = _require_admin_auth()
+    if auth_error is not None:
+        return auth_error
+    try:
+        limit = min(500, max(1, int(request.args.get("limit", "50"))))
+    except (TypeError, ValueError):
+        limit = 50
+    try:
+        records = load_middle_paper_trades(ledger_path=PAPER_TRADE_LEDGER_PATH, limit=limit)
+        return _jsonify_client_payload({"success": True, "records": records, "count": len(records)}), 200
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
 

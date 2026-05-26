@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import scanner
+from providers import _async_http as async_http
 
 
 class ScannerRegressionTests(unittest.TestCase):
@@ -49,6 +50,29 @@ class ScannerRegressionTests(unittest.TestCase):
             scanner._normalize_bookmakers(["DraftKings", "pinnacle", "SX Bet", "betdex"]),
             ["pinnacle", "sx_bet", "betdex"],
         )
+
+    def test_scan_async_runtime_closes_shared_clients_before_loop_shutdown(self) -> None:
+        close_calls = []
+        original_run_forever = asyncio.BaseEventLoop.run_forever
+
+        def _stop_immediately(loop):
+            loop.stop()
+            return original_run_forever(loop)
+
+        async def _fake_close(loop):
+            close_calls.append({"loop": loop, "closed_at_call": loop.is_closed()})
+
+        runtime = scanner._ScanAsyncRuntime()
+        with (
+            patch.object(async_http, "close_shared_clients_for_loop", side_effect=_fake_close),
+            patch.object(asyncio.BaseEventLoop, "run_forever", _stop_immediately),
+        ):
+            runtime.start()
+            runtime.stop()
+
+        self.assertEqual(len(close_calls), 1)
+        self.assertFalse(close_calls[0]["closed_at_call"])
+        self.assertTrue(close_calls[0]["loop"].is_closed())
 
     def test_run_scan_derives_regions_from_selected_bookmakers_when_missing(self) -> None:
         captured_regions = []
@@ -1077,8 +1101,8 @@ class ScannerRegressionTests(unittest.TestCase):
         game = {
             "sport_key": "basketball_nba",
             "sport_display": "NBA",
-            "home_team": "Home Team",
-            "away_team": "Away Team",
+            "home_team": "Home Lions",
+            "away_team": "Away Bears",
             "bookmakers": [
                 {
                     "key": "artline",
@@ -1140,8 +1164,8 @@ class ScannerRegressionTests(unittest.TestCase):
         game = {
             "sport_key": "basketball_nba",
             "sport_display": "NBA",
-            "home_team": "Home Team",
-            "away_team": "Away Team",
+            "home_team": "Home Lions",
+            "away_team": "Away Bears",
             "bookmakers": [
                 {
                     "key": "book_a",
@@ -1338,6 +1362,88 @@ class ScannerRegressionTests(unittest.TestCase):
         }
         self.assertEqual(raw_by_book.get("sx_bet"), "50875000000000000000")
         self.assertIsNone(raw_by_book.get("book_b"))
+
+    def test_collect_market_entries_preserves_provider_execution_ids(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Lions",
+            "away_team": "Away Bears",
+            "bookmakers": [
+                {
+                    "key": "sx_bet",
+                    "title": "SX Bet",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {
+                                    "name": "Home Lions",
+                                    "price": 2.25,
+                                    "max_stake": 100.0,
+                                    "market_hash": "0xsxhash",
+                                    "outcome_index": 0,
+                                    "last_updated": 1773593000000,
+                                },
+                                {
+                                    "name": "Away Bears",
+                                    "price": 1.2,
+                                    "max_stake": 100.0,
+                                    "market_hash": "0xsxhash",
+                                    "outcome_index": 1,
+                                },
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "polymarket",
+                    "title": "Polymarket",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {
+                                    "name": "Home Lions",
+                                    "price": 1.2,
+                                    "max_stake": 100.0,
+                                    "token_id": "poly-token-home",
+                                    "asset_id": "poly-token-home",
+                                    "outcome_index": 0,
+                                },
+                                {
+                                    "name": "Away Bears",
+                                    "price": 2.3,
+                                    "max_stake": 100.0,
+                                    "token_id": "poly-token-away",
+                                    "asset_id": "poly-token-away",
+                                    "outcome_index": 1,
+                                    "last_updated": 1773593001000,
+                                },
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        entries = scanner._collect_market_entries(
+            game,
+            market_key="h2h",
+            stake_total=100.0,
+            commission_rate=0.0,
+            scan_mode="prematch",
+        )
+
+        by_book = {
+            item.get("bookmaker_key"): item
+            for item in entries[0]["best_odds"]
+        }
+        self.assertEqual(by_book["sx_bet"]["market_hash"], "0xsxhash")
+        self.assertIn(by_book["sx_bet"]["outcome_index"], {0, 1})
+        self.assertIn(by_book["polymarket"]["token_id"], {"poly-token-home", "poly-token-away"})
+        self.assertEqual(by_book["polymarket"]["asset_id"], by_book["polymarket"]["token_id"])
+        self.assertIn(by_book["polymarket"]["outcome_index"], {0, 1})
 
     def test_filter_live_events_prefers_explicit_live_state_over_time_window(self) -> None:
         now_epoch = 1_700_000_000
@@ -1866,6 +1972,77 @@ class ScannerRegressionTests(unittest.TestCase):
                 for side in exchange_legs
             )
         )
+
+    def test_collect_middle_opportunities_preserves_provider_execution_ids(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Lions",
+            "away_team": "Away Bears",
+            "bookmakers": [
+                {
+                    "key": "sx_bet",
+                    "title": "SX Bet",
+                    "markets": [
+                        {
+                            "key": "spreads",
+                            "outcomes": [
+                                {
+                                    "name": "Home Lions",
+                                    "price": 2.0,
+                                    "point": -3.5,
+                                    "stake": 100.0,
+                                    "market_hash": "0xsxhash",
+                                    "outcome_index": 0,
+                                    "last_updated": 1773593000000,
+                                }
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "polymarket",
+                    "title": "Polymarket",
+                    "markets": [
+                        {
+                            "key": "spreads",
+                            "outcomes": [
+                                {
+                                    "name": "Away Bears",
+                                    "price": 2.1,
+                                    "point": 5.5,
+                                    "stake": 100.0,
+                                    "token_id": "poly-away-spread",
+                                    "asset_id": "poly-away-spread",
+                                    "outcome_index": 1,
+                                    "last_updated": 1773593001000,
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        with patch("scanner.time.time", return_value=1773593002):
+            entries = scanner._collect_middle_opportunities(
+                game,
+                market_key="spreads",
+                stake_total=100.0,
+                commission_rate=0.0,
+                scan_mode="prematch",
+            )
+
+        self.assertTrue(entries)
+        side_a = entries[0]["side_a"]
+        side_b = entries[0]["side_b"]
+        self.assertEqual(side_a.get("bookmaker_key"), "sx_bet")
+        self.assertEqual(side_a.get("market_hash"), "0xsxhash")
+        self.assertEqual(side_a.get("outcome_index"), 0)
+        self.assertEqual(side_b.get("bookmaker_key"), "polymarket")
+        self.assertEqual(side_b.get("token_id"), "poly-away-spread")
+        self.assertEqual(side_b.get("asset_id"), "poly-away-spread")
+        self.assertEqual(side_b.get("outcome_index"), 1)
 
     def test_collect_plus_ev_accepts_mixed_case_soft_book_key(self) -> None:
         game = {

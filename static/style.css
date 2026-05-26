@@ -1536,6 +1536,102 @@ body.modal-open .content {
   color: var(--warning);
 }
 
+.paper-trade-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.18rem 0.56rem;
+  font-size: 0.74rem;
+  font-weight: 800;
+  white-space: nowrap;
+  color: var(--text-muted);
+  background: var(--surface);
+}
+
+.paper-trade-chip.is-ready {
+  border-color: color-mix(in srgb, var(--success) 38%, var(--border));
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.paper-trade-chip.is-blocked {
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+.paper-trade-chip.is-muted {
+  background: color-mix(in srgb, var(--surface-soft) 82%, transparent);
+}
+
+.paper-trades-card {
+  gap: 0.9rem;
+}
+
+.paper-trades-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.paper-trade-row {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.86rem;
+  background: var(--surface-soft);
+}
+
+.paper-trade-row-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.9rem;
+  align-items: flex-start;
+}
+
+.paper-trade-row-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.paper-trade-meta,
+.paper-trade-blockers {
+  margin: 0.28rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.paper-trade-blockers {
+  color: var(--warning);
+}
+
+.paper-trade-leg-list {
+  display: grid;
+  gap: 0.42rem;
+  margin-top: 0.75rem;
+}
+
+.paper-trade-leg {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.2fr) minmax(80px, 0.8fr) minmax(80px, 0.7fr) minmax(130px, 1fr);
+  gap: 0.55rem;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 8px;
+  padding: 0.5rem 0.62rem;
+  background: var(--surface);
+  font-size: 0.84rem;
+}
+
+.paper-trade-leg small {
+  color: var(--text-muted);
+}
+
 .roi-negative .roi-badge {
   background: color-mix(in srgb, var(--error) 16%, transparent);
   color: var(--error);
@@ -3629,8 +3725,8 @@ body.modal-open .content {
 
   #middles-table th:nth-child(2),
   #middles-table td:nth-child(2),
-  #middles-table th:nth-child(9),
-  #middles-table td:nth-child(9) {
+  #middles-table th:nth-child(10),
+  #middles-table td:nth-child(10) {
     display: none;
   }
 
@@ -3668,8 +3764,8 @@ body.modal-open .content {
 
   #results-table th:nth-child(7),
   #results-table td:nth-child(7),
-  #middles-table th:nth-child(8),
-  #middles-table td:nth-child(8),
+  #middles-table th:nth-child(9),
+  #middles-table td:nth-child(9),
   #plus-ev-table th:nth-child(6),
   #plus-ev-table td:nth-child(6) {
     display: none;
@@ -3686,6 +3782,18 @@ body.modal-open .content {
 
   .status {
     text-align: left;
+  }
+
+  .paper-trade-row-head {
+    flex-direction: column;
+  }
+
+  .paper-trade-row-summary {
+    justify-content: flex-start;
+  }
+
+  .paper-trade-leg {
+    grid-template-columns: 1fr 1fr;
   }
 }
 

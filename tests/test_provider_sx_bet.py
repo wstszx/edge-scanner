@@ -182,6 +182,11 @@ class SXBetProviderTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(len(events), 21)
+        first_outcomes = events[0]['bookmakers'][0]['markets'][0]['outcomes']
+        self.assertEqual(first_outcomes[0].get('market_hash'), f'0x{0:064x}')
+        self.assertEqual(first_outcomes[1].get('market_hash'), f'0x{0:064x}')
+        self.assertEqual(first_outcomes[0].get('outcome_index'), 0)
+        self.assertEqual(first_outcomes[1].get('outcome_index'), 1)
         self.assertEqual(len(fixture_status_calls), 2)
         self.assertEqual(len(live_scores_calls), 2)
         self.assertEqual(sum(len(batch) for batch in fixture_status_calls), 21)

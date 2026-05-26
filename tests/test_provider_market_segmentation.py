@@ -533,30 +533,22 @@ class TestPolymarketDepth(unittest.TestCase):
                 },
             },
         )
+        self.assertEqual([market.get("key") for market in markets], ["both_teams_to_score"])
+        outcomes = markets[0].get("outcomes") or []
+        self.assertEqual([outcome.get("name") for outcome in outcomes], ["Yes", "No"])
+        self.assertEqual([outcome.get("price") for outcome in outcomes], [1.5, 2.1])
+        self.assertEqual([outcome.get("stake") for outcome in outcomes], [30.0, 42.0])
         self.assertEqual(
-            markets,
-            [
-                {
-                    "key": "both_teams_to_score",
-                    "outcomes": [
-                        {
-                            "name": "Yes",
-                            "price": 1.5,
-                            "stake": 30.0,
-                            "raw_percentage_odds": 0.51,
-                            "quote_source": "clob_book_best_ask",
-                        },
-                        {
-                            "name": "No",
-                            "price": 2.1,
-                            "stake": 42.0,
-                            "raw_percentage_odds": 0.49,
-                            "quote_source": "clob_book_best_ask",
-                        },
-                    ],
-                }
-            ],
+            [outcome.get("raw_percentage_odds") for outcome in outcomes],
+            [0.51, 0.49],
         )
+        self.assertEqual(
+            [outcome.get("quote_source") for outcome in outcomes],
+            ["clob_book_best_ask", "clob_book_best_ask"],
+        )
+        self.assertEqual([outcome.get("token_id") for outcome in outcomes], ["tok_btts_yes", "tok_btts_no"])
+        self.assertEqual([outcome.get("asset_id") for outcome in outcomes], ["tok_btts_yes", "tok_btts_no"])
+        self.assertEqual([outcome.get("outcome_index") for outcome in outcomes], [0, 1])
 
 
 class TestBookmakerFallbackSegmentation(unittest.TestCase):

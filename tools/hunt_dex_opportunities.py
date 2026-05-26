@@ -19,16 +19,21 @@ from tools import hunt_real_arbitrage as hunt
 
 
 DEFAULT_MIN_EXECUTABLE_STAKE = 25.0
+EXECUTION_ADAPTER_PROVIDERS = {"polymarket", "sx_bet"}
+EXECUTION_READY_ENV_BY_PROVIDER = {
+    "polymarket": ("POLYMARKET_API_KEY",),
+    "sx_bet": ("SX_BET_API_KEY",),
+}
 
 
 def _normalize_list(values: Sequence[str] | None) -> list[str]:
     rows: list[str] = []
     seen: set[str] = set()
     for value in values or []:
-        text = str(value).strip()
-        if text and text not in seen:
-            rows.append(text)
-            seen.add(text)
+        for text in (item.strip() for item in str(value).split(",")):
+            if text and text not in seen:
+                rows.append(text)
+                seen.add(text)
     return rows
 
 
@@ -159,13 +164,11 @@ def _book_signature(book: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def _middle_key(item: dict[str, Any]) -> tuple[Any, ...]:
-    books = item.get("books") if isinstance(item.get("books"), list) else []
     return (
         item.get("sport"),
         _canonical_event_key(item.get("event")),
         item.get("market"),
         item.get("middle_zone"),
-        tuple(sorted(_book_signature(book) for book in books if isinstance(book, dict))),
     )
 
 
@@ -329,6 +332,356 @@ def _blocked_reason_counts(rows: Sequence[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+def _stake_by_outcome(stakes: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    for item in stakes.get("breakdown") or []:
+        if not isinstance(item, dict):
+            continue
+        outcome = str(item.get("outcome") or "").strip()
+        if outcome:
+            rows[outcome] = item
+    return rows
+
+
+def _middle_side_stakes(item: dict[str, Any]) -> list[float | None]:
+    stake = item.get("stake") if isinstance(item.get("stake"), dict) else {}
+    rows: list[float | None] = []
+    for side_key in ("side_a", "side_b"):
+        side = stake.get(side_key) if isinstance(stake.get(side_key), dict) else {}
+        rows.append(hunt._safe_float(side.get("stake")))
+    if all(value is not None and value > 0 for value in rows):
+        return rows
+
+    total_stake = hunt._safe_float(stake.get("total")) or 0.0
+    books = [book for book in item.get("books") or [] if isinstance(book, dict)]
+    if len(books) < 2 or total_stake <= 0:
+        return rows
+    odds_a = hunt._safe_float(books[0].get("effective_price") or books[0].get("price"))
+    odds_b = hunt._safe_float(books[1].get("effective_price") or books[1].get("price"))
+    if odds_a is None or odds_b is None or odds_a <= 1 or odds_b <= 1:
+        return rows
+    profit_a = odds_a - 1
+    profit_b = odds_b - 1
+    denominator = profit_a + profit_b
+    if denominator <= 0:
+        return rows
+    side_a_stake = round(total_stake * profit_b / denominator, 2)
+    return [side_a_stake, round(total_stake - side_a_stake, 2)]
+
+
+def _book_execution_blockers(
+    book: dict[str, Any],
+    *,
+    min_executable_stake: float,
+    stake: float | None,
+) -> list[str]:
+    blockers: set[str] = set()
+    bookmaker_key = _bookmaker_key(book.get("bookmaker") or book.get("bookmaker_key"))
+    capability = hunt.PROVIDER_CAPABILITIES.get(bookmaker_key)
+    if bookmaker_key not in EXECUTION_ADAPTER_PROVIDERS:
+        blockers.add(f"{bookmaker_key}_execution_adapter_missing")
+    max_stake = hunt._safe_float(book.get("max_stake"))
+    if capability and capability.liquidity_confidence == "quote_only" and max_stake is None:
+        blockers.add(f"{bookmaker_key}_quote_only")
+    diagnostics = book.get("execution_diagnostics")
+    if isinstance(diagnostics, dict) and diagnostics.get("reason") == "max_bet_below_min_bet":
+        blockers.add(f"{bookmaker_key}_max_bet_below_min_bet")
+    if not book.get("quote_updated_at"):
+        blockers.add("missing_quote_time")
+    if max_stake is None:
+        blockers.add("missing_liquidity")
+    elif stake is not None and max_stake + 1e-9 < stake:
+        blockers.add(f"{bookmaker_key}_stake_exceeds_max")
+    if min_executable_stake > 0 and stake is not None and stake < min_executable_stake:
+        blockers.add("stake_below_minimum")
+    return sorted(blockers)
+
+
+def _execution_identifier_blockers(bookmaker_key: str, book: dict[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    if bookmaker_key == "sx_bet":
+        if not book.get("market_hash"):
+            blockers.append("sx_bet_missing_market_hash")
+        if book.get("outcome_index") is None:
+            blockers.append("sx_bet_missing_outcome_index")
+    elif bookmaker_key == "polymarket":
+        if not (book.get("token_id") or book.get("asset_id")):
+            blockers.append("polymarket_missing_token_id")
+    return blockers
+
+
+def _draft_order_for_leg(bookmaker_key: str, book: dict[str, Any], *, stake: float | None) -> dict[str, Any] | None:
+    if stake is None or stake <= 0:
+        return None
+    limit_odds = hunt._safe_float(book.get("price"))
+    if limit_odds is None or limit_odds <= 1:
+        return None
+    if bookmaker_key == "sx_bet":
+        market_hash = book.get("market_hash")
+        outcome_index = book.get("outcome_index")
+        if not market_hash or outcome_index is None:
+            return None
+        return {
+            "adapter": "sx_bet",
+            "order_type": "limit",
+            "market_hash": market_hash,
+            "outcome_index": outcome_index,
+            "side": "buy",
+            "size": round(float(stake), 2),
+            "limit_odds": limit_odds,
+        }
+    if bookmaker_key == "polymarket":
+        token_id = book.get("token_id") or book.get("asset_id")
+        if not token_id:
+            return None
+        return {
+            "adapter": "polymarket",
+            "order_type": "limit",
+            "token_id": token_id,
+            "asset_id": book.get("asset_id") or token_id,
+            "side": "buy",
+            "size": round(float(stake), 2),
+            "limit_odds": limit_odds,
+        }
+    return None
+
+
+def _execution_wallet_ready(providers: Sequence[str]) -> bool:
+    required, missing = _execution_wallet_env_status(providers)
+    return bool(required) and not missing
+
+
+def _execution_wallet_env_status(providers: Sequence[str]) -> tuple[list[str], list[str]]:
+    required_names: list[str] = []
+    for provider in providers:
+        provider_key = _bookmaker_key(provider)
+        required_names.extend(EXECUTION_READY_ENV_BY_PROVIDER.get(provider_key, ()))
+    required = _normalize_list(required_names)
+    missing = [name for name in required if not os.getenv(name, "").strip()]
+    return sorted(required), sorted(missing)
+
+
+def _build_execution_ticket(
+    item: dict[str, Any],
+    *,
+    source: str,
+    min_executable_stake: float = 0.0,
+    max_quote_skew_seconds: int = 120,
+    wallet_ready: bool | None = None,
+    slippage_bps: int = 0,
+) -> dict[str, Any]:
+    stakes = item.get("stakes") if isinstance(item.get("stakes"), dict) else {}
+    stake_rows = _stake_by_outcome(stakes)
+    total_stake = hunt._safe_float(stakes.get("total")) or 0.0
+    blockers = set(_blocked_reasons(item, min_executable_stake=min_executable_stake))
+    quote_skew = _quote_time_skew_seconds(item)
+    max_quote_skew = max(0, int(max_quote_skew_seconds))
+    if quote_skew is not None and max_quote_skew > 0 and quote_skew > max_quote_skew:
+        blockers.add("quote_time_skew")
+    fee_values: list[float] = []
+    ticket_providers: list[str] = []
+    legs: list[dict[str, Any]] = []
+    for book in item.get("books") or []:
+        if not isinstance(book, dict):
+            continue
+        outcome = str(book.get("outcome") or "").strip()
+        stake_row = stake_rows.get(outcome, {})
+        stake = hunt._safe_float(stake_row.get("stake"))
+        bookmaker_key = _bookmaker_key(book.get("bookmaker") or book.get("bookmaker_key"))
+        if bookmaker_key in EXECUTION_ADAPTER_PROVIDERS:
+            ticket_providers.append(bookmaker_key)
+        leg_blockers = _book_execution_blockers(
+            book,
+            min_executable_stake=min_executable_stake,
+            stake=stake,
+        )
+        leg_blockers = sorted(set([*leg_blockers, *_execution_identifier_blockers(bookmaker_key, book)]))
+        draft_order = _draft_order_for_leg(bookmaker_key, book, stake=stake)
+        fee_rate = hunt._safe_float(book.get("fee_rate"))
+        if fee_rate is not None:
+            fee_values.append(fee_rate)
+        blockers.update(leg_blockers)
+        legs.append(
+            {
+                "bookmaker": book.get("bookmaker"),
+                "bookmaker_key": bookmaker_key,
+                "outcome": outcome or None,
+                "market": item.get("market"),
+                "stake": stake,
+                "limit_price": book.get("price"),
+                "effective_price": book.get("effective_price"),
+                "max_stake": book.get("max_stake"),
+                "quote_updated_at": book.get("quote_updated_at"),
+                "quote_source": book.get("quote_source"),
+                "fee_rate": fee_rate,
+                "market_hash": book.get("market_hash"),
+                "token_id": book.get("token_id"),
+                "asset_id": book.get("asset_id"),
+                "condition_id": book.get("condition_id"),
+                "outcome_index": book.get("outcome_index"),
+                "execution_supported": bookmaker_key in EXECUTION_ADAPTER_PROVIDERS,
+                "draft_order": draft_order,
+                "blockers": leg_blockers,
+            }
+        )
+
+    roi = hunt._safe_float(item.get("roi_percent"))
+    if roi is None or roi <= 0:
+        blockers.add("non_positive_roi")
+    quality = item.get("execution_quality") if isinstance(item.get("execution_quality"), dict) else {}
+    if str(quality.get("status") or "").strip().lower() != "high" or quality.get("flags"):
+        blockers.add("execution_quality_not_high")
+    if bool(stakes.get("limited_by_max_stake")):
+        blockers.add("limited_by_liquidity")
+    if total_stake <= 0:
+        blockers.add("zero_total_stake")
+    required_env, missing_env = _execution_wallet_env_status(ticket_providers)
+    resolved_wallet_ready = bool(wallet_ready) if wallet_ready is not None else bool(required_env) and not missing_env
+    if wallet_ready is True:
+        missing_env = []
+    if not resolved_wallet_ready:
+        blockers.add("wallet_not_ready")
+
+    submit_blockers = sorted(blockers)
+    slippage = max(0, int(slippage_bps))
+    preflight = {
+        "wallet_ready": resolved_wallet_ready,
+        "wallet_required_env": required_env,
+        "wallet_missing_env": missing_env,
+        "quote_time_skew_seconds": quote_skew,
+        "max_quote_skew_seconds": max_quote_skew,
+        "slippage_bps": slippage,
+        "fee_check": "present" if fee_values else "missing",
+    }
+    return {
+        "source": source,
+        "dry_run": True,
+        "can_submit_live": False,
+        "status": "ready" if not submit_blockers else "blocked",
+        "event": item.get("event"),
+        "sport": item.get("sport"),
+        "market": item.get("market"),
+        "roi_percent": item.get("roi_percent"),
+        "profit": item.get("profit"),
+        "total_stake": round(total_stake, 2),
+        "requested_total": stakes.get("requested_total"),
+        "preflight": preflight,
+        "submit_blockers": submit_blockers,
+        "legs": legs,
+    }
+
+
+def _build_middle_execution_ticket(
+    item: dict[str, Any],
+    *,
+    source: str,
+    min_executable_stake: float = 0.0,
+    max_quote_skew_seconds: int = 120,
+    wallet_ready: bool | None = None,
+    slippage_bps: int = 0,
+) -> dict[str, Any]:
+    stake = item.get("stake") if isinstance(item.get("stake"), dict) else {}
+    side_stakes = _middle_side_stakes(item)
+    total_stake = hunt._safe_float(stake.get("total")) or sum(
+        value for value in side_stakes if value is not None
+    )
+    blockers = {str(reason).strip() for reason in item.get("blocked_reasons") or [] if str(reason).strip()}
+    blockers.update(_risk_flags_from_item(item))
+    quote_skew = _quote_time_skew_seconds(item)
+    max_quote_skew = max(0, int(max_quote_skew_seconds))
+    if quote_skew is not None and max_quote_skew > 0 and quote_skew > max_quote_skew:
+        blockers.add("quote_time_skew")
+
+    fee_values: list[float] = []
+    ticket_providers: list[str] = []
+    legs: list[dict[str, Any]] = []
+    for index, book in enumerate(item.get("books") or []):
+        if not isinstance(book, dict):
+            continue
+        stake_amount = side_stakes[index] if index < len(side_stakes) else None
+        bookmaker_key = _bookmaker_key(book.get("bookmaker") or book.get("bookmaker_key"))
+        if bookmaker_key in EXECUTION_ADAPTER_PROVIDERS:
+            ticket_providers.append(bookmaker_key)
+        leg_blockers = _book_execution_blockers(
+            book,
+            min_executable_stake=min_executable_stake,
+            stake=stake_amount,
+        )
+        leg_blockers = sorted(set([*leg_blockers, *_execution_identifier_blockers(bookmaker_key, book)]))
+        draft_order = _draft_order_for_leg(bookmaker_key, book, stake=stake_amount)
+        fee_rate = hunt._safe_float(book.get("fee_rate"))
+        if fee_rate is not None:
+            fee_values.append(fee_rate)
+        blockers.update(leg_blockers)
+        legs.append(
+            {
+                "bookmaker": book.get("bookmaker"),
+                "bookmaker_key": bookmaker_key,
+                "market": item.get("market"),
+                "middle_zone": item.get("middle_zone"),
+                "line": book.get("line"),
+                "stake": stake_amount,
+                "limit_price": book.get("price"),
+                "effective_price": book.get("effective_price"),
+                "max_stake": book.get("max_stake"),
+                "quote_updated_at": book.get("quote_updated_at"),
+                "quote_source": book.get("quote_source"),
+                "fee_rate": fee_rate,
+                "market_hash": book.get("market_hash"),
+                "token_id": book.get("token_id"),
+                "asset_id": book.get("asset_id"),
+                "condition_id": book.get("condition_id"),
+                "outcome_index": book.get("outcome_index"),
+                "execution_supported": bookmaker_key in EXECUTION_ADAPTER_PROVIDERS,
+                "draft_order": draft_order,
+                "blockers": leg_blockers,
+            }
+        )
+
+    ev = hunt._safe_float(item.get("ev_percent"))
+    if ev is None or ev <= 0:
+        blockers.add("non_positive_ev")
+    if bool(stake.get("limited_by_max_stake")):
+        blockers.add("limited_by_liquidity")
+    if total_stake <= 0:
+        blockers.add("zero_total_stake")
+    required_env, missing_env = _execution_wallet_env_status(ticket_providers)
+    resolved_wallet_ready = bool(wallet_ready) if wallet_ready is not None else bool(required_env) and not missing_env
+    if wallet_ready is True:
+        missing_env = []
+    if not resolved_wallet_ready:
+        blockers.add("wallet_not_ready")
+
+    submit_blockers = sorted(blockers)
+    slippage = max(0, int(slippage_bps))
+    return {
+        "source": source,
+        "execution_type": "middle",
+        "dry_run": True,
+        "can_submit_live": False,
+        "status": "ready" if not submit_blockers else "blocked",
+        "event": item.get("event"),
+        "sport": item.get("sport"),
+        "market": item.get("market"),
+        "middle_zone": item.get("middle_zone"),
+        "ev_percent": item.get("ev_percent"),
+        "probability_percent": item.get("probability_percent"),
+        "total_stake": round(total_stake, 2),
+        "requested_total": stake.get("requested_total"),
+        "preflight": {
+            "wallet_ready": resolved_wallet_ready,
+            "wallet_required_env": required_env,
+            "wallet_missing_env": missing_env,
+            "quote_time_skew_seconds": quote_skew,
+            "max_quote_skew_seconds": max_quote_skew,
+            "slippage_bps": slippage,
+            "fee_check": "present" if fee_values else "missing",
+        },
+        "submit_blockers": submit_blockers,
+        "legs": legs,
+    }
+
+
 def _parse_quote_time(value: object) -> datetime | None:
     if not isinstance(value, str):
         return None
@@ -387,6 +740,39 @@ def _execution_risk_counts(rows: Sequence[dict[str, Any]]) -> dict[str, int]:
     for row in rows:
         counts.update(row.get("execution_risks") or [])
     return dict(sorted(counts.items()))
+
+
+def _scan_diagnostic_summary(scans: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    reason_counts: Counter[str] = Counter()
+    scans_with_source_events = 0
+    scans_without_source_events = 0
+    scans_with_cross_provider_matches = 0
+    scans_without_cross_provider_matches = 0
+    for scan in scans:
+        diagnostics = scan.get("scan_diagnostics") if isinstance(scan, dict) else {}
+        if not isinstance(diagnostics, dict):
+            diagnostics = {}
+        reason = str(diagnostics.get("reason_code") or "unknown").strip() or "unknown"
+        reason_counts[reason] += 1
+        raw_events = hunt._safe_float(diagnostics.get("raw_provider_events")) or 0.0
+        providers_with_events = hunt._safe_float(diagnostics.get("providers_with_events")) or 0.0
+        if raw_events > 0 and providers_with_events > 0:
+            scans_with_source_events += 1
+            overlap_clusters = hunt._safe_float(diagnostics.get("overlap_clusters")) or 0.0
+            merge_hits = hunt._safe_float(diagnostics.get("total_merge_hits")) or 0.0
+            if overlap_clusters > 0 or merge_hits > 0:
+                scans_with_cross_provider_matches += 1
+            else:
+                scans_without_cross_provider_matches += 1
+        else:
+            scans_without_source_events += 1
+    return {
+        "reason_counts": dict(sorted(reason_counts.items())),
+        "scans_with_source_events": scans_with_source_events,
+        "scans_without_source_events": scans_without_source_events,
+        "scans_with_cross_provider_matches": scans_with_cross_provider_matches,
+        "scans_without_cross_provider_matches": scans_without_cross_provider_matches,
+    }
 
 
 def _model_only_middles(middles: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -455,10 +841,31 @@ def _render_markdown_summary(payload: dict[str, Any], *, source_json: str) -> st
         f"- min_executable_stake: {summary.get('min_executable_stake', 0)}",
         f"- actionable_arbitrage_count: {summary.get('actionable_arbitrage_count', 0)}",
         f"- model_only_arbitrage_count: {summary.get('model_only_arbitrage_count', 0)}",
+        f"- execution_ticket_count: {summary.get('execution_ticket_count', 0)}",
+        f"- execution_ready_ticket_count: {summary.get('execution_ready_ticket_count', 0)}",
+        f"- middle_execution_ticket_count: {summary.get('middle_execution_ticket_count', 0)}",
+        f"- middle_execution_ready_ticket_count: {summary.get('middle_execution_ready_ticket_count', 0)}",
         f"- actionable_middle_count: {summary.get('actionable_middle_count', 0)}",
         f"- execution_risky_middle_count: {summary.get('execution_risky_middle_count', 0)}",
         f"- model_only_middle_count: {summary.get('model_only_middle_count', 0)}",
         f"- plus_ev_count: {summary.get('plus_ev_count', 0)}",
+        "",
+        "## Scan Diagnostics",
+        *_format_counts(
+            (summary.get("scan_diagnostics") or {}).get("reason_counts")
+            if isinstance(summary.get("scan_diagnostics"), dict)
+            else {}
+        ),
+        *(
+            [
+                f"- scans_with_source_events: {summary.get('scan_diagnostics', {}).get('scans_with_source_events', 0)}",
+                f"- scans_without_source_events: {summary.get('scan_diagnostics', {}).get('scans_without_source_events', 0)}",
+                f"- scans_with_cross_provider_matches: {summary.get('scan_diagnostics', {}).get('scans_with_cross_provider_matches', 0)}",
+                f"- scans_without_cross_provider_matches: {summary.get('scan_diagnostics', {}).get('scans_without_cross_provider_matches', 0)}",
+            ]
+            if isinstance(summary.get("scan_diagnostics"), dict)
+            else []
+        ),
         "",
         "## Execution Risk Counts",
         *_format_counts(summary.get("execution_risk_counts") or {}),
@@ -471,6 +878,45 @@ def _render_markdown_summary(payload: dict[str, Any], *, source_json: str) -> st
     actionable_middles = [item for item in payload.get("actionable_middles") or [] if isinstance(item, dict)]
     lines.extend(_format_opportunity_row(item) for item in actionable_middles[:5])
     if not actionable_middles:
+        lines.append("- none")
+
+    lines.extend(["", "## Execution Tickets"])
+    tickets = [item for item in payload.get("execution_tickets") or [] if isinstance(item, dict)]
+    for ticket in tickets[:5]:
+        blockers = ticket.get("submit_blockers") or []
+        lines.append(
+            "- "
+            + " | ".join(
+                [
+                    str(ticket.get("event") or "-"),
+                    str(ticket.get("market") or "-"),
+                    f"status={ticket.get('status', '-')}",
+                    f"roi={ticket.get('roi_percent', '-')}",
+                    "blockers=" + (",".join(str(item) for item in blockers) if blockers else "none"),
+                ]
+            )
+        )
+    if not tickets:
+        lines.append("- none")
+
+    lines.extend(["", "## Middle Execution Tickets"])
+    middle_tickets = [item for item in payload.get("middle_execution_tickets") or [] if isinstance(item, dict)]
+    for ticket in middle_tickets[:5]:
+        blockers = ticket.get("submit_blockers") or []
+        lines.append(
+            "- "
+            + " | ".join(
+                [
+                    str(ticket.get("event") or "-"),
+                    str(ticket.get("market") or "-"),
+                    str(ticket.get("middle_zone") or "-"),
+                    f"status={ticket.get('status', '-')}",
+                    f"ev={ticket.get('ev_percent', '-')}",
+                    "blockers=" + (",".join(str(item) for item in blockers) if blockers else "none"),
+                ]
+            )
+        )
+    if not middle_tickets:
         lines.append("- none")
 
     lines.extend(["", "## Top Execution-Risky Middles"])
@@ -631,8 +1077,59 @@ def main(argv: Sequence[str] | None = None) -> int:
             _model_only_middles(top_middles),
             min_executable_stake=min_executable_stake,
         )
+        max_quote_skew_seconds = max(0, int(args.max_quote_skew_seconds))
+        execution_tickets = [
+            _build_execution_ticket(
+                item,
+                source="actionable_arbitrage",
+                min_executable_stake=min_executable_stake,
+                max_quote_skew_seconds=max_quote_skew_seconds,
+            )
+            for item in actionable_arbitrage
+        ]
+        execution_tickets.extend(
+            _build_execution_ticket(
+                item,
+                source="model_only_arbitrage",
+                min_executable_stake=min_executable_stake,
+                max_quote_skew_seconds=max_quote_skew_seconds,
+            )
+            for item in model_only_arbitrage
+        )
+        execution_ready_ticket_count = sum(1 for item in execution_tickets if item.get("status") == "ready")
+        middle_execution_tickets = [
+            _build_middle_execution_ticket(
+                item,
+                source="actionable_middle",
+                min_executable_stake=min_executable_stake,
+                max_quote_skew_seconds=max_quote_skew_seconds,
+            )
+            for item in actionable_middles
+        ]
+        middle_execution_tickets.extend(
+            _build_middle_execution_ticket(
+                item,
+                source="execution_risky_middle",
+                min_executable_stake=min_executable_stake,
+                max_quote_skew_seconds=max_quote_skew_seconds,
+            )
+            for item in execution_risky_middles
+        )
+        middle_execution_tickets.extend(
+            _build_middle_execution_ticket(
+                item,
+                source="model_only_middle",
+                min_executable_stake=min_executable_stake,
+                max_quote_skew_seconds=max_quote_skew_seconds,
+            )
+            for item in model_only_middles
+        )
+        middle_execution_ready_ticket_count = sum(
+            1 for item in middle_execution_tickets if item.get("status") == "ready"
+        )
         blocked_reason_counts = _blocked_reason_counts([*model_only_arbitrage, *model_only_middles])
         execution_risk_counts = _execution_risk_counts(execution_risky_middles)
+        scan_diagnostics_summary = _scan_diagnostic_summary(scans)
 
         payload = {
             "summary": {
@@ -640,12 +1137,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "candidate_count": len(candidates),
                 "actionable_arbitrage_count": len(actionable_arbitrage),
                 "model_only_arbitrage_count": len(model_only_arbitrage),
+                "execution_ticket_count": len(execution_tickets),
+                "execution_ready_ticket_count": execution_ready_ticket_count,
+                "middle_execution_ticket_count": len(middle_execution_tickets),
+                "middle_execution_ready_ticket_count": middle_execution_ready_ticket_count,
                 "actionable_middle_count": len(actionable_middles),
                 "execution_risky_middle_count": len(execution_risky_middles),
                 "model_only_middle_count": len(model_only_middles),
                 "plus_ev_count": len(plus_ev),
                 "blocked_reason_counts": blocked_reason_counts,
                 "execution_risk_counts": execution_risk_counts,
+                "scan_diagnostics": scan_diagnostics_summary,
                 "require_explicit_liquidity": bool(args.require_explicit_liquidity),
                 "max_quote_skew_seconds": max(0, int(args.max_quote_skew_seconds)),
                 "min_executable_stake": min_executable_stake,
@@ -655,6 +1157,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "candidates": candidates[:20],
             "actionable_arbitrage": actionable_arbitrage[:20],
             "model_only_arbitrage": model_only_arbitrage[:20],
+            "execution_tickets": execution_tickets[:20],
+            "middle_execution_tickets": middle_execution_tickets[:20],
             "actionable_middles": actionable_middles[:20],
             "execution_risky_middles": execution_risky_middles[:20],
             "model_only_middles": model_only_middles[:20],
