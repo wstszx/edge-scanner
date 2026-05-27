@@ -2044,6 +2044,67 @@ class ScannerRegressionTests(unittest.TestCase):
         self.assertEqual(side_b.get("asset_id"), "poly-away-spread")
         self.assertEqual(side_b.get("outcome_index"), 1)
 
+    def test_collect_middle_opportunities_rejects_same_team_alias_spread_pair(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Oklahoma City Thunder",
+            "away_team": "San Antonio Spurs",
+            "commence_time": "2026-05-27T00:30:00Z",
+            "bookmakers": [
+                {
+                    "key": "polymarket",
+                    "title": "Polymarket",
+                    "markets": [
+                        {
+                            "key": "spreads",
+                            "outcomes": [
+                                {
+                                    "name": "Spurs",
+                                    "price": 3.125,
+                                    "point": -3.5,
+                                    "stake": 300.0,
+                                    "token_id": "poly-spurs-minus",
+                                    "last_updated": 1779788272000,
+                                }
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "sx_bet",
+                    "title": "SX Bet",
+                    "markets": [
+                        {
+                            "key": "spreads",
+                            "outcomes": [
+                                {
+                                    "name": "San Antonio Spurs",
+                                    "price": 1.886792,
+                                    "point": 5.5,
+                                    "stake": 800.0,
+                                    "market_hash": "0xsxbet",
+                                    "outcome_index": 1,
+                                    "last_updated": 1779788262000,
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        with patch("scanner.time.time", return_value=1779788280):
+            entries = scanner._collect_middle_opportunities(
+                game,
+                market_key="spreads",
+                stake_total=100.0,
+                commission_rate=0.03,
+                scan_mode="prematch",
+            )
+
+        self.assertEqual(entries, [])
+
     def test_collect_plus_ev_accepts_mixed_case_soft_book_key(self) -> None:
         game = {
             "sport_key": "basketball_nba",
@@ -2091,6 +2152,215 @@ class ScannerRegressionTests(unittest.TestCase):
         )
         self.assertTrue(entries)
         self.assertGreater(entries[0].get("edge_percent", 0.0), 0.0)
+
+    def test_collect_plus_ev_marks_dex_execution_quality(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "sx_bet",
+                    "title": "SX Bet",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {
+                                    "name": "Home Team",
+                                    "price": 1.8,
+                                    "stake": 500.0,
+                                    "market_hash": "0xsxbet",
+                                    "outcome_index": 0,
+                                    "last_updated": 1773593000000,
+                                    "quote_source": "rest_snapshot",
+                                },
+                                {
+                                    "name": "Away Team",
+                                    "price": 2.0,
+                                    "stake": 500.0,
+                                    "market_hash": "0xsxbet",
+                                    "outcome_index": 1,
+                                    "last_updated": 1773593000000,
+                                    "quote_source": "rest_snapshot",
+                                },
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "polymarket",
+                    "title": "Polymarket",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {
+                                    "name": "Home Team",
+                                    "price": 2.2,
+                                    "stake": 120.0,
+                                    "token_id": "poly-home",
+                                    "asset_id": "poly-home",
+                                    "outcome_index": 0,
+                                    "last_updated": 1773593001000,
+                                    "quote_source": "clob_book_best_ask",
+                                },
+                                {
+                                    "name": "Away Team",
+                                    "price": 1.7,
+                                    "stake": 240.0,
+                                    "token_id": "poly-away",
+                                    "asset_id": "poly-away",
+                                    "outcome_index": 1,
+                                    "last_updated": 1773593001000,
+                                    "quote_source": "clob_book_best_ask",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        with patch("scanner.time.time", return_value=1773593002):
+            entries = scanner._collect_plus_ev_opportunities(
+                game,
+                markets=["h2h"],
+                sharp_priority=scanner._sharp_priority("sx_bet"),
+                commission_rate=0.03,
+                min_edge_percent=0.0,
+                bankroll=1000.0,
+                kelly_fraction=0.25,
+                scan_mode="prematch",
+            )
+
+        self.assertTrue(entries)
+        opportunity = entries[0]
+        self.assertEqual(opportunity["bet"]["soft_key"], "polymarket")
+        self.assertEqual(opportunity["bet"]["max_stake"], 120.0)
+        self.assertEqual(opportunity["bet"]["quote_source"], "clob_book_best_ask")
+        self.assertEqual(opportunity["bet"]["token_id"], "poly-home")
+        self.assertEqual(opportunity["bet"]["outcome_index"], 0)
+        self.assertEqual(opportunity["execution_quality"]["status"], "high")
+        self.assertEqual(opportunity["execution_quality"]["min_leg_liquidity"], 120.0)
+        self.assertEqual(opportunity["execution_quality"]["quote_time_skew_seconds"], 1.0)
+        self.assertEqual(opportunity["execution_quality"]["flags"], [])
+
+    def test_collect_plus_ev_uses_dex_consensus_without_single_sharp_reference(self) -> None:
+        game = {
+            "sport_key": "basketball_nba",
+            "sport_display": "NBA",
+            "home_team": "Home Team",
+            "away_team": "Away Team",
+            "bookmakers": [
+                {
+                    "key": "sx_bet",
+                    "title": "SX Bet",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {
+                                    "name": "Home Team",
+                                    "price": 1.8,
+                                    "stake": 500.0,
+                                    "market_hash": "0xsxbet-home",
+                                    "outcome_index": 0,
+                                    "last_updated": 1773593000000,
+                                    "quote_source": "rest_snapshot",
+                                },
+                                {
+                                    "name": "Away Team",
+                                    "price": 2.1,
+                                    "stake": 500.0,
+                                    "market_hash": "0xsxbet-away",
+                                    "outcome_index": 1,
+                                    "last_updated": 1773593000000,
+                                    "quote_source": "rest_snapshot",
+                                },
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "betdex",
+                    "title": "BetDEX",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {
+                                    "name": "Home Team",
+                                    "price": 1.82,
+                                    "stake": 300.0,
+                                    "last_updated": 1773593000000,
+                                    "quote_source": "rest_snapshot",
+                                },
+                                {
+                                    "name": "Away Team",
+                                    "price": 2.05,
+                                    "stake": 300.0,
+                                    "last_updated": 1773593000000,
+                                    "quote_source": "rest_snapshot",
+                                },
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "key": "polymarket",
+                    "title": "Polymarket",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "outcomes": [
+                                {
+                                    "name": "Home Team",
+                                    "price": 2.25,
+                                    "stake": 120.0,
+                                    "token_id": "poly-home",
+                                    "asset_id": "poly-home",
+                                    "outcome_index": 0,
+                                    "last_updated": 1773593001000,
+                                    "quote_source": "clob_book_best_ask",
+                                },
+                                {
+                                    "name": "Away Team",
+                                    "price": 1.65,
+                                    "stake": 240.0,
+                                    "token_id": "poly-away",
+                                    "asset_id": "poly-away",
+                                    "outcome_index": 1,
+                                    "last_updated": 1773593001000,
+                                    "quote_source": "clob_book_best_ask",
+                                },
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+
+        with patch("scanner.time.time", return_value=1773593002):
+            entries = scanner._collect_plus_ev_opportunities(
+                game,
+                markets=["h2h"],
+                sharp_priority=scanner._sharp_priority("pinnacle"),
+                commission_rate=0.03,
+                min_edge_percent=0.0,
+                bankroll=1000.0,
+                kelly_fraction=0.25,
+                scan_mode="prematch",
+            )
+
+        self.assertTrue(entries)
+        opportunity = entries[0]
+        self.assertEqual(opportunity["bet"]["soft_key"], "polymarket")
+        self.assertEqual(opportunity["sharp"]["key"], "dex_consensus")
+        self.assertEqual(opportunity["reference"]["method"], "dex_liquidity_weighted_consensus")
+        self.assertGreaterEqual(opportunity["reference"]["provider_count"], 2)
+        self.assertGreater(opportunity["edge_percent"], 0.0)
 
     def test_merge_events_handles_home_away_flipped_provider_feeds(self) -> None:
         base_events = [

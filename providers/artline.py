@@ -34,6 +34,8 @@ ARTLINE_SPORT_FILTERS: Dict[str, Dict[str, str]] = {
     "basketball_nba": {"sport": "basketball", "tournament_id": "17"},
     "basketball_euroleague": {"sport": "basketball", "tournament_id": "13"},
     "basketball_france_pro_a": {"sport": "basketball", "tournament_id": "652"},
+    "tennis_atp": {"sport": "tennis"},
+    "tennis_wta": {"sport": "tennis"},
     "icehockey_nhl": {"sport": "hockey", "tournament_id": "136"},
     "icehockey_ahl": {"sport": "hockey", "tournament_id": "567"},
     "soccer_epl": {"sport": "football", "tournament_id": "1"},
@@ -61,9 +63,9 @@ PROVIDER_CAPABILITY = ProviderCapability(
         ("h2h", "h2h_3_way", "spreads", "totals", "team_totals")
     ),
     live_mode_supported=True,
-    liquidity_confidence="quote_only",
+    liquidity_confidence="estimated",
     notes=(
-        "Current integration is useful as a quote source but does not provide verified executable stake.",
+        "Artline exposes web-event URLs and max_bet diagnostics; execution is paper/manual-web only.",
     ),
 )
 
@@ -281,6 +283,22 @@ def _execution_diagnostics(game: object) -> dict:
     if max_bet < min_bet:
         diagnostics["reason"] = "max_bet_below_min_bet"
     return diagnostics
+
+
+def _decorate_markets_for_execution(markets: List[dict], diagnostics: dict, observed_at: float) -> None:
+    max_bet = _safe_float(diagnostics.get("artline_max_bet")) if isinstance(diagnostics, dict) else None
+    executable = bool(isinstance(diagnostics, dict) and diagnostics.get("executable") and max_bet is not None)
+    for market in markets:
+        if not isinstance(market, dict):
+            continue
+        outcomes = market.get("outcomes") if isinstance(market.get("outcomes"), list) else []
+        for outcome in outcomes:
+            if not isinstance(outcome, dict):
+                continue
+            outcome.setdefault("quote_source", "rest_snapshot")
+            outcome.setdefault("observed_at", observed_at)
+            if executable:
+                outcome.setdefault("max_stake", round(float(max_bet), 6))
 
 
 def _outcome_row(name: str, price: float) -> dict:
@@ -615,8 +633,9 @@ async def fetch_events_async(
     payload = {
         "games_type": games_type,
         "sport": sport_filter["sport"],
-        "tournament_id": sport_filter["tournament_id"],
     }
+    if sport_filter.get("tournament_id"):
+        payload["tournament_id"] = sport_filter["tournament_id"]
 
     retries = _int_or_default(ARTLINE_RETRIES_RAW, 2, min_value=0)
     backoff = _float_or_default(ARTLINE_RETRY_BACKOFF_RAW, 0.5, min_value=0.0)
@@ -631,6 +650,7 @@ async def fetch_events_async(
         backoff_seconds=backoff,
     )
     stats["retries_used"] = retries_used
+    observed_at = dt.datetime.now(dt.timezone.utc).timestamp()
 
     data = _payload_data(response_payload)
     if isinstance(data, dict):
@@ -751,6 +771,7 @@ async def fetch_events_async(
         execution_diagnostics = _execution_diagnostics(game)
         if execution_diagnostics.get("reason") == "max_bet_below_min_bet":
             stats["max_bet_below_min_bet_count"] += 1
+        _decorate_markets_for_execution(normalized_markets, execution_diagnostics, observed_at)
         bookmaker = {
             "key": PROVIDER_KEY,
             "title": PROVIDER_TITLE,
@@ -763,6 +784,8 @@ async def fetch_events_async(
                 }
             ),
             "live_state": live_state,
+            "quote_source": "rest_snapshot",
+            "observed_at": observed_at,
             "markets": normalized_markets,
         }
         if execution_diagnostics:

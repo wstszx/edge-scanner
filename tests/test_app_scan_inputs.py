@@ -199,6 +199,16 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(payload.get('job', {}).get('job_id'), 'job-999')
         self.assertEqual(payload.get('job', {}).get('status'), 'completed')
 
+    def test_scan_current_job_endpoint_returns_idle_without_404_noise(self) -> None:
+        with patch.object(app_module, '_get_current_or_latest_scan_job_snapshot', return_value=None):
+            response = self.client.get('/scan/jobs/current')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json() or {}
+        self.assertFalse(payload.get('success'))
+        self.assertIsNone(payload.get('job'))
+        self.assertEqual(payload.get('status'), 'idle')
+
     def test_start_scan_job_runs_background_scan_and_sets_final_result(self) -> None:
         result_payload = {
             'success': True,
@@ -909,6 +919,154 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertEqual(payload["paper_trades"][0]["execution_type"], "arbitrage")
         self.assertEqual(payload["paper_trades"][0]["event"], "Los Angeles Lakers vs Boston Celtics")
 
+    def test_execute_scan_payload_records_top_arbitrage_manual_artline_paper_trade(self) -> None:
+        top_arbitrage = {
+            "id": "arb-artline-1",
+            "event_id": "event-artline-1",
+            "sport": "tennis_wta",
+            "event": "Gerard Campana Lee vs Ivan Biletic",
+            "market": "h2h",
+            "roi_percent": 0.42,
+            "profit": 0.42,
+            "stakes": {
+                "requested_total": 25.0,
+                "total": 25.0,
+                "limited_by_max_stake": False,
+                "breakdown": [
+                    {"outcome": "Gerard Campana Lee", "stake": 21.25, "payout": 25.18},
+                    {"outcome": "Ivan Biletic", "stake": 3.75, "payout": 26.25},
+                ],
+            },
+            "execution_quality": {"status": "high", "flags": []},
+            "best_odds": [
+                {
+                    "outcome": "Gerard Campana Lee",
+                    "bookmaker": "Polymarket",
+                    "bookmaker_key": "polymarket",
+                    "price": 1.176471,
+                    "effective_price": 1.172646,
+                    "max_stake": 27.2,
+                    "quote_updated_at": "2026-05-27T09:27:19Z",
+                    "quote_source": "clob_book_best_ask",
+                    "fee_rate": 0.03,
+                    "token_id": "poly-token",
+                    "asset_id": "poly-token",
+                    "outcome_index": 1,
+                    "is_exchange": True,
+                },
+                {
+                    "outcome": "Ivan Biletic",
+                    "bookmaker": "Artline",
+                    "bookmaker_key": "artline",
+                    "price": 7.0,
+                    "effective_price": 7.0,
+                    "max_stake": None,
+                    "quote_updated_at": "2026-05-27T09:25:56Z",
+                    "quote_source": "rest_snapshot",
+                    "book_event_url": "https://artline.bet/bookmaker/match/prematch/tennis/385771835504278",
+                    "execution_diagnostics": {
+                        "artline_max_bet": 0.01,
+                        "artline_min_bet": 5.0,
+                        "executable": False,
+                        "reason": "max_bet_below_min_bet",
+                    },
+                },
+            ],
+        }
+        result_payload = {
+            "success": True,
+            "scan_time": "2026-05-27T09:28:00Z",
+            "arbitrage": {"opportunities": [], "top_arbitrage": [top_arbitrage]},
+            "middles": {"opportunities": []},
+            "plus_ev": {"opportunities": []},
+        }
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ledger_path = Path(temp_dir) / "paper_trades.jsonl"
+            with (
+                patch.object(app_module, "PAPER_TRADE_LEDGER_PATH", ledger_path),
+                patch.object(app_module, "PAPER_TRADE_MIN_EXECUTABLE_STAKE", 0.0),
+                patch.object(app_module, "run_scan", return_value=result_payload),
+                patch.object(app_module, "get_history_manager", return_value=history_manager),
+                patch.object(app_module, "get_notifier", return_value=notifier),
+            ):
+                payload = app_module._execute_scan_payload({})
+
+        self.assertEqual(payload["execution_tickets"][0]["status"], "paper_ready")
+        self.assertEqual(payload["paper_trade_summary"]["arbitrage_ready_count"], 1)
+        self.assertEqual(payload["paper_trades"][0]["event"], "Gerard Campana Lee vs Ivan Biletic")
+        self.assertEqual(
+            payload["execution_tickets"][0]["legs"][1]["draft_order"]["adapter"],
+            "manual_artline",
+        )
+        self.assertEqual(
+            payload["execution_tickets"][0]["legs"][1]["manual_liquidity_risks"],
+            ["artline_api_max_bet_below_min_bet", "manual_liquidity_unverified"],
+        )
+
+    def test_execute_scan_payload_records_plus_ev_paper_trades(self) -> None:
+        plus_ev = {
+            "id": "plus-ev-1",
+            "sport": "basketball_nba",
+            "event": "Los Angeles Lakers vs Boston Celtics",
+            "market": "h2h",
+            "edge_percent": 8.5,
+            "ev_per_100": 8.5,
+            "kelly": {"recommended_stake": 42.5},
+            "bet": {
+                "outcome": "Los Angeles Lakers",
+                "soft_book": "Polymarket",
+                "soft_key": "polymarket",
+                "soft_odds": 2.25,
+                "effective_odds": 2.24,
+                "max_stake": 150.0,
+                "quote_updated_at": "2026-05-26T08:39:57Z",
+                "quote_source": "clob_book_best_ask",
+                "fee_rate": 0.03,
+                "token_id": "poly-token-lakers",
+                "asset_id": "poly-token-lakers",
+                "outcome_index": 0,
+            },
+            "sharp": {
+                "book": "DEX consensus",
+                "key": "dex_consensus",
+                "fair_odds": 2.06,
+                "true_probability": 0.485,
+                "quote_updated_at": "2026-05-26T08:39:52Z",
+                "quote_source": "dex_consensus",
+            },
+            "reference": {"method": "dex_liquidity_weighted_consensus", "provider_count": 2},
+            "execution_quality": {"status": "high", "flags": []},
+        }
+        result_payload = {
+            "success": True,
+            "scan_time": "2026-05-26T08:40:00Z",
+            "arbitrage": {"opportunities": []},
+            "middles": {"opportunities": []},
+            "plus_ev": {"opportunities": [plus_ev]},
+        }
+        history_manager = MagicMock()
+        notifier = MagicMock()
+        notifier.is_configured = False
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ledger_path = Path(temp_dir) / "paper_trades.jsonl"
+            with (
+                patch.object(app_module, "PAPER_TRADE_LEDGER_PATH", ledger_path),
+                patch.object(app_module, "run_scan", return_value=result_payload),
+                patch.object(app_module, "get_history_manager", return_value=history_manager),
+                patch.object(app_module, "get_notifier", return_value=notifier),
+            ):
+                payload = app_module._execute_scan_payload({})
+
+        self.assertEqual(payload["plus_ev_execution_tickets"][0]["status"], "paper_ready")
+        self.assertEqual(payload["paper_trade_summary"]["plus_ev_ready_count"], 1)
+        self.assertEqual(payload["paper_trades"][0]["execution_type"], "plus_ev")
+        self.assertEqual(payload["paper_trades"][0]["edge_percent"], 8.5)
+
     def test_paper_trades_endpoint_reads_recent_ledger_records(self) -> None:
         record = {
             "paper_trade_key": "paper-1",
@@ -928,6 +1086,61 @@ class ScanInputValidationTests(unittest.TestCase):
         self.assertTrue(payload["success"])
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["records"][0]["event"], "San Antonio Spurs vs Oklahoma City Thunder")
+
+    def test_paper_trades_settle_endpoint_appends_settlement(self) -> None:
+        record = {
+            "paper_trade_key": "paper-1",
+            "created_at": "2026-05-26T08:40:00Z",
+            "status": "open",
+            "execution_type": "arbitrage",
+            "sport": "basketball_nba",
+            "event": "Los Angeles Lakers vs Boston Celtics",
+            "market": "h2h",
+            "ticket": {
+                "execution_type": "arbitrage",
+                "legs": [
+                    {"outcome": "Los Angeles Lakers", "stake": 50.0, "limit_price": 2.1},
+                    {"outcome": "Boston Celtics", "stake": 50.0, "limit_price": 2.0},
+                ],
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            ledger_path = Path(temp_dir) / "paper_trades.jsonl"
+            ledger_path.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+            with patch.object(app_module, "PAPER_TRADE_LEDGER_PATH", ledger_path):
+                response = self.client.post(
+                    "/paper-trades/settle",
+                    json={"results": {"paper-1": {"status": "final", "winner": "Los Angeles Lakers"}}},
+                )
+                follow_up = self.client.get("/paper-trades?limit=10")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["settled_count"], 1)
+        records = follow_up.get_json()["records"]
+        self.assertEqual(records[0]["status"], "settled")
+        self.assertEqual(records[0]["settlement"]["pnl"], 5.0)
+
+    def test_execution_capability_summary_redacts_credentials(self) -> None:
+        with patch.dict(
+            app_module.os.environ,
+            {"SX_BET_API_KEY": "super-secret-sx-key", "POLYMARKET_API_KEY": ""},
+            clear=False,
+        ):
+            summary = app_module._execution_capability_summary()
+
+        text = json.dumps(summary, ensure_ascii=False)
+        by_key = {row["key"]: row for row in summary}
+        self.assertNotIn("super-secret-sx-key", text)
+        self.assertTrue(by_key["sx_bet"]["credential_ready"])
+        self.assertTrue(by_key["sx_bet"]["paper_execution_supported"])
+        self.assertTrue(by_key["polymarket"]["paper_execution_supported"])
+        self.assertFalse(by_key["polymarket"]["credential_ready"])
+        self.assertFalse(by_key["bookmaker_xyz"]["paper_execution_supported"])
+        self.assertEqual(by_key["bookmaker_xyz"]["liquidity_confidence"], "quote_only")
+        self.assertTrue(by_key["artline"]["paper_execution_supported"])
+        self.assertEqual(by_key["artline"]["execution_role"], "paper_execution")
 
     def test_execute_scan_payload_preserves_negative_roi_arbitrage_results_from_run_scan(self) -> None:
         result_payload = {

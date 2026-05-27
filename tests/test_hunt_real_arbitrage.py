@@ -436,11 +436,11 @@ def test_provider_capability_summary_marks_quote_only_provider() -> None:
     assert by_key["polymarket"]["liquidity_confidence"] in {"explicit", "estimated"}
 
 
-def test_default_dex_providers_include_artline_as_quote_source() -> None:
+def test_default_dex_providers_include_artline_as_manual_execution_source() -> None:
     assert "artline" in hunt_real_arbitrage.DEFAULT_PROVIDERS
     summary = {
         row["key"]: row
         for row in hunt_real_arbitrage._provider_capability_summary(hunt_real_arbitrage.DEFAULT_PROVIDERS)
     }
 
-    assert summary["artline"]["liquidity_confidence"] == "quote_only"
+    assert summary["artline"]["liquidity_confidence"] == "estimated"

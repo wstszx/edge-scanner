@@ -41,8 +41,8 @@ Declared sport-key counts by provider:
 | --- | ---: |
 | `bookmaker_xyz` | 38 |
 | `betdex` | 24 |
-| `artline` | 20 |
-| `polymarket` | 12 |
+| `artline` | 22 |
+| `polymarket` | 14 |
 | `sx_bet` | 12 |
 
 The union across all custom providers currently covers 38 distinct `sport_key` values.
@@ -87,9 +87,9 @@ The union across all custom providers currently covers 38 distinct `sport_key` v
 | `soccer_spain_la_liga` | Y | Y | Y | Y | Y |
 | `soccer_turkey_super_lig` | - | - | Y | - | - |
 | `soccer_usa_mls` | Y | Y | Y | Y | Y |
-| `tennis_atp` | - | Y | Y | - | - |
+| `tennis_atp` | Y | Y | Y | Y | - |
 | `tennis_atp_indian_wells` | - | - | Y | - | - |
-| `tennis_wta` | - | Y | Y | - | - |
+| `tennis_wta` | Y | Y | Y | Y | - |
 | `tennis_wta_indian_wells` | - | - | Y | - | - |
 
 ## Practical Notes

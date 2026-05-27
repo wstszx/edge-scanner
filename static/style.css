@@ -1563,6 +1563,12 @@ body.modal-open .content {
   background: color-mix(in srgb, var(--warning) 12%, transparent);
 }
 
+.paper-trade-chip.is-invalid {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
+}
+
 .paper-trade-chip.is-muted {
   background: color-mix(in srgb, var(--surface-soft) 82%, transparent);
 }
@@ -1574,6 +1580,16 @@ body.modal-open .content {
 .paper-trades-list {
   display: grid;
   gap: 0.75rem;
+}
+
+.paper-trade-scan-summary {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.62rem 0.75rem;
+  color: var(--text-muted);
+  background: var(--surface-soft);
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .paper-trade-row {
@@ -1618,9 +1634,9 @@ body.modal-open .content {
 
 .paper-trade-leg {
   display: grid;
-  grid-template-columns: minmax(120px, 1.2fr) minmax(80px, 0.8fr) minmax(80px, 0.7fr) minmax(130px, 1fr);
+  grid-template-columns: minmax(140px, 0.9fr) minmax(220px, 1.4fr) minmax(160px, 1fr);
   gap: 0.55rem;
-  align-items: center;
+  align-items: start;
   border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   border-radius: 8px;
   padding: 0.5rem 0.62rem;
@@ -1628,8 +1644,128 @@ body.modal-open .content {
   font-size: 0.84rem;
 }
 
+.paper-trade-leg.is-manual-web {
+  border-color: color-mix(in srgb, var(--warning) 34%, var(--border));
+  background: color-mix(in srgb, var(--warning) 7%, var(--surface));
+}
+
+.paper-trade-leg-book,
+.paper-trade-leg-details,
+.paper-trade-leg-meta {
+  min-width: 0;
+  display: grid;
+  gap: 0.18rem;
+}
+
+.paper-trade-leg-book span,
+.paper-trade-leg-details span,
+.paper-trade-leg-meta small {
+  overflow-wrap: anywhere;
+}
+
+.paper-trade-leg-details {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .paper-trade-leg small {
   color: var(--text-muted);
+}
+
+.paper-trade-manual-chip,
+.paper-trade-risk-list span,
+.paper-trade-book-link {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  padding: 0.12rem 0.48rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.2;
+  text-decoration: none;
+}
+
+.paper-trade-manual-chip {
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border));
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+.paper-trade-book-link {
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.paper-trade-book-link:hover {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.paper-trade-risk-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.paper-trade-risk-list span {
+  border: 1px solid color-mix(in srgb, var(--warning) 32%, var(--border));
+  color: color-mix(in srgb, var(--warning) 88%, var(--text));
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+}
+
+.paper-trade-settlement {
+  display: grid;
+  gap: 0.34rem;
+  margin-top: 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--success) 32%, var(--border));
+  border-radius: 8px;
+  padding: 0.56rem 0.66rem;
+  background: color-mix(in srgb, var(--success) 8%, var(--surface));
+  color: var(--text);
+}
+
+.paper-trade-settlement strong {
+  color: var(--success);
+  font-size: 0.86rem;
+}
+
+.paper-trade-settlement-legs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+}
+
+.paper-trade-settlement-legs span {
+  border-radius: 999px;
+  padding: 0.14rem 0.44rem;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.opportunity-funnel-summary {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.75rem 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.7rem 0.75rem;
+  background: var(--surface-soft);
+}
+
+.opportunity-funnel-head {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.plus-ev-quality {
+  width: fit-content;
+  margin-top: 0.18rem;
 }
 
 .roi-negative .roi-badge {
@@ -2719,6 +2855,26 @@ body.modal-open .content {
   background: color-mix(in srgb, var(--warning) 14%, transparent);
 }
 
+.execution-capability-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.execution-capability-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  background: var(--surface-soft);
+}
+
+.execution-capability-row .provider-summary-metrics {
+  justify-content: flex-end;
+}
+
 .provider-card-body {
   border-top: 1px solid var(--border);
   padding: 0.72rem 0.9rem 0.9rem;
@@ -3794,6 +3950,15 @@ body.modal-open .content {
 
   .paper-trade-leg {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .execution-capability-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .execution-capability-row .provider-summary-metrics {
+    justify-content: flex-start;
   }
 }
 

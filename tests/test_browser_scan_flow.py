@@ -1710,7 +1710,7 @@ class BrowserScanFlowTests(unittest.TestCase):
         def _fake_run_scan(**kwargs):
             run_scan_calls.append(copy.deepcopy(kwargs))
             first_scan_started.set()
-            time.sleep(0.2)
+            time.sleep(0.8)
             return _sample_scan_result()
 
         with ExitStack() as stack:

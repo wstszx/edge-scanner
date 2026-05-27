@@ -17,6 +17,237 @@ def test_build_scan_jobs_includes_all_pairs_and_all_markets_subset() -> None:
     assert all(job["sports"] == ["basketball_nba"] for job in jobs)
 
 
+def test_runner_records_per_scan_timeout_and_continues(monkeypatch, tmp_path) -> None:
+    calls = []
+
+    def fake_scan_once(sport, providers, **kwargs):
+        calls.append((sport, tuple(providers)))
+        if sport == "basketball_nba":
+            raise TimeoutError("scan timed out after 0.01s")
+        return {
+            "sport": sport,
+            "providers": list(providers),
+            "api_bookmakers": [],
+            "all_markets": bool(kwargs.get("all_markets")),
+            "elapsed_seconds": 0.01,
+            "success": True,
+            "partial": False,
+            "arbitrage_count": 0,
+            "positive_candidates": 0,
+            "actionable_arbitrage_count": 0,
+            "top_candidate": None,
+            "actionable_arbitrage": [],
+            "middle_count": 0,
+            "positive_middle_count": 0,
+            "actionable_middle_count": 0,
+            "top_middles": [],
+            "actionable_middles": [],
+            "plus_ev_count": 0,
+            "top_plus_ev": [],
+            "provider_capabilities": [],
+            "scan_diagnostics": {"reason_code": "matched_but_no_arbitrage"},
+            "custom_providers": {},
+            "sport_errors": [],
+        }
+
+    monkeypatch.setattr(hunt_dex_opportunities, "_run_scan_once_with_timeout", fake_scan_once)
+    monkeypatch.setattr(hunt_dex_opportunities.hunt, "_shutdown_runtime_resources", lambda: None)
+    out = tmp_path / "dex_hunt.json"
+    summary_out = tmp_path / "summary.md"
+
+    exit_code = hunt_dex_opportunities.main(
+        [
+            "--sports",
+            "basketball_nba",
+            "baseball_mlb",
+            "--provider-sets",
+            "sx_bet,polymarket",
+            "--per-scan-timeout-seconds",
+            "0.01",
+            "--out",
+            str(out),
+            "--summary-out",
+            str(summary_out),
+        ]
+    )
+
+    assert exit_code == 1
+    assert len(calls) == 2
+    payload = __import__("json").loads(out.read_text(encoding="utf-8"))
+    timeout_scan = next(row for row in payload["scans"] if row["sport"] == "basketball_nba")
+    assert timeout_scan["success"] is False
+    assert timeout_scan["timed_out"] is True
+    assert timeout_scan["scan_diagnostics"]["reason_code"] == "scan_timeout"
+    assert payload["summary"]["scan_diagnostics"]["reason_counts"]["scan_timeout"] == 1
+    assert "scan_timeout: 1" in summary_out.read_text(encoding="utf-8")
+
+
+def test_runner_writes_batch_reports_after_each_scan(monkeypatch, tmp_path) -> None:
+    def fake_scan_once(sport, providers, **kwargs):
+        return {
+            "sport": sport,
+            "providers": list(providers),
+            "api_bookmakers": [],
+            "all_markets": bool(kwargs.get("all_markets")),
+            "elapsed_seconds": 0.01,
+            "success": True,
+            "partial": False,
+            "arbitrage_count": 0,
+            "positive_candidates": 0,
+            "actionable_arbitrage_count": 0,
+            "top_candidate": None,
+            "actionable_arbitrage": [],
+            "top_arbitrage": [],
+            "middle_count": 0,
+            "positive_middle_count": 0,
+            "actionable_middle_count": 0,
+            "top_middles": [],
+            "actionable_middles": [],
+            "plus_ev_count": 0,
+            "top_plus_ev": [],
+            "provider_capabilities": [],
+            "scan_diagnostics": {"reason_code": f"no_events_{sport}"},
+            "custom_providers": {},
+            "sport_errors": [],
+        }
+
+    monkeypatch.setattr(hunt_dex_opportunities, "_run_scan_once_with_timeout", fake_scan_once)
+    monkeypatch.setattr(hunt_dex_opportunities.hunt, "_shutdown_runtime_resources", lambda: None)
+    out = tmp_path / "dex_hunt.json"
+    summary_out = tmp_path / "summary.md"
+    batch_dir = tmp_path / "batches"
+
+    exit_code = hunt_dex_opportunities.main(
+        [
+            "--sports",
+            "basketball_nba",
+            "baseball_mlb",
+            "--provider-sets",
+            "sx_bet,polymarket",
+            "--batch-out-dir",
+            str(batch_dir),
+            "--out",
+            str(out),
+            "--summary-out",
+            str(summary_out),
+        ]
+    )
+
+    assert exit_code == 1
+    batch_json = sorted(batch_dir.glob("*.json"))
+    batch_md = sorted(batch_dir.glob("*.md"))
+    assert len(batch_json) == 2
+    assert len(batch_md) == 2
+    first_payload = __import__("json").loads(batch_json[0].read_text(encoding="utf-8"))
+    assert first_payload["summary"]["scan_count"] == 1
+    assert first_payload["scans"][0]["sport"] in {"basketball_nba", "baseball_mlb"}
+    aggregate = __import__("json").loads(out.read_text(encoding="utf-8"))
+    assert aggregate["summary"]["batch_report_count"] == 2
+    assert len(aggregate["batch_reports"]) == 2
+
+
+def test_runner_returns_success_when_execution_ticket_is_ready(monkeypatch, tmp_path) -> None:
+    def fake_scan_once(sport, providers, **kwargs):
+        ready_row = {
+            "sport": "basketball_nba",
+            "event": "Away vs Home",
+            "market": "h2h",
+            "roi_percent": 1.2,
+            "profit": 1.2,
+            "execution_quality": {"status": "high", "flags": []},
+            "stakes": {
+                "total": 100.0,
+                "requested_total": 100.0,
+                "limited_by_max_stake": False,
+                "breakdown": [
+                    {"outcome": "Home", "bookmaker": "SX Bet", "stake": 45.0},
+                    {"outcome": "Away", "bookmaker": "Polymarket", "stake": 55.0},
+                ],
+            },
+            "books": [
+                {
+                    "outcome": "Home",
+                    "bookmaker": "SX Bet",
+                    "bookmaker_key": "sx_bet",
+                    "price": 2.25,
+                    "effective_price": 2.25,
+                    "max_stake": 80.0,
+                    "quote_updated_at": "2026-05-26T03:40:45Z",
+                    "fee_rate": 0.0,
+                    "market_hash": "0xsxhash",
+                    "outcome_index": 0,
+                },
+                {
+                    "outcome": "Away",
+                    "bookmaker": "Polymarket",
+                    "bookmaker_key": "polymarket",
+                    "price": 1.85,
+                    "effective_price": 1.84,
+                    "max_stake": 90.0,
+                    "quote_updated_at": "2026-05-26T03:40:46Z",
+                    "fee_rate": 0.0075,
+                    "token_id": "poly-token-away",
+                    "asset_id": "poly-token-away",
+                    "outcome_index": 1,
+                },
+            ],
+        }
+        return {
+            "sport": sport,
+            "providers": list(providers),
+            "api_bookmakers": [],
+            "all_markets": bool(kwargs.get("all_markets")),
+            "elapsed_seconds": 0.01,
+            "success": True,
+            "partial": False,
+            "arbitrage_count": 1,
+            "positive_candidates": 1,
+            "actionable_arbitrage_count": 1,
+            "top_candidate": None,
+            "actionable_arbitrage": [ready_row],
+            "top_arbitrage": [ready_row],
+            "middle_count": 0,
+            "positive_middle_count": 0,
+            "actionable_middle_count": 0,
+            "top_middles": [],
+            "actionable_middles": [],
+            "plus_ev_count": 0,
+            "top_plus_ev": [],
+            "provider_capabilities": [],
+            "scan_diagnostics": {"reason_code": "matched_but_no_arbitrage"},
+            "custom_providers": {},
+            "sport_errors": [],
+        }
+
+    monkeypatch.setattr(hunt_dex_opportunities, "_run_scan_once_with_timeout", fake_scan_once)
+    monkeypatch.setattr(hunt_dex_opportunities.hunt, "_shutdown_runtime_resources", lambda: None)
+    monkeypatch.setenv("SX_BET_API_KEY", "set-for-test")
+    monkeypatch.setenv("POLYMARKET_API_KEY", "set-for-test")
+    out = tmp_path / "dex_hunt.json"
+    summary_out = tmp_path / "summary.md"
+
+    exit_code = hunt_dex_opportunities.main(
+        [
+            "--sports",
+            "basketball_nba",
+            "--provider-sets",
+            "sx_bet,polymarket",
+            "--out",
+            str(out),
+            "--summary-out",
+            str(summary_out),
+        ]
+    )
+
+    assert exit_code == 0
+    payload = __import__("json").loads(out.read_text(encoding="utf-8"))
+    assert payload["summary"]["execution_ready_ticket_count"] == 1
+    assert payload["summary"]["opportunity_funnel"]["conclusion"] == "execution_ready_opportunity"
+    markdown = summary_out.read_text(encoding="utf-8")
+    assert "- execution_ready_ticket_count: 1" in markdown
+    assert "- conclusion: execution_ready_opportunity" in markdown
+
+
 def test_build_scan_jobs_can_require_explicit_liquidity() -> None:
     jobs = hunt_dex_opportunities._build_scan_jobs(
         sports=["basketball_nba"],
@@ -33,7 +264,7 @@ def test_build_scan_jobs_can_require_explicit_liquidity() -> None:
     assert "pairs:sx_bet+polymarket" in names
     assert "all:all_markets" in names
     assert all("bookmaker_xyz" not in job["providers"] for job in jobs)
-    assert all("artline" not in job["providers"] for job in jobs)
+    assert any("artline" in job["providers"] for job in jobs)
     assert all(len(job["providers"]) >= 2 for job in jobs)
 
 
@@ -185,7 +416,6 @@ def test_annotate_blocked_reasons_marks_artline_max_bet_below_min_bet() -> None:
 
     assert annotated[0]["blocked_reasons"] == [
         "artline_max_bet_below_min_bet",
-        "artline_quote_only",
         "missing_liquidity",
     ]
 
@@ -341,7 +571,7 @@ def test_build_execution_ticket_blocks_missing_adapter_execution_ids() -> None:
     assert ticket["legs"][1]["draft_order"] is None
 
 
-def test_build_execution_ticket_blocks_artline_quote_only_leg() -> None:
+def test_build_execution_ticket_blocks_artline_non_executable_leg() -> None:
     row = {
         "sport": "basketball_nba",
         "event": "San Antonio Spurs vs Oklahoma City Thunder",
@@ -402,13 +632,79 @@ def test_build_execution_ticket_blocks_artline_quote_only_leg() -> None:
 
     assert ticket["status"] == "blocked"
     assert ticket["dry_run"] is True
-    assert "artline_execution_adapter_missing" in ticket["submit_blockers"]
     assert "artline_max_bet_below_min_bet" in ticket["submit_blockers"]
-    assert "artline_quote_only" in ticket["submit_blockers"]
+    assert "artline_missing_event_url" in ticket["submit_blockers"]
+    assert "artline_not_executable" in ticket["submit_blockers"]
     assert "non_positive_roi" in ticket["submit_blockers"]
     assert "stake_below_minimum" in ticket["submit_blockers"]
     assert "wallet_not_ready" in ticket["submit_blockers"]
-    assert ticket["legs"][1]["execution_supported"] is False
+    assert ticket["legs"][1]["execution_supported"] is True
+
+
+def test_build_execution_ticket_marks_artline_manual_leg_ready() -> None:
+    row = {
+        "sport": "tennis_atp",
+        "event": "Player One vs Player Two",
+        "market": "h2h",
+        "roi_percent": 0.86,
+        "profit": 0.86,
+        "execution_quality": {"status": "high", "flags": []},
+        "stakes": {
+            "total": 100.0,
+            "requested_total": 100.0,
+            "limited_by_max_stake": False,
+            "breakdown": [
+                {"outcome": "Player One", "bookmaker": "Artline", "stake": 18.0},
+                {"outcome": "Player Two", "bookmaker": "Polymarket", "stake": 82.0},
+            ],
+        },
+        "books": [
+            {
+                "outcome": "Player One",
+                "bookmaker": "Artline",
+                "bookmaker_key": "artline",
+                "price": 6.6,
+                "effective_price": 6.6,
+                "max_stake": 250.0,
+                "quote_updated_at": "2026-05-26T03:40:45Z",
+                "quote_source": "rest_snapshot",
+                "book_event_url": "https://artline.bet/bookmaker/match/prematch/tennis/123",
+                "execution_diagnostics": {
+                    "artline_max_bet": 250.0,
+                    "artline_min_bet": 5.0,
+                    "executable": True,
+                },
+            },
+            {
+                "outcome": "Player Two",
+                "bookmaker": "Polymarket",
+                "bookmaker_key": "polymarket",
+                "price": 1.19,
+                "effective_price": 1.18,
+                "max_stake": 500.0,
+                "quote_updated_at": "2026-05-26T03:40:46Z",
+                "quote_source": "clob",
+                "fee_rate": 0.0075,
+                "token_id": "poly-token-two",
+                "asset_id": "poly-token-two",
+                "outcome_index": 1,
+            },
+        ],
+    }
+
+    ticket = hunt_dex_opportunities._build_execution_ticket(
+        row,
+        source="actionable_arbitrage",
+        min_executable_stake=5.0,
+        max_quote_skew_seconds=120,
+        wallet_ready=True,
+    )
+
+    assert ticket["status"] == "ready"
+    assert ticket["submit_blockers"] == []
+    assert ticket["legs"][0]["execution_supported"] is True
+    assert ticket["legs"][0]["draft_order"]["adapter"] == "manual_artline"
+    assert ticket["legs"][0]["draft_order"]["event_url"] == "https://artline.bet/bookmaker/match/prematch/tennis/123"
 
 
 def test_build_execution_ticket_blocks_stale_quote_skew_preflight() -> None:
@@ -771,14 +1067,13 @@ def test_runner_writes_model_only_arbitrage_blocked_reasons(monkeypatch, tmp_pat
     assert payload["summary"]["blocked_reason_counts"]["artline_max_bet_below_min_bet"] == 1
     assert payload["model_only_arbitrage"][0]["blocked_reasons"] == [
         "artline_max_bet_below_min_bet",
-        "artline_quote_only",
         "missing_liquidity",
         "missing_quote_time",
         "non_positive_roi",
         "stake_below_minimum",
     ]
     assert payload["execution_tickets"][0]["status"] == "blocked"
-    assert "artline_execution_adapter_missing" in payload["execution_tickets"][0]["submit_blockers"]
+    assert "artline_missing_event_url" in payload["execution_tickets"][0]["submit_blockers"]
 
 
 def test_runner_writes_ready_execution_ticket_for_actionable_arbitrage(monkeypatch, tmp_path) -> None:
@@ -1044,7 +1339,7 @@ def test_build_execution_ticket_checks_wallet_readiness_for_ticket_providers_onl
 
     assert ticket["preflight"]["wallet_ready"] is True
     assert "wallet_not_ready" not in ticket["submit_blockers"]
-    assert "artline_execution_adapter_missing" in ticket["submit_blockers"]
+    assert "artline_missing_event_url" in ticket["submit_blockers"]
 
 
 def test_execution_ticket_reports_missing_wallet_env_names_without_values(monkeypatch) -> None:
@@ -1550,6 +1845,47 @@ def test_render_markdown_summary_includes_counts_and_top_risks() -> None:
     assert "scans_with_cross_provider_matches: 2" in markdown
     assert "Fresh vs Current" in markdown
     assert "source_json: report.json" in markdown
+
+
+def test_opportunity_funnel_summary_explains_no_execution_ready_opportunity() -> None:
+    summary = hunt_dex_opportunities._opportunity_funnel_summary(
+        scan_count=5,
+        scan_diagnostics={
+            "reason_counts": {
+                "no_cross_provider_overlap": 2,
+                "matched_but_no_arbitrage": 1,
+            },
+            "scans_with_source_events": 4,
+            "scans_without_source_events": 1,
+            "scans_with_cross_provider_matches": 2,
+            "scans_without_cross_provider_matches": 2,
+        },
+        actionable_arbitrage_count=0,
+        actionable_middle_count=0,
+        plus_ev_count=1,
+        model_only_arbitrage_count=3,
+        model_only_middle_count=1,
+        execution_ready_ticket_count=0,
+        middle_execution_ready_ticket_count=0,
+        blocked_reason_counts={
+            "non_positive_roi": 3,
+            "limited_by_liquidity": 1,
+        },
+        execution_risk_counts={"quote_time_skew": 1},
+    )
+
+    assert summary["conclusion"] == "no_execution_ready_opportunity"
+    assert summary["scan_count"] == 5
+    assert summary["scans_with_source_events"] == 4
+    assert summary["scans_with_cross_provider_matches"] == 2
+    assert summary["model_only_count"] == 4
+    assert summary["ready_ticket_count"] == 0
+    assert summary["top_blockers"] == [
+        {"reason": "non_positive_roi", "count": 3},
+        {"reason": "limited_by_liquidity", "count": 1},
+    ]
+    assert summary["top_scan_reasons"][0] == {"reason": "no_cross_provider_overlap", "count": 2}
+    assert summary["execution_risks"] == [{"reason": "quote_time_skew", "count": 1}]
 
 
 def test_runner_writes_markdown_summary(monkeypatch, tmp_path) -> None:

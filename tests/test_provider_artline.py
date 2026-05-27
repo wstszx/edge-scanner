@@ -335,18 +335,14 @@ class ArtlineProviderTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(events), 1)
         bookmaker = events[0]["bookmakers"][0]
+        market = bookmaker["markets"][0]
+        self.assertEqual(market["key"], "h2h")
         self.assertEqual(
-            bookmaker["markets"],
-            [
-                {
-                    "key": "h2h",
-                    "outcomes": [
-                        {"name": "Florida Panthers", "price": 1.97},
-                        {"name": "New York Rangers", "price": 1.77},
-                    ],
-                }
-            ],
+            [(row["name"], row["price"]) for row in market["outcomes"]],
+            [("Florida Panthers", 1.97), ("New York Rangers", 1.77)],
         )
+        self.assertTrue(all(row.get("quote_source") == "rest_snapshot" for row in market["outcomes"]))
+        self.assertTrue(all(row.get("observed_at") for row in market["outcomes"]))
         self.assertEqual(artline.fetch_events_async.last_stats.get("detail_enrichment_requested"), 1)
         self.assertEqual(artline.fetch_events_async.last_stats.get("detail_enrichment_succeeded"), 1)
 

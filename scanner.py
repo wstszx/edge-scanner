@@ -64,7 +64,7 @@ from config import (
     markets_for_sport,
     normalize_supported_bookmakers,
 )
-from providers import PROVIDER_FETCHERS, PROVIDER_TITLES, resolve_provider_key
+from providers import PROVIDER_CAPABILITIES, PROVIDER_FETCHERS, PROVIDER_TITLES, resolve_provider_key
 from providers import _async_http as _provider_async_http
 import scanner_request_logging as _request_logging
 from scanner_request_logging import (
@@ -2083,6 +2083,13 @@ def _arbitrage_min_executable_stake() -> float:
         return 1.0
 
 
+def _iso_datetime(value: object) -> Optional[dt.datetime]:
+    timestamp = _parse_timestamp_seconds(value)
+    if timestamp is None:
+        return None
+    return dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc)
+
+
 def _normalize_text(value: Optional[str]) -> str:
     if not value:
         return ""
@@ -2773,9 +2780,22 @@ def _effective_commission_rate(bookmaker_key: object, default_commission_rate: o
 def _sharp_priority(selected_key: str) -> List[dict]:
     priority = []
     seen = set()
-    if selected_key in SHARP_BOOK_MAP:
-        priority.append(SHARP_BOOK_MAP[selected_key])
-        seen.add(selected_key)
+    normalized_selected = _normalize_line_component(selected_key)
+    if normalized_selected in SHARP_BOOK_MAP:
+        priority.append(SHARP_BOOK_MAP[normalized_selected])
+        seen.add(normalized_selected)
+    elif normalized_selected in PROVIDER_CAPABILITIES or normalized_selected in EXCHANGE_KEYS:
+        priority.append(
+            {
+                "key": normalized_selected,
+                "name": PROVIDER_TITLES.get(normalized_selected)
+                or EXCHANGE_BOOKMAKERS.get(normalized_selected, {}).get("name")
+                or normalized_selected,
+                "region": "custom",
+                "type": "exchange" if normalized_selected in EXCHANGE_KEYS else "bookmaker",
+            }
+        )
+        seen.add(normalized_selected)
     for book in SHARP_BOOKS:
         key = book.get("key")
         if key and key not in seen:
@@ -2849,10 +2869,13 @@ def _build_sharp_reference(
     """Return mapping of (market_key, line_key) to vig-free odds."""
     line_map: Dict[Tuple[str, str], List[dict]] = {}
     now_epoch = time.time()
+    bookmaker_key = _normalize_line_component(bookmaker.get("key") or bookmaker.get("title"))
     bookmaker_live_state = _selected_live_state_payload(
         [_bookmaker_live_state(game, bookmaker)],
         fallback=_event_live_state(game or {}) if isinstance(game, dict) else None,
     )
+    book_event_id = bookmaker.get("event_id") or bookmaker.get("eventId") or bookmaker.get("id")
+    book_event_url = bookmaker.get("event_url") or bookmaker.get("eventUrl") or bookmaker.get("url")
     for market in bookmaker.get("markets", []):
         market_key = market.get("key")
         if not market_key:
@@ -2874,13 +2897,17 @@ def _build_sharp_reference(
             if not line_key:
                 continue
             adjusted_price = _apply_commission(price_val, bookmaker.get("key"), commission_rate)
-            name_norm = _normalize_line_component(outcome.get("name"))
+            name_norm = _canonicalize_outcome_name(
+                outcome.get("name"),
+                game.get("sport_key") if isinstance(game, dict) else None,
+            )
             if not name_norm:
                 continue
             line_map.setdefault((market_key, line_key), []).append(
                 {
                     "name": name_norm,
                     "display_name": _outcome_display_name(outcome),
+                    "bookmaker_key": bookmaker_key,
                     "price": adjusted_price,
                     "raw_price": price_val,
                     "raw_percentage_odds": outcome.get("raw_percentage_odds"),
@@ -2888,6 +2915,24 @@ def _build_sharp_reference(
                     "quote_updated_at": _epoch_to_iso(
                         _quote_display_timestamp_seconds(game, bookmaker, market, outcome) or 0.0
                     ),
+                    "quote_source": outcome.get("quote_source") or outcome.get("source"),
+                    "max_stake": _safe_float(
+                        outcome.get("stake")
+                        or outcome.get("max_stake")
+                        or outcome.get("liquidity")
+                    ),
+                    "market_hash": outcome.get("market_hash") or outcome.get("marketHash"),
+                    "token_id": outcome.get("token_id") or outcome.get("tokenId"),
+                    "asset_id": outcome.get("asset_id") or outcome.get("assetId"),
+                    "condition_id": outcome.get("condition_id") or outcome.get("conditionId"),
+                    "outcome_index": outcome.get("outcome_index")
+                    if outcome.get("outcome_index") is not None
+                    else outcome.get("outcomeIndex"),
+                    "book_event_id": book_event_id,
+                    "book_event_url": book_event_url,
+                    "execution_diagnostics": copy.deepcopy(bookmaker.get("execution_diagnostics"))
+                    if isinstance(bookmaker.get("execution_diagnostics"), dict)
+                    else None,
                     "live_state": bookmaker_live_state,
                 }
             )
@@ -2912,6 +2957,16 @@ def _build_sharp_reference(
                     "point": first.get("point"),
                     "raw_percentage_odds": first.get("raw_percentage_odds"),
                     "quote_updated_at": first.get("quote_updated_at"),
+                    "quote_source": first.get("quote_source"),
+                    "max_stake": first.get("max_stake"),
+                    "market_hash": first.get("market_hash"),
+                    "token_id": first.get("token_id"),
+                    "asset_id": first.get("asset_id"),
+                    "condition_id": first.get("condition_id"),
+                    "outcome_index": first.get("outcome_index"),
+                    "book_event_id": first.get("book_event_id"),
+                    "book_event_url": first.get("book_event_url"),
+                    "execution_diagnostics": first.get("execution_diagnostics"),
                     "live_state": first.get("live_state"),
                 },
                 second["name"]: {
@@ -2924,6 +2979,16 @@ def _build_sharp_reference(
                     "point": second.get("point"),
                     "raw_percentage_odds": second.get("raw_percentage_odds"),
                     "quote_updated_at": second.get("quote_updated_at"),
+                    "quote_source": second.get("quote_source"),
+                    "max_stake": second.get("max_stake"),
+                    "market_hash": second.get("market_hash"),
+                    "token_id": second.get("token_id"),
+                    "asset_id": second.get("asset_id"),
+                    "condition_id": second.get("condition_id"),
+                    "outcome_index": second.get("outcome_index"),
+                    "book_event_id": second.get("book_event_id"),
+                    "book_event_url": second.get("book_event_url"),
+                    "execution_diagnostics": second.get("execution_diagnostics"),
                     "live_state": second.get("live_state"),
                 },
             },
@@ -2940,6 +3005,7 @@ def _two_way_outcomes(
     line_map: Dict[Tuple[str, str], List[dict]] = {}
     now_epoch = time.time()
     sport_key = _normalize_line_component(game.get("sport_key")) if isinstance(game, dict) else ""
+    bookmaker_key = _normalize_line_component(bookmaker.get("key") or bookmaker.get("title"))
     bookmaker_live_state = _selected_live_state_payload(
         [_bookmaker_live_state(game, bookmaker)],
         fallback=_event_live_state(game or {}) if isinstance(game, dict) else None,
@@ -2977,10 +3043,349 @@ def _two_way_outcomes(
                     "quote_updated_at": _epoch_to_iso(
                         _quote_display_timestamp_seconds(game, bookmaker, market, outcome) or 0.0
                     ),
+                    "quote_source": outcome.get("quote_source") or outcome.get("source"),
+                    "bookmaker_key": bookmaker_key,
+                    "max_stake": _safe_float(
+                        outcome.get("stake")
+                        or outcome.get("max_stake")
+                        or outcome.get("liquidity")
+                    ),
+                    "market_hash": outcome.get("market_hash") or outcome.get("marketHash"),
+                    "token_id": outcome.get("token_id") or outcome.get("tokenId"),
+                    "asset_id": outcome.get("asset_id") or outcome.get("assetId"),
+                    "condition_id": outcome.get("condition_id") or outcome.get("conditionId"),
+                    "outcome_index": outcome.get("outcome_index")
+                    if outcome.get("outcome_index") is not None
+                    else outcome.get("outcomeIndex"),
                     "live_state": bookmaker_live_state,
                 }
             )
     return {key: entries for key, entries in line_map.items() if len(entries) == 2}
+
+
+def _plus_ev_execution_quality(
+    *,
+    soft_key: str,
+    soft_entry: dict,
+    sharp_key: str,
+    sharp_outcome: dict,
+) -> dict:
+    flags: List[str] = []
+    soft_capability = PROVIDER_CAPABILITIES.get(_normalize_line_component(soft_key))
+    sharp_capability = PROVIDER_CAPABILITIES.get(_normalize_line_component(sharp_key))
+    soft_max_stake = _safe_float(soft_entry.get("max_stake"))
+    sharp_max_stake = _safe_float(sharp_outcome.get("max_stake"))
+    if soft_capability and soft_capability.liquidity_confidence == "quote_only" and soft_max_stake is None:
+        flags.append("soft_quote_only")
+    if sharp_capability and sharp_capability.liquidity_confidence == "quote_only" and sharp_max_stake is None:
+        flags.append("reference_quote_only")
+    if soft_max_stake is None:
+        flags.append("missing_bet_liquidity")
+    if not soft_entry.get("quote_updated_at"):
+        flags.append("missing_bet_quote_time")
+    if not sharp_outcome.get("quote_updated_at"):
+        flags.append("missing_reference_quote_time")
+
+    quote_skew = None
+    soft_quote_time = _iso_datetime(soft_entry.get("quote_updated_at"))
+    sharp_quote_time = _iso_datetime(sharp_outcome.get("quote_updated_at"))
+    if soft_quote_time and sharp_quote_time:
+        quote_skew = abs((soft_quote_time - sharp_quote_time).total_seconds())
+        if quote_skew > _arbitrage_quote_time_skew_warn_seconds():
+            flags.append("quote_time_skew")
+
+    explicit_liquidity = bool(
+        soft_capability
+        and sharp_capability
+        and soft_capability.liquidity_confidence == "explicit"
+        and sharp_capability.liquidity_confidence == "explicit"
+        and soft_max_stake is not None
+    )
+    min_leg_liquidity = min(
+        [value for value in (soft_max_stake, sharp_max_stake) if value is not None],
+        default=soft_max_stake,
+    )
+    status = "high" if not flags and explicit_liquidity else ("medium" if not flags else "low")
+    return {
+        "status": status,
+        "flags": sorted(set(flags)),
+        "explicit_liquidity": explicit_liquidity,
+        "min_leg_liquidity": min_leg_liquidity,
+        "quote_time_skew_seconds": quote_skew,
+        "bet_liquidity_confidence": soft_capability.liquidity_confidence if soft_capability else "unknown",
+        "reference_liquidity_confidence": sharp_capability.liquidity_confidence if sharp_capability else "unknown",
+    }
+
+
+def _consensus_weight(entry: dict) -> float:
+    max_stake = _safe_float(entry.get("max_stake"))
+    if max_stake is not None and max_stake > 0:
+        return max_stake
+    capability = PROVIDER_CAPABILITIES.get(_normalize_line_component(entry.get("bookmaker_key")))
+    if capability and capability.liquidity_confidence == "explicit":
+        return 25.0
+    return 1.0
+
+
+def _dex_consensus_reference_for_line(
+    entries: Sequence[dict],
+    *,
+    commission_rate: float,
+) -> dict | None:
+    by_book: Dict[str, List[dict]] = {}
+    for entry in entries:
+        key = _normalize_line_component(entry.get("bookmaker_key"))
+        if not key or key not in EXCHANGE_KEYS:
+            continue
+        by_book.setdefault(key, []).append(entry)
+    provider_probabilities: list[dict] = []
+    for provider_key, provider_entries in by_book.items():
+        if len(provider_entries) != 2:
+            continue
+        first, second = provider_entries
+        price_a = _apply_commission(first["price"], provider_key, commission_rate)
+        price_b = _apply_commission(second["price"], provider_key, commission_rate)
+        fair_a, fair_b, vig_percent = _remove_vig(price_a, price_b)
+        for entry, fair_odds in ((first, fair_a), (second, fair_b)):
+            probability = 1.0 / fair_odds if fair_odds > 1 else 0.0
+            if probability <= 0:
+                continue
+            provider_probabilities.append(
+                {
+                    "provider_key": provider_key,
+                    "provider_name": entry.get("bookmaker") or PROVIDER_TITLES.get(provider_key) or provider_key,
+                    "name": entry.get("name"),
+                    "display_name": entry.get("display_name"),
+                    "point": entry.get("point"),
+                    "fair_odds": fair_odds,
+                    "probability": probability,
+                    "weight": _consensus_weight(entry),
+                    "quote_updated_at": entry.get("quote_updated_at"),
+                    "quote_source": entry.get("quote_source"),
+                    "max_stake": entry.get("max_stake"),
+                    "vig_percent": vig_percent,
+                    "live_state": entry.get("live_state"),
+                }
+            )
+    if not provider_probabilities:
+        return None
+    outcome_names = {item.get("name") for item in provider_probabilities if item.get("name")}
+    references: dict[str, dict] = {}
+    for name in outcome_names:
+        rows = [item for item in provider_probabilities if item.get("name") == name]
+        if len({item["provider_key"] for item in rows}) < 2:
+            continue
+        total_weight = sum(float(item.get("weight") or 0.0) for item in rows)
+        if total_weight <= 0:
+            continue
+        probability = sum(float(item["probability"]) * float(item.get("weight") or 0.0) for item in rows) / total_weight
+        fair_odds = 1.0 / probability if probability > 0 else 0.0
+        quote_times = [
+            parsed
+            for parsed in (_iso_datetime(item.get("quote_updated_at")) for item in rows)
+            if parsed is not None
+        ]
+        references[name] = {
+            "fair_odds": fair_odds,
+            "true_probability": probability,
+            "provider_count": len({item["provider_key"] for item in rows}),
+            "providers": sorted({item["provider_key"] for item in rows}),
+            "provider_names": sorted({item["provider_name"] for item in rows}),
+            "point": rows[0].get("point"),
+            "quote_updated_at": max(quote_times).isoformat().replace("+00:00", "Z") if quote_times else None,
+            "quote_source": "dex_consensus",
+            "max_stake": min(
+                [float(item["max_stake"]) for item in rows if _safe_float(item.get("max_stake")) is not None],
+                default=None,
+            ),
+            "component_quotes": rows,
+        }
+    if len(references) < 2:
+        return None
+    vig_values = [float(item.get("vig_percent") or 0.0) for item in provider_probabilities]
+    return {
+        "method": "dex_liquidity_weighted_consensus",
+        "vig_percent": round(sum(vig_values) / len(vig_values), 2) if vig_values else 0.0,
+        "outcomes": references,
+    }
+
+
+def _build_dex_consensus_references(
+    bookmakers: Sequence[dict],
+    *,
+    game: dict,
+    commission_rate: float,
+    scan_mode: str,
+) -> Dict[Tuple[str, str], dict]:
+    line_entries: Dict[Tuple[str, str], List[dict]] = {}
+    for book in bookmakers:
+        key = _normalize_line_component(book.get("key"))
+        if key not in EXCHANGE_KEYS:
+            continue
+        for line_key, entries in _two_way_outcomes(book, game=game, scan_mode=scan_mode).items():
+            for entry in entries:
+                current = dict(entry)
+                current["bookmaker"] = book.get("title") or PROVIDER_TITLES.get(key) or key
+                current["bookmaker_key"] = key
+                line_entries.setdefault(line_key, []).append(current)
+    references: Dict[Tuple[str, str], dict] = {}
+    for line_key, entries in line_entries.items():
+        reference = _dex_consensus_reference_for_line(entries, commission_rate=commission_rate)
+        if reference:
+            references[line_key] = reference
+    return references
+
+
+def _collect_dex_consensus_plus_ev_opportunities(
+    game: dict,
+    markets: Sequence[str],
+    commission_rate: float,
+    min_edge_percent: float,
+    bankroll: float,
+    kelly_fraction: float,
+    scan_mode: str,
+) -> List[dict]:
+    bookmakers = game.get("bookmakers", [])
+    consensus_references = _build_dex_consensus_references(
+        bookmakers,
+        game=game,
+        commission_rate=commission_rate,
+        scan_mode=scan_mode,
+    )
+    if not consensus_references:
+        return []
+    opportunities: List[dict] = []
+    for book in bookmakers:
+        key = _normalize_line_component(book.get("key"))
+        if not key:
+            continue
+        if SOFT_BOOK_KEY_SET and key not in SOFT_BOOK_KEY_SET and key not in EXCHANGE_KEYS:
+            continue
+        bookmaker_title = book.get("title") or PROVIDER_TITLES.get(key) or key
+        is_exchange = key in EXCHANGE_KEYS
+        soft_lines = _two_way_outcomes(book, game=game, scan_mode=scan_mode)
+        if not soft_lines:
+            continue
+        for (market_key, line_key), entries in soft_lines.items():
+            if market_key not in markets:
+                continue
+            reference = consensus_references.get((market_key, line_key))
+            if not reference:
+                continue
+            for entry in entries:
+                name_norm = entry["name"]
+                consensus_outcome = reference["outcomes"].get(name_norm)
+                if not consensus_outcome:
+                    continue
+                component_provider_keys = set(consensus_outcome.get("providers") or [])
+                if key in component_provider_keys and len(component_provider_keys) < 3:
+                    continue
+                if not _live_states_are_compatible(
+                    [entry.get("live_state"), *(row.get("live_state") for row in consensus_outcome.get("component_quotes", []))],
+                    scan_mode,
+                ):
+                    continue
+                soft_point = entry.get("point")
+                reference_point = consensus_outcome.get("point")
+                has_point = reference_point is not None or soft_point is not None
+                if has_point and not _points_match(soft_point, reference_point):
+                    continue
+                display_price = entry["price"]
+                effective_price = _apply_commission(display_price, key, commission_rate)
+                fair_odds = consensus_outcome["fair_odds"]
+                gross_edge = _calculate_edge_percent(display_price, fair_odds)
+                net_edge = _calculate_edge_percent(effective_price, fair_odds)
+                if net_edge < min_edge_percent:
+                    continue
+                true_probability = consensus_outcome["true_probability"]
+                ev_per_100 = _calculate_ev(true_probability, effective_price, 100.0)
+                full_pct, fraction_pct, recommended = _kelly_stake(
+                    true_probability, effective_price, bankroll, kelly_fraction
+                )
+                pseudo_sharp = {
+                    "quote_updated_at": consensus_outcome.get("quote_updated_at"),
+                    "quote_source": consensus_outcome.get("quote_source"),
+                    "max_stake": consensus_outcome.get("max_stake"),
+                }
+                execution_quality = _plus_ev_execution_quality(
+                    soft_key=key,
+                    soft_entry=entry,
+                    sharp_key="dex_consensus",
+                    sharp_outcome=pseudo_sharp,
+                )
+                opportunity = {
+                    "id": str(uuid.uuid4()),
+                    "sport": game.get("sport_key"),
+                    "sport_display": game.get("sport_display")
+                    or SPORT_DISPLAY_NAMES.get(game.get("sport_key", ""), game.get("sport_key")),
+                    "event": f"{game.get('away_team')} vs {game.get('home_team')}",
+                    "commence_time": game.get("commence_time"),
+                    "live_state": _selected_live_state_payload(
+                        [entry.get("live_state"), *(row.get("live_state") for row in consensus_outcome.get("component_quotes", []))],
+                        fallback=_event_live_state(game),
+                    ),
+                    "market": market_key,
+                    "market_point": consensus_outcome.get("point"),
+                    "bet": {
+                        "outcome": entry.get("display_name") or "",
+                        "soft_book": bookmaker_title,
+                        "soft_key": key,
+                        "soft_odds": display_price,
+                        "effective_odds": effective_price,
+                        "is_exchange": is_exchange,
+                        "point": soft_point,
+                        "quote_updated_at": entry.get("quote_updated_at"),
+                        "quote_source": entry.get("quote_source"),
+                        "max_stake": entry.get("max_stake"),
+                        "market_hash": entry.get("market_hash"),
+                        "token_id": entry.get("token_id"),
+                        "asset_id": entry.get("asset_id"),
+                        "condition_id": entry.get("condition_id"),
+                        "outcome_index": entry.get("outcome_index"),
+                        "raw_percentage_odds": entry.get("raw_percentage_odds"),
+                    },
+                    "sharp": {
+                        "book": "DEX consensus",
+                        "key": "dex_consensus",
+                        "odds": None,
+                        "opponent_odds": None,
+                        "opponent": "",
+                        "fair_odds": fair_odds,
+                        "true_probability": true_probability,
+                        "true_probability_percent": round(true_probability * 100, 2),
+                        "vig_percent": reference.get("vig_percent"),
+                        "quote_updated_at": consensus_outcome.get("quote_updated_at"),
+                        "quote_source": consensus_outcome.get("quote_source"),
+                        "max_stake": consensus_outcome.get("max_stake"),
+                        "provider_count": consensus_outcome.get("provider_count"),
+                        "providers": consensus_outcome.get("providers"),
+                    },
+                    "reference": {
+                        "method": reference.get("method"),
+                        "provider_count": consensus_outcome.get("provider_count"),
+                        "providers": consensus_outcome.get("providers"),
+                        "provider_names": consensus_outcome.get("provider_names"),
+                    },
+                    "consensus": {
+                        "fair_odds": fair_odds,
+                        "true_probability": true_probability,
+                        "component_quotes": consensus_outcome.get("component_quotes"),
+                    },
+                    "execution_quality": execution_quality,
+                    "edge_percent": round(net_edge, 2),
+                    "net_edge_percent": round(net_edge, 2),
+                    "gross_edge_percent": round(gross_edge, 2),
+                    "ev_per_100": round(ev_per_100, 2),
+                    "kelly": {
+                        "full_percent": full_pct,
+                        "fraction_percent": fraction_pct,
+                        "recommended_stake": recommended,
+                    },
+                    "has_exchange": is_exchange,
+                }
+                opportunities.append(opportunity)
+    opportunities.sort(key=lambda item: float(item.get("edge_percent") or 0.0), reverse=True)
+    return opportunities
 
 
 def _estimate_middle_probability(
@@ -3601,6 +4006,8 @@ def _collect_middle_opportunities(
         bookmaker_title = book.get("title") or book.get("key")
         bookmaker_key_raw = book.get("key") or bookmaker_title
         bookmaker_key = _normalize_line_component(bookmaker_key_raw) or str(bookmaker_key_raw or "").strip()
+        book_event_id = book.get("event_id") or book.get("eventId") or book.get("id")
+        book_event_url = book.get("event_url") or book.get("eventUrl") or book.get("url")
         book_live_state = _selected_live_state_payload(
             [_bookmaker_live_state(game, book)],
             fallback=_event_live_state(game),
@@ -3646,6 +4053,8 @@ def _collect_middle_opportunities(
                         "outcome_index": outcome.get("outcome_index")
                         if outcome.get("outcome_index") is not None
                         else outcome.get("outcomeIndex"),
+                        "book_event_id": book_event_id,
+                        "book_event_url": book_event_url,
                         "liquidity_provenance": outcome.get("liquidity_provenance"),
                         "execution_diagnostics": copy.deepcopy(book.get("execution_diagnostics"))
                         if isinstance(book.get("execution_diagnostics"), dict)
@@ -3690,6 +4099,15 @@ def _collect_plus_ev_opportunities(
     scan_mode: str = SCAN_MODE_PREMATCH,
 ) -> List[dict]:
     bookmakers = game.get("bookmakers", [])
+    consensus_opportunities = _collect_dex_consensus_plus_ev_opportunities(
+        game,
+        markets,
+        commission_rate,
+        min_edge_percent,
+        bankroll,
+        kelly_fraction,
+        scan_mode,
+    )
     sharp_meta = None
     sharp_bookmaker = None
     sharp_key = ""
@@ -3706,7 +4124,7 @@ def _collect_plus_ev_opportunities(
         if sharp_bookmaker:
             break
     if not sharp_bookmaker or not sharp_meta:
-        return []
+        return consensus_opportunities
     is_sharp_exchange = sharp_meta.get("type") == "exchange"
     sharp_reference = _build_sharp_reference(
         sharp_bookmaker,
@@ -3716,7 +4134,7 @@ def _collect_plus_ev_opportunities(
         scan_mode=scan_mode,
     )
     if not sharp_reference:
-        return []
+        return consensus_opportunities
     opportunities: List[dict] = []
     for book in bookmakers:
         key = _normalize_line_component(book.get("key"))
@@ -3724,7 +4142,7 @@ def _collect_plus_ev_opportunities(
             continue
         if key == sharp_key:
             continue
-        if SOFT_BOOK_KEY_SET and key not in SOFT_BOOK_KEY_SET:
+        if SOFT_BOOK_KEY_SET and key not in SOFT_BOOK_KEY_SET and key not in EXCHANGE_KEYS:
             continue
         bookmaker_title = book.get("title") or key
         is_exchange = key in EXCHANGE_KEYS
@@ -3768,6 +4186,12 @@ def _collect_plus_ev_opportunities(
                 full_pct, fraction_pct, recommended = _kelly_stake(
                     true_probability, effective_price, bankroll, kelly_fraction
                 )
+                execution_quality = _plus_ev_execution_quality(
+                    soft_key=key,
+                    soft_entry=entry,
+                    sharp_key=sharp_key,
+                    sharp_outcome=sharp_outcome,
+                )
                 opportunity = {
                     "id": str(uuid.uuid4()),
                     "sport": game.get("sport_key"),
@@ -3790,6 +4214,16 @@ def _collect_plus_ev_opportunities(
                         "is_exchange": is_exchange,
                         "point": soft_point,
                         "quote_updated_at": entry.get("quote_updated_at"),
+                        "quote_source": entry.get("quote_source"),
+                        "max_stake": entry.get("max_stake"),
+                        "market_hash": entry.get("market_hash"),
+                        "token_id": entry.get("token_id"),
+                        "asset_id": entry.get("asset_id"),
+                        "condition_id": entry.get("condition_id"),
+                        "outcome_index": entry.get("outcome_index"),
+                        "book_event_id": entry.get("book_event_id"),
+                        "book_event_url": entry.get("book_event_url"),
+                        "execution_diagnostics": entry.get("execution_diagnostics"),
                         "raw_percentage_odds": entry.get("raw_percentage_odds"),
                     },
                     "sharp": {
@@ -3803,7 +4237,15 @@ def _collect_plus_ev_opportunities(
                         "true_probability_percent": round(sharp_outcome["true_probability"] * 100, 2),
                         "vig_percent": reference.get("vig_percent"),
                         "quote_updated_at": sharp_outcome.get("quote_updated_at"),
+                        "quote_source": sharp_outcome.get("quote_source"),
+                        "max_stake": sharp_outcome.get("max_stake"),
+                        "market_hash": sharp_outcome.get("market_hash"),
+                        "token_id": sharp_outcome.get("token_id"),
+                        "asset_id": sharp_outcome.get("asset_id"),
+                        "condition_id": sharp_outcome.get("condition_id"),
+                        "outcome_index": sharp_outcome.get("outcome_index"),
                     },
+                    "execution_quality": execution_quality,
                     "edge_percent": round(net_edge, 2),
                     "net_edge_percent": round(net_edge, 2),
                     "gross_edge_percent": round(gross_edge, 2),
@@ -3816,6 +4258,30 @@ def _collect_plus_ev_opportunities(
                     "has_exchange": is_exchange,
                 }
                 opportunities.append(opportunity)
+    seen = {
+        (
+            item.get("event"),
+            item.get("market"),
+            (item.get("bet") or {}).get("soft_key"),
+            (item.get("bet") or {}).get("outcome"),
+            (item.get("bet") or {}).get("point"),
+            (item.get("sharp") or {}).get("key"),
+        )
+        for item in opportunities
+    }
+    for item in consensus_opportunities:
+        key = (
+            item.get("event"),
+            item.get("market"),
+            (item.get("bet") or {}).get("soft_key"),
+            (item.get("bet") or {}).get("outcome"),
+            (item.get("bet") or {}).get("point"),
+            (item.get("sharp") or {}).get("key"),
+        )
+        if key not in seen:
+            opportunities.append(item)
+            seen.add(key)
+    opportunities.sort(key=lambda item: float(item.get("edge_percent") or 0.0), reverse=True)
     return opportunities
 
 
@@ -3844,8 +4310,8 @@ def _build_middle_entry(
         else:
             return None
         # Require opposite teams so we're not pairing two prices on the same side
-        team_a = (favorite_offer.get("team") or "").strip().lower()
-        team_b = (underdog_offer.get("team") or "").strip().lower()
+        team_a = _canonicalize_outcome_name(favorite_offer.get("team"), sport_key)
+        team_b = _canonicalize_outcome_name(underdog_offer.get("team"), sport_key)
         if not team_a or not team_b or team_a == team_b:
             return None
         gap_info = _spread_gap_info(favorite_offer["line"], underdog_offer["line"])
@@ -3975,11 +4441,14 @@ def _build_middle_entry(
             "quote_source": side_a.get("quote_source"),
             "liquidity_provenance": side_a.get("liquidity_provenance"),
             "raw_percentage_odds": side_a.get("raw_percentage_odds"),
+            "book_event_id": side_a.get("book_event_id"),
+            "book_event_url": side_a.get("book_event_url"),
             "market_hash": side_a.get("market_hash"),
             "token_id": side_a.get("token_id"),
             "asset_id": side_a.get("asset_id"),
             "condition_id": side_a.get("condition_id"),
             "outcome_index": side_a.get("outcome_index"),
+            "execution_diagnostics": side_a.get("execution_diagnostics"),
         },
         {
             "team": side_b["team"],
@@ -3995,11 +4464,14 @@ def _build_middle_entry(
             "quote_source": side_b.get("quote_source"),
             "liquidity_provenance": side_b.get("liquidity_provenance"),
             "raw_percentage_odds": side_b.get("raw_percentage_odds"),
+            "book_event_id": side_b.get("book_event_id"),
+            "book_event_url": side_b.get("book_event_url"),
             "market_hash": side_b.get("market_hash"),
             "token_id": side_b.get("token_id"),
             "asset_id": side_b.get("asset_id"),
             "condition_id": side_b.get("condition_id"),
             "outcome_index": side_b.get("outcome_index"),
+            "execution_diagnostics": side_b.get("execution_diagnostics"),
         },
     )
     stakes_payload = {

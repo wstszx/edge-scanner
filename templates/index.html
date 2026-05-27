@@ -757,12 +757,13 @@
           <div class="card-head arb-results-head">
             <div class="arb-results-title">
               <h3 data-i18n="paper_trades_title">Paper Trades</h3>
-              <p class="helper arb-results-subhead" data-i18n="paper_trades_subhead">Automatic dry-run records created from paper-ready middle tickets.</p>
+              <p class="helper arb-results-subhead" data-i18n="paper_trades_subhead">Automatic dry-run records created from paper-ready arbitrage and middle tickets.</p>
             </div>
             <div class="table-meta">
               <span id="paper-trades-count">0 records</span>
             </div>
           </div>
+          <div id="paper-trade-scan-summary" class="paper-trade-scan-summary hidden"></div>
           <div id="paper-trades-list" class="paper-trades-list"></div>
           <div id="paper-trades-empty" class="empty panel-empty-state">
             <span class="empty-kicker" data-i18n="paper_trades_title">Paper Trades</span>
@@ -959,6 +960,13 @@
 
 
         <section id="providers-panel" class="hidden">
+          <section class="card results-card execution-capability-card">
+            <div class="card-head">
+              <h3 data-i18n="execution_capability_title">Execution Capability</h3>
+            </div>
+            <p class="helper" data-i18n="execution_capability_helper">Shows which provider rows can create paper orders from executable quote metadata.</p>
+            <div id="execution-capability-list" class="execution-capability-list"></div>
+          </section>
           <section class="card results-card provider-diagnostics-card">
             <div class="card-head">
               <h3 data-i18n="scan_diagnostics_title">Scan Diagnostics</h3>
@@ -969,6 +977,7 @@
               diagnostics.</div>
             <div id="scan-diagnostics-content" class="hidden">
               <div id="scan-diagnostics-summary" class="provider-match-summary"></div>
+              <div id="opportunity-funnel-summary" class="opportunity-funnel-summary hidden"></div>
               <div id="scan-diagnostics-likely" class="scan-diagnostics-likely hidden"></div>
               <p id="scan-diagnostics-message" class="scan-diagnostics-message"></p>
               <div class="table-scroll">
@@ -1216,6 +1225,7 @@
     data-provider-only-mode="{{ 'true' if provider_only_mode else 'false' }}"
     data-kelly-options='{{ kelly_options | tojson }}' data-bookmaker-links='{{ bookmaker_links | tojson }}'
     data-custom-provider-keys='{{ custom_provider_keys | tojson }}'
+    data-execution-capabilities='{{ execution_capabilities | tojson }}'
     data-default-live-provider-keys='{{ default_live_provider_keys | tojson }}'
     data-live-supported-provider-keys='{{ live_supported_provider_keys | tojson }}' hidden></div>
 
@@ -1248,6 +1258,7 @@
         kellyOptions: parseConfigJson(configEl.dataset.kellyOptions, []),
         bookmakerLinks: parseConfigJson(configEl.dataset.bookmakerLinks, {}),
         customProviderKeys: parseConfigJson(configEl.dataset.customProviderKeys, []),
+        executionCapabilities: parseConfigJson(configEl.dataset.executionCapabilities, []),
         defaultLiveProviderKeys: parseConfigJson(configEl.dataset.defaultLiveProviderKeys, []),
         liveSupportedProviderKeys: parseConfigJson(configEl.dataset.liveSupportedProviderKeys, []),
       }
@@ -1432,6 +1443,7 @@
     const scanDiagnosticsEmpty = document.getElementById('scan-diagnostics-empty');
     const scanDiagnosticsContent = document.getElementById('scan-diagnostics-content');
     const scanDiagnosticsSummary = document.getElementById('scan-diagnostics-summary');
+    const opportunityFunnelSummary = document.getElementById('opportunity-funnel-summary');
     const scanDiagnosticsLikely = document.getElementById('scan-diagnostics-likely');
     const scanDiagnosticsMessage = document.getElementById('scan-diagnostics-message');
     const scanDiagnosticsTableBody = document.querySelector('#scan-diagnostics-table tbody');
@@ -1439,6 +1451,7 @@
     const providerDataEmpty = document.getElementById('provider-data-empty');
     const providerDataReviewSummary = document.getElementById('provider-data-review-summary');
     const providerDataList = document.getElementById('provider-data-list');
+    const executionCapabilityList = document.getElementById('execution-capability-list');
     const providerMatchCount = document.getElementById('provider-match-count');
     const providerMatchEmpty = document.getElementById('provider-match-empty');
     const providerMatchContent = document.getElementById('provider-match-content');
@@ -1483,6 +1496,7 @@
     const middlesEmptyActions = document.getElementById('middles-empty-actions');
     const middlesEmptyResetBtn = document.getElementById('middles-empty-reset-btn');
     const paperTradesCount = document.getElementById('paper-trades-count');
+    const paperTradeScanSummary = document.getElementById('paper-trade-scan-summary');
     const paperTradesList = document.getElementById('paper-trades-list');
     const paperTradesEmpty = document.getElementById('paper-trades-empty');
     const sharpSelect = document.getElementById('sharp-book-select');
@@ -1727,6 +1741,14 @@
         provider_review_summary_focus_note: 'The highlighted card below is the fastest place to verify whether this is a fetch problem or a matching problem.',
         provider_review_summary_none_chip: 'No provider red flags',
         provider_review_summary_none_note: 'No provider is currently flagged by fetch or matching diagnostics. If the Likely Conclusion card above also looks clean, this scan is more likely a true no-arbitrage window.',
+        execution_capability_title: 'Execution Capability',
+        execution_capability_helper: 'Shows which provider rows can create paper orders from executable quote metadata.',
+        execution_capability_paper: 'Paper-ready',
+        execution_capability_reference: 'Reference only',
+        execution_capability_live_disabled: 'Live submit disabled',
+        execution_capability_credentials_ready: 'Credentials present',
+        execution_capability_credentials_missing: 'Missing {keys}',
+        execution_capability_liquidity: 'Liquidity {value}',
         provider_review_primary_chip: 'Priority review',
         provider_review_guidance_title: 'Suggested checks',
         provider_review_focus_report: 'Focus Match Report',
@@ -1792,6 +1814,21 @@
         scan_diag_reason_matched_but_no_arbitrage: 'Matching worked, but the matched games did not produce arbitrage at current prices.',
         scan_diag_reason_partial_errors: 'Some providers errored, so this scan may be incomplete.',
         scan_diag_reason_no_arbitrage_after_merge: 'The scan completed, but no arbitrage survived the current prices and filters.',
+        opportunity_funnel_title: 'Opportunity Funnel',
+        opportunity_funnel_conclusion_execution_ready_opportunity: 'Execution-ready opportunity found',
+        opportunity_funnel_conclusion_actionable_but_execution_blocked: 'Actionable edge exists but execution is blocked',
+        opportunity_funnel_conclusion_no_execution_ready_opportunity: 'No execution-ready opportunity',
+        opportunity_funnel_source: 'Source scans {withSource}/{total}',
+        opportunity_funnel_overlap: 'Cross-provider matches {withMatches}',
+        opportunity_funnel_actionable: 'Actionable {count}',
+        opportunity_funnel_ready: 'Ready tickets {count}',
+        opportunity_funnel_model_only: 'Model-only {count}',
+        opportunity_funnel_plus_ev: '+EV {count}',
+        opportunity_funnel_blocker: '{reason} x{count}',
+        plus_ev_quality_high: 'Exec high',
+        plus_ev_quality_medium: 'Exec medium',
+        plus_ev_quality_low: 'Exec low',
+        plus_ev_quality_unknown: 'Exec unknown',
         provider_match_title: 'Cross-Provider Match Report',
         provider_match_helper: 'Shows matched games across providers based on teams and kickoff window.',
         provider_match_empty: 'Run a scan to load cross-provider match data.',
@@ -2198,11 +2235,15 @@
         empty_middles: 'No middle opportunities meet your filters.',
         empty_plus_ev: 'No +EV bets at the current thresholds.',
         paper_trades_title: 'Paper Trades',
-        paper_trades_subhead: 'Automatic dry-run records created from paper-ready middle tickets.',
+        paper_trades_subhead: 'Automatic dry-run records created from paper-ready arbitrage and middle tickets.',
         paper_trade_ready: 'Paper ready',
         paper_trade_blocked: 'Blocked',
+        paper_trade_invalid: 'Invalid',
+        paper_trade_settled: 'Settled',
         paper_trade_recorded: 'Recorded',
         paper_trade_no_ticket: 'No ticket',
+        paper_trade_settlement_pnl: 'Settled PnL {amount}',
+        paper_trade_settlement_leg: '{result} · PnL {amount}',
         paper_trade_blockers: 'Blockers: {items}',
         paper_trade_none: 'No paper trades recorded yet.',
         paper_trade_count: '{count} records',
@@ -2210,6 +2251,20 @@
         paper_trade_total_stake: 'Stake {amount}',
         paper_trade_type_arbitrage: 'Arbitrage',
         paper_trade_type_middle: 'Middle',
+        paper_trade_type_plus_ev: '+EV',
+        paper_trade_scan_summary: 'Scan paper: {created} new, {ready} ready, {blocked} blocked · Arb {arbReady}/{arbBlocked} · Middle {middleReady}/{middleBlocked}',
+        paper_trade_leg_outcome: 'Buy {outcome}',
+        paper_trade_leg_line: 'Line {line}',
+        paper_trade_leg_price: 'Limit {price}',
+        paper_trade_leg_stake: 'Stake {amount}',
+        paper_trade_leg_max_stake: 'Max {amount}',
+        paper_trade_leg_fee: 'Fee {rate}',
+        paper_trade_leg_quote: 'Quote {time}',
+        paper_trade_leg_id: 'ID {id}',
+        paper_trade_leg_manual_web: 'Manual web',
+        paper_trade_leg_open: 'Open book',
+        paper_trade_leg_risk_artline_api_max_bet_below_min_bet: 'API max bet below minimum',
+        paper_trade_leg_risk_manual_liquidity_unverified: 'Manual liquidity unverified',
         middle_empty_pre_scan_title: 'Run a scan to model middle zones.',
         middle_empty_pre_scan_copy: 'Middle opportunities will appear here once scan data arrives.',
         middle_empty_scan_title: 'This scan returned no middles.',
@@ -2578,11 +2633,15 @@
         empty_middles: '没有符合筛选条件的中间盘。',
         empty_plus_ev: '当前阈值下暂无 +EV 投注。',
         paper_trades_title: '纸面交易记录',
-        paper_trades_subhead: '扫描到 paper-ready 的中间盘后，会自动生成 dry-run 纸面记录。',
+        paper_trades_subhead: '扫描到 paper-ready 的套利或中间盘后，会自动生成 dry-run 纸面记录。',
         paper_trade_ready: '可纸面',
         paper_trade_blocked: '阻塞',
+        paper_trade_invalid: '无效',
+        paper_trade_settled: '已结算',
         paper_trade_recorded: '已记录',
         paper_trade_no_ticket: '无票据',
+        paper_trade_settlement_pnl: '结算盈亏 {amount}',
+        paper_trade_settlement_leg: '{result} · 盈亏 {amount}',
         paper_trade_blockers: '阻塞原因：{items}',
         paper_trade_none: '暂时还没有纸面交易记录。',
         paper_trade_count: '{count} 条记录',
@@ -2590,6 +2649,20 @@
         paper_trade_total_stake: '下注 {amount}',
         paper_trade_type_arbitrage: '套利',
         paper_trade_type_middle: '中间盘',
+        paper_trade_type_plus_ev: '+EV',
+        paper_trade_scan_summary: '本轮纸面：新增 {created}，可执行 {ready}，阻塞 {blocked} · 套利 {arbReady}/{arbBlocked} · 中间盘 {middleReady}/{middleBlocked}',
+        paper_trade_leg_outcome: '买入 {outcome}',
+        paper_trade_leg_line: '盘口 {line}',
+        paper_trade_leg_price: '限价 {price}',
+        paper_trade_leg_stake: '金额 {amount}',
+        paper_trade_leg_max_stake: '可下 {amount}',
+        paper_trade_leg_fee: '手续费 {rate}',
+        paper_trade_leg_quote: '报价 {time}',
+        paper_trade_leg_id: 'ID {id}',
+        paper_trade_leg_manual_web: '网页手动下单',
+        paper_trade_leg_open: '打开平台',
+        paper_trade_leg_risk_artline_api_max_bet_below_min_bet: 'API 可下额度低于最小值',
+        paper_trade_leg_risk_manual_liquidity_unverified: '需手动确认网页额度',
         middle_empty_pre_scan_title: '先运行一次扫描来建模中间盘机会。',
         middle_empty_pre_scan_copy: '扫描结果返回后，这里会显示可操作的中间盘机会。',
         middle_empty_scan_title: '这次扫描没有返回中间盘机会。',
@@ -2745,6 +2818,14 @@
       provider_review_summary_focus_note: '\u4e0b\u65b9\u9ad8\u4eae\u7684\u5361\u7247\u662f\u6700\u5feb\u5224\u65ad\u8fd9\u662f\u6293\u53d6\u95ee\u9898\u8fd8\u662f\u5339\u914d\u95ee\u9898\u7684\u5165\u53e3\u3002',
       provider_review_summary_none_chip: '\u6682\u672a\u53d1\u73b0\u5e73\u53f0\u5f02\u5e38',
       provider_review_summary_none_note: '\u76ee\u524d\u6ca1\u6709 provider \u88ab\u6293\u53d6/\u5339\u914d\u8bca\u65ad\u6807\u4e3a\u5f85\u67e5\u3002\u5982\u679c\u4e0a\u65b9\u7684\u201c\u503e\u5411\u7ed3\u8bba\u201d\u4e5f\u663e\u793a\u5339\u914d\u901a\u7545\uff0c\u90a3\u4e48\u8fd9\u6b21\u66f4\u50cf\u662f\u771f\u6b63\u6ca1\u6709\u5957\u5229\u7a97\u53e3\u3002',
+      execution_capability_title: '\u6267\u884c\u80fd\u529b',
+      execution_capability_helper: '\u663e\u793a\u54ea\u4e9b\u5e73\u53f0\u80fd\u4ece\u53ef\u6267\u884c\u62a5\u4ef7\u751f\u6210\u7eb8\u9762\u4e0b\u5355\u3002',
+      execution_capability_paper: '\u53ef\u7eb8\u9762\u4e0b\u5355',
+      execution_capability_reference: '\u4ec5\u62a5\u4ef7\u53c2\u8003',
+      execution_capability_live_disabled: '\u5b9e\u76d8\u63d0\u4ea4\u672a\u5f00\u542f',
+      execution_capability_credentials_ready: '\u51ed\u636e\u5df2\u914d\u7f6e',
+      execution_capability_credentials_missing: '\u7f3a\u5c11 {keys}',
+      execution_capability_liquidity: '\u6d41\u52a8\u6027 {value}',
       provider_review_primary_chip: '\u4f18\u5148\u68c0\u67e5',
       provider_review_guidance_title: '\u5efa\u8bae\u5148\u67e5',
       provider_review_focus_report: '\u5b9a\u4f4d\u5339\u914d\u62a5\u544a',
@@ -2810,6 +2891,21 @@
       scan_diag_reason_matched_but_no_arbitrage: '\u5339\u914d\u6d41\u7a0b\u5de5\u4f5c\u6b63\u5e38\uff0c\u4f46\u5f53\u524d\u4ef7\u683c\u6761\u4ef6\u4e0b\u6ca1\u6709\u5f62\u6210\u5957\u5229\u3002',
       scan_diag_reason_partial_errors: '\u90e8\u5206 provider \u51fa\u73b0\u9519\u8bef\uff0c\u6240\u4ee5\u8fd9\u6b21\u7ed3\u679c\u53ef\u80fd\u4e0d\u5b8c\u6574\u3002',
       scan_diag_reason_no_arbitrage_after_merge: '\u626b\u63cf\u5df2\u5b8c\u6210\uff0c\u4f46\u5f53\u524d\u4ef7\u683c\u548c\u7b5b\u9009\u6761\u4ef6\u4e0b\u6ca1\u6709\u5269\u4e0b\u5957\u5229\u673a\u4f1a\u3002',
+      opportunity_funnel_title: '\u673a\u4f1a\u6f0f\u6597',
+      opportunity_funnel_conclusion_execution_ready_opportunity: '\u5df2\u627e\u5230\u53ef\u6267\u884c\u673a\u4f1a',
+      opportunity_funnel_conclusion_actionable_but_execution_blocked: '\u6709\u673a\u4f1a\uff0c\u4f46\u6267\u884c\u88ab\u963b\u585e',
+      opportunity_funnel_conclusion_no_execution_ready_opportunity: '\u6ca1\u6709\u53ef\u6267\u884c\u673a\u4f1a',
+      opportunity_funnel_source: '\u6709\u6570\u636e\u626b\u63cf {withSource}/{total}',
+      opportunity_funnel_overlap: '\u8de8\u5e73\u53f0\u5339\u914d {withMatches}',
+      opportunity_funnel_actionable: '\u53ef\u64cd\u4f5c {count}',
+      opportunity_funnel_ready: '\u5c31\u7eea\u7968\u636e {count}',
+      opportunity_funnel_model_only: '\u6a21\u578b\u5019\u9009 {count}',
+      opportunity_funnel_plus_ev: '+EV {count}',
+      opportunity_funnel_blocker: '{reason} x{count}',
+      plus_ev_quality_high: '\u6267\u884c\u8d28\u91cf\u9ad8',
+      plus_ev_quality_medium: '\u6267\u884c\u8d28\u91cf\u4e2d',
+      plus_ev_quality_low: '\u6267\u884c\u8d28\u91cf\u4f4e',
+      plus_ev_quality_unknown: '\u6267\u884c\u672a\u77e5',
       provider_match_title: '\u8de8\u5e73\u53f0\u6bd4\u8d5b\u5339\u914d\u62a5\u544a',
       provider_match_helper: '\u6839\u636e\u961f\u540d\u4e0e\u5f00\u8d5b\u65f6\u95f4\u7a97\u53e3\u5c55\u793a\u591a\u5e73\u53f0\u5339\u914d\u7684\u6bd4\u8d5b\u3002',
       provider_match_empty: '\u8bf7\u5148\u8fd0\u884c\u626b\u63cf\u4ee5\u751f\u6210\u8de8\u5e73\u53f0\u5339\u914d\u6570\u636e\u3002',
@@ -3986,6 +4082,7 @@
       }
       applyTranslations();
       loadSettings();
+      renderExecutionCapabilities();
       void loadPaperTrades();
       ensureArbCalcFxRates().catch(() => null);
       reconcileNotificationToggles();
@@ -5506,6 +5603,108 @@
       });
     }
 
+    function getOpportunityFunnel(payload = lastScanData, diagnostics = getScanDiagnostics(payload)) {
+      const explicit = payload?.summary?.opportunity_funnel || payload?.opportunity_funnel;
+      if (explicit && typeof explicit === 'object') return explicit;
+      if (!payload || !diagnostics || typeof diagnostics !== 'object') return null;
+      const readyTickets = Number(payload?.paper_trade_summary?.ready_count || 0);
+      const actionable = Number(payload?.arbitrage?.opportunities_count || 0) + Number(payload?.middles?.opportunities_count || 0);
+      const plusEvCount = Number(payload?.plus_ev?.opportunities_count || diagnostics?.plus_ev_count || 0);
+      return {
+        conclusion: readyTickets > 0
+          ? 'execution_ready_opportunity'
+          : (actionable > 0 ? 'actionable_but_execution_blocked' : 'no_execution_ready_opportunity'),
+        scan_count: Number(diagnostics?.scan_count || 1),
+        scans_with_source_events: Number(diagnostics?.providers_with_events || 0) > 0 ? 1 : 0,
+        scans_without_source_events: Number(diagnostics?.providers_with_events || 0) > 0 ? 0 : 1,
+        scans_with_cross_provider_matches: Number(diagnostics?.overlap_clusters || diagnostics?.total_merge_hits || 0) > 0 ? 1 : 0,
+        actionable_count: actionable,
+        ready_ticket_count: readyTickets,
+        model_only_count: Number(payload?.summary?.model_only_arbitrage_count || 0) + Number(payload?.summary?.model_only_middle_count || 0),
+        plus_ev_count: plusEvCount,
+        top_scan_reasons: diagnostics?.reason_code
+          ? [{ reason: diagnostics.reason_code, count: 1 }]
+          : [],
+        top_blockers: [],
+        execution_risks: [],
+      };
+    }
+
+    function renderOpportunityFunnel(diagnostics) {
+      if (!opportunityFunnelSummary) return;
+      const funnel = getOpportunityFunnel(lastScanData, diagnostics);
+      if (!funnel || typeof funnel !== 'object') {
+        opportunityFunnelSummary.innerHTML = '';
+        opportunityFunnelSummary.classList.add('hidden');
+        return;
+      }
+      const conclusion = String(funnel.conclusion || 'no_execution_ready_opportunity');
+      const conclusionKey = `opportunity_funnel_conclusion_${conclusion}`;
+      const topBlockers = Array.isArray(funnel.top_blockers) ? funnel.top_blockers : [];
+      const topScanReasons = Array.isArray(funnel.top_scan_reasons) ? funnel.top_scan_reasons : [];
+      const risks = Array.isArray(funnel.execution_risks) ? funnel.execution_risks : [];
+      const reasonChips = [...topBlockers, ...risks, ...topScanReasons].slice(0, 5).map((item) => {
+        const reason = String(item?.reason || '').trim();
+        const count = Number(item?.count || 0);
+        if (!reason || !count) return '';
+        return `<span class="provider-chip is-warning">${escapeHtml(t('opportunity_funnel_blocker', { reason, count }))}</span>`;
+      }).filter(Boolean).join('');
+      const toneClass = conclusion === 'execution_ready_opportunity'
+        ? 'is-ready'
+        : (conclusion === 'actionable_but_execution_blocked' ? 'is-warning' : '');
+      opportunityFunnelSummary.innerHTML = `
+        <div class="opportunity-funnel-head">
+          <span class="provider-chip ${toneClass}">${escapeHtml(t('opportunity_funnel_title'))}</span>
+          <strong>${escapeHtml(t(conclusionKey))}</strong>
+        </div>
+        <div class="provider-match-summary">
+          <span class="provider-chip">${escapeHtml(t('opportunity_funnel_source', { withSource: Number(funnel.scans_with_source_events || 0), total: Number(funnel.scan_count || 0) }))}</span>
+          <span class="provider-chip">${escapeHtml(t('opportunity_funnel_overlap', { withMatches: Number(funnel.scans_with_cross_provider_matches || 0) }))}</span>
+          <span class="provider-chip">${escapeHtml(t('opportunity_funnel_actionable', { count: Number(funnel.actionable_count || 0) }))}</span>
+          <span class="provider-chip">${escapeHtml(t('opportunity_funnel_ready', { count: Number(funnel.ready_ticket_count || 0) }))}</span>
+          <span class="provider-chip">${escapeHtml(t('opportunity_funnel_model_only', { count: Number(funnel.model_only_count || 0) }))}</span>
+          <span class="provider-chip">${escapeHtml(t('opportunity_funnel_plus_ev', { count: Number(funnel.plus_ev_count || 0) }))}</span>
+          ${reasonChips}
+        </div>
+      `;
+      opportunityFunnelSummary.classList.remove('hidden');
+    }
+
+    function renderExecutionCapabilities() {
+      if (!executionCapabilityList) return;
+      const rows = Array.isArray(appConfig.executionCapabilities) ? appConfig.executionCapabilities : [];
+      if (!rows.length) {
+        executionCapabilityList.innerHTML = '';
+        return;
+      }
+      executionCapabilityList.innerHTML = rows.map((row) => {
+        const paperSupported = row?.paper_execution_supported === true;
+        const credentialKeys = Array.isArray(row?.missing_env_keys) ? row.missing_env_keys : [];
+        const needsCredentials = Array.isArray(row?.credential_env_keys) && row.credential_env_keys.length > 0;
+        const credentialChip = needsCredentials
+          ? (credentialKeys.length
+            ? `<span class="provider-chip is-warning">${escapeHtml(t('execution_capability_credentials_missing', { keys: credentialKeys.join(', ') }))}</span>`
+            : `<span class="provider-chip is-ready">${escapeHtml(t('execution_capability_credentials_ready'))}</span>`)
+          : '';
+        const roleChip = paperSupported
+          ? `<span class="provider-chip is-ready">${escapeHtml(t('execution_capability_paper'))}</span>`
+          : `<span class="provider-chip">${escapeHtml(t('execution_capability_reference'))}</span>`;
+        return `
+          <article class="execution-capability-row">
+            <div class="provider-summary-title">
+              <strong>${escapeHtml(row?.title || row?.key || '-')}</strong>
+              <span class="provider-summary-key">${escapeHtml(row?.key || '')}</span>
+            </div>
+            <div class="provider-summary-metrics">
+              ${roleChip}
+              <span class="provider-chip">${escapeHtml(t('execution_capability_liquidity', { value: row?.liquidity_confidence || 'unknown' }))}</span>
+              ${credentialChip}
+              <span class="provider-chip is-warning">${escapeHtml(t('execution_capability_live_disabled'))}</span>
+            </div>
+          </article>`;
+      }).join('');
+    }
+
     function dominantNearMissReason(report = crossProviderReportCache) {
       const counts = report?.summary?.single_provider_reason_counts;
       if (!counts || typeof counts !== 'object') return null;
@@ -5664,6 +5863,7 @@
       const diagnostics = getScanDiagnostics();
       if (!lastScanData || !diagnostics || typeof diagnostics !== 'object') {
         scanDiagnosticsSummary.innerHTML = '';
+        renderOpportunityFunnel(null);
         renderLikelyScanDiagnosis(null);
         scanDiagnosticsMessage.textContent = '';
         scanDiagnosticsTableBody.innerHTML = '';
@@ -5693,6 +5893,7 @@
         <span class="provider-chip">${t('scan_diag_positive_middle', { count: positiveMiddleCount })}</span>
         <span class="provider-chip">${t('scan_diag_plus_ev', { count: plusEvCount })}</span>
       `;
+      renderOpportunityFunnel(diagnostics);
       renderLikelyScanDiagnosis(diagnostics);
       scanDiagnosticsMessage.textContent = scanDiagnosticMessage(diagnostics);
 
@@ -9008,6 +9209,15 @@
       if (ticket.paper_trade_ready || ticket.status === 'paper_ready') {
         return { label: t('paper_trade_ready'), tone: 'ready', title: t('paper_trade_ready') };
       }
+      if (ticket.status === 'invalid') {
+        return {
+          label: t('paper_trade_invalid'),
+          tone: 'invalid',
+          title: blockers.length
+            ? t('paper_trade_blockers', { items: blockers.join(', ') })
+            : t('paper_trade_invalid'),
+        };
+      }
       return {
         label: t('paper_trade_blocked'),
         tone: 'blocked',
@@ -9015,6 +9225,13 @@
           ? t('paper_trade_blockers', { items: blockers.join(', ') })
           : t('paper_trade_blocked'),
       };
+    }
+
+    function paperTradeRecordStatusMeta(record, ticket) {
+      if (record?.status === 'settled' || record?.settlement?.status === 'settled') {
+        return { label: t('paper_trade_settled'), tone: 'ready', title: t('paper_trade_settled') };
+      }
+      return paperTradeStatusMeta(ticket);
     }
 
     function middleTicketSignature(item = {}) {
@@ -9043,22 +9260,80 @@
       return `<span class="paper-trade-chip is-${escapeHtml(meta.tone)}" title="${escapeHtml(meta.title)}">${escapeHtml(meta.label)}</span>`;
     }
 
+    function paperTradeManualRiskLabel(risk) {
+      const token = String(risk || '').trim();
+      if (!token) return '';
+      const key = `paper_trade_leg_risk_${token}`;
+      const label = t(key);
+      return label && label !== key ? label : token.replace(/_/g, ' ');
+    }
+
     function renderPaperTradeLeg(leg, market) {
       if (!leg || typeof leg !== 'object') return '';
       const book = leg.bookmaker || leg.bookmaker_key || '-';
       const pointValue = leg.line !== undefined && leg.line !== null ? leg.line : leg.point;
+      const outcome = leg.outcome || leg.team || '-';
       const line = pointValue !== undefined && pointValue !== null && pointValue !== ''
         ? formatLineForMarket(pointValue, market)
-        : (leg.outcome || '');
+        : '-';
+      const lineLabel = line !== '-' && Number(pointValue) > 0 && !String(line).startsWith('+')
+        ? `+${line}`
+        : line;
       const odds = formatOddsDisplay(leg.limit_price);
       const stake = formatCurrency(Number(leg.stake || 0));
+      const maxStake = leg.max_stake !== undefined && leg.max_stake !== null
+        ? formatCurrency(Number(leg.max_stake || 0))
+        : '';
+      const feeRate = leg.fee_rate !== undefined && leg.fee_rate !== null
+        ? formatPercent(Number(leg.fee_rate || 0) * 100)
+        : '';
       const quote = leg.quote_updated_at ? formatDateTime(leg.quote_updated_at) : '';
+      const identifier = leg.market_hash || leg.token_id || leg.asset_id || leg.condition_id || '';
+      const draftOrder = leg.draft_order && typeof leg.draft_order === 'object' ? leg.draft_order : {};
+      const isManualWeb = draftOrder.order_type === 'manual_web' || draftOrder.adapter === 'manual_artline';
+      const eventUrl = draftOrder.event_url || leg.book_event_url || '';
+      const risks = Array.isArray(leg.manual_liquidity_risks)
+        ? leg.manual_liquidity_risks.map(paperTradeManualRiskLabel).filter(Boolean)
+        : [];
       return `
-        <div class="paper-trade-leg">
-          <strong>${escapeHtml(book)}</strong>
-          <span>${escapeHtml(line || '-')} @ ${escapeHtml(odds)}</span>
-          <span>${escapeHtml(stake)}</span>
-          ${quote ? `<small>${escapeHtml(quote)}</small>` : ''}
+        <div class="paper-trade-leg${isManualWeb ? ' is-manual-web' : ''}">
+          <div class="paper-trade-leg-book">
+            <strong>${escapeHtml(book)}</strong>
+            ${isManualWeb ? `<span class="paper-trade-manual-chip">${escapeHtml(t('paper_trade_leg_manual_web'))}</span>` : ''}
+            <span>${escapeHtml(t('paper_trade_leg_outcome', { outcome }))}</span>
+          </div>
+          <div class="paper-trade-leg-details">
+            <span>${escapeHtml(t('paper_trade_leg_line', { line: lineLabel }))}</span>
+            <span>${escapeHtml(t('paper_trade_leg_price', { price: odds }))}</span>
+            <span>${escapeHtml(t('paper_trade_leg_stake', { amount: stake }))}</span>
+            ${maxStake ? `<span>${escapeHtml(t('paper_trade_leg_max_stake', { amount: maxStake }))}</span>` : ''}
+            ${feeRate ? `<span>${escapeHtml(t('paper_trade_leg_fee', { rate: feeRate }))}</span>` : ''}
+          </div>
+          <div class="paper-trade-leg-meta">
+            ${quote ? `<small>${escapeHtml(t('paper_trade_leg_quote', { time: quote }))}</small>` : ''}
+            ${identifier ? `<small class="mono">${escapeHtml(t('paper_trade_leg_id', { id: identifier }))}</small>` : ''}
+            ${eventUrl ? `<a class="paper-trade-book-link" href="${escapeHtml(eventUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('paper_trade_leg_open'))}</a>` : ''}
+            ${risks.length ? `<div class="paper-trade-risk-list">${risks.map((risk) => `<span>${escapeHtml(risk)}</span>`).join('')}</div>` : ''}
+          </div>
+        </div>`;
+    }
+
+    function renderPaperTradeSettlement(record) {
+      const settlement = record?.settlement && typeof record.settlement === 'object' ? record.settlement : null;
+      if (!settlement || settlement.status !== 'settled') return '';
+      const pnl = formatCurrency(Number(settlement.pnl || 0));
+      const legs = Array.isArray(settlement.legs) ? settlement.legs : [];
+      const legHtml = legs.map((leg) => {
+        const label = t('paper_trade_settlement_leg', {
+          result: leg?.result || '-',
+          amount: formatCurrency(Number(leg?.pnl || 0)),
+        });
+        return `<span>${escapeHtml(label)}</span>`;
+      }).join('');
+      return `
+        <div class="paper-trade-settlement">
+          <strong>${escapeHtml(t('paper_trade_settlement_pnl', { amount: pnl }))}</strong>
+          ${legHtml ? `<div class="paper-trade-settlement-legs">${legHtml}</div>` : ''}
         </div>`;
     }
 
@@ -9070,14 +9345,16 @@
         const ticket = record?.ticket || {};
         const legs = Array.isArray(ticket.legs) ? ticket.legs : [];
         const market = record?.market || ticket.market || '';
-        const statusMeta = paperTradeStatusMeta(ticket);
+        const statusMeta = paperTradeRecordStatusMeta(record, ticket);
         const executionType = record?.execution_type || ticket.execution_type || '';
         const executionLabel = executionType === 'arbitrage'
           ? t('paper_trade_type_arbitrage')
-          : t('paper_trade_type_middle');
+          : (executionType === 'plus_ev' ? t('paper_trade_type_plus_ev') : t('paper_trade_type_middle'));
         const metricValue = executionType === 'arbitrage'
           ? Number(record?.roi_percent ?? ticket.roi_percent ?? 0)
-          : Number(record?.ev_percent ?? ticket.ev_percent ?? 0);
+          : (executionType === 'plus_ev'
+            ? Number(record?.edge_percent ?? ticket.edge_percent ?? 0)
+            : Number(record?.ev_percent ?? ticket.ev_percent ?? 0));
         const created = record?.created_at ? t('paper_trade_created', { time: formatDateTime(record.created_at) }) : '';
         const stake = t('paper_trade_total_stake', { amount: formatCurrency(Number(record?.total_stake || ticket.total_stake || 0)) });
         return `
@@ -9095,14 +9372,46 @@
             <div class="paper-trade-leg-list">
               ${legs.map((leg) => renderPaperTradeLeg(leg, market)).join('')}
             </div>
+            ${renderPaperTradeSettlement(record)}
             <p class="paper-trade-meta">${escapeHtml(stake)}</p>
             ${statusMeta.title && statusMeta.tone === 'blocked' ? `<p class="paper-trade-blockers">${escapeHtml(statusMeta.title)}</p>` : ''}
           </article>`;
       }).join('');
     }
 
+    function renderPaperTradeSummaryHtml(summary = null) {
+      if (!summary || typeof summary !== 'object') return '';
+      const created = Number(summary.created_count || 0);
+      const ready = Number(summary.ready_count || 0);
+      const blocked = Number(summary.blocked_count || 0);
+      const arbReady = Number(summary.arbitrage_ready_count || 0);
+      const arbBlocked = Number(summary.arbitrage_blocked_count || 0);
+      const middleReady = Number(summary.middle_ready_count || 0);
+      const middleBlocked = Number(summary.middle_blocked_count || 0);
+      if (!created && !ready && !blocked && !arbReady && !arbBlocked && !middleReady && !middleBlocked) {
+        return '';
+      }
+      return escapeHtml(t('paper_trade_scan_summary', {
+        created,
+        ready,
+        blocked,
+        arbReady,
+        arbBlocked,
+        middleReady,
+        middleBlocked,
+      }));
+    }
+
+    function renderPaperTradeSummary(summary = null) {
+      if (!paperTradeScanSummary) return;
+      const html = renderPaperTradeSummaryHtml(summary);
+      paperTradeScanSummary.textContent = html;
+      paperTradeScanSummary.classList.toggle('hidden', !html);
+    }
+
     function renderPaperTrades() {
       const records = Array.isArray(lastScanData?.paper_trades) ? lastScanData.paper_trades : [];
+      renderPaperTradeSummary(lastScanData?.paper_trade_summary || null);
       if (paperTradesCount) paperTradesCount.textContent = t('paper_trade_count', { count: records.length });
       if (paperTradesList) paperTradesList.innerHTML = renderPaperTradeListHtml(records);
       if (paperTradesEmpty) paperTradesEmpty.classList.toggle('hidden', records.length > 0);
@@ -9110,6 +9419,7 @@
 
     function renderPaperTradeRecords(records = []) {
       const rows = Array.isArray(records) ? records : [];
+      renderPaperTradeSummary(lastScanData?.paper_trade_summary || null);
       if (paperTradesCount) paperTradesCount.textContent = t('paper_trade_count', { count: rows.length });
       if (paperTradesList) paperTradesList.innerHTML = renderPaperTradeListHtml(rows);
       if (paperTradesEmpty) paperTradesEmpty.classList.toggle('hidden', rows.length > 0);
@@ -9334,6 +9644,17 @@
     function formatPlusBet(opp) {
       if (!opp?.bet) return '';
       const exchangeBadge = opp.bet.is_exchange ? `<span class="exchange-badge">${t('exchange')}</span>` : '';
+      const quality = opp.execution_quality && typeof opp.execution_quality === 'object' ? opp.execution_quality : null;
+      const qualityStatus = String(quality?.status || 'unknown').toLowerCase();
+      const qualityClass = qualityStatus === 'high'
+        ? 'is-ready'
+        : (qualityStatus === 'low' ? 'is-warning' : '');
+      const qualityTitle = Array.isArray(quality?.flags) && quality.flags.length
+        ? quality.flags.join(', ')
+        : t(`plus_ev_quality_${qualityStatus}`);
+      const qualityBadge = quality
+        ? `<span class="provider-chip plus-ev-quality ${qualityClass}" title="${escapeHtml(qualityTitle)}">${escapeHtml(t(`plus_ev_quality_${qualityStatus}`))}</span>`
+        : '';
       const point = opp.bet.point !== undefined && opp.bet.point !== null
         ? ` (${formatLineForMarket(opp.bet.point, opp.market)})`
         : '';
@@ -9349,6 +9670,7 @@
             <strong>${escapeHtml(opp.bet.outcome || '')}${escapeHtml(point)}</strong>
           </span>
           ${bookBadge ? `<span class="outcome-meta">${bookBadge}</span>` : ''}
+          ${qualityBadge}
           ${effectiveNote}
         </span>`;
     }
@@ -10199,6 +10521,7 @@
         renderPlusEv();
       } else if (normalizedTab === 'providers') {
         renderScanDiagnostics();
+        renderExecutionCapabilities();
         renderProviderData();
         maybeFocusPrimaryProviderReviewCard(true);
         if (crossProviderReportCache) {

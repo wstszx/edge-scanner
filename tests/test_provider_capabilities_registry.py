@@ -56,6 +56,7 @@ class ProviderCapabilitiesRegistryTests(unittest.TestCase):
 
     def test_registry_marks_provider_liquidity_confidence(self) -> None:
         self.assertEqual(PROVIDER_CAPABILITIES["bookmaker_xyz"].liquidity_confidence, "quote_only")
+        self.assertEqual(PROVIDER_CAPABILITIES["artline"].liquidity_confidence, "estimated")
         self.assertEqual(PROVIDER_CAPABILITIES["polymarket"].liquidity_confidence, "explicit")
         self.assertEqual(PROVIDER_CAPABILITIES["sx_bet"].liquidity_confidence, "explicit")
 

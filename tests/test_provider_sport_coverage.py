@@ -29,6 +29,8 @@ class ProviderSportCoverageTests(unittest.TestCase):
         self.assertIn("rugby_union", bookmaker_xyz.SPORT_SLUG_HINTS)
         self.assertIn("tennis_atp", betdex.SPORT_SUBCATEGORY_DEFAULTS)
         self.assertIn("tennis_wta", betdex.SPORT_SUBCATEGORY_DEFAULTS)
+        self.assertIn("tennis_atp", polymarket.SPORT_ALIASES)
+        self.assertIn("tennis_wta", polymarket.SPORT_ALIASES)
         self.assertIn("rugby_union", betdex.SPORT_SUBCATEGORY_DEFAULTS)
         self.assertIn("tennis_atp", betdex.SPORT_LEAGUE_HINTS)
         self.assertIn("tennis_wta", betdex.SPORT_LEAGUE_HINTS)
@@ -39,7 +41,15 @@ class ProviderSportCoverageTests(unittest.TestCase):
         self.assertIn("rugby_union", PROVIDER_CAPABILITIES["bookmaker_xyz"].supported_sport_keys)
         self.assertIn("tennis_atp", PROVIDER_CAPABILITIES["betdex"].supported_sport_keys)
         self.assertIn("tennis_wta", PROVIDER_CAPABILITIES["betdex"].supported_sport_keys)
+        self.assertIn("tennis_atp", PROVIDER_CAPABILITIES["polymarket"].supported_sport_keys)
+        self.assertIn("tennis_wta", PROVIDER_CAPABILITIES["polymarket"].supported_sport_keys)
         self.assertIn("rugby_union", PROVIDER_CAPABILITIES["betdex"].supported_sport_keys)
+
+    def test_artline_tennis_keys_stay_tied_to_source_maps(self) -> None:
+        self.assertIn("tennis_atp", artline.ARTLINE_SPORT_FILTERS)
+        self.assertIn("tennis_wta", artline.ARTLINE_SPORT_FILTERS)
+        self.assertIn("tennis_atp", PROVIDER_CAPABILITIES["artline"].supported_sport_keys)
+        self.assertIn("tennis_wta", PROVIDER_CAPABILITIES["artline"].supported_sport_keys)
 
     def test_betdex_capability_registry_tracks_verified_expansion_source_mappings(self) -> None:
         for sport_key in (

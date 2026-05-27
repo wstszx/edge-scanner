@@ -160,6 +160,8 @@ SPORT_ALIASES: Dict[str, Sequence[str]] = {
     "basketball_ncaab": ("ncaab", "ncaa", "ncaa-basketball"),
     "baseball_mlb": ("mlb", "baseball"),
     "icehockey_nhl": ("nhl", "hockey"),
+    "tennis_atp": ("tennis", "itf", "atp"),
+    "tennis_wta": ("tennis", "itf", "wta"),
     "soccer_epl": ("epl", "premier-league", "premier-league-uk", "premierleague"),
     "soccer_spain_la_liga": ("la-liga", "laliga"),
     "soccer_germany_bundesliga": ("bundesliga",),
@@ -265,6 +267,52 @@ def _events_cache_key(tag_ids: Optional[Sequence[object]] = None) -> str:
     if normalized:
         return "tags:" + ",".join(sorted(set(normalized)))
     return f"tags:{POLYMARKET_GAME_TAG_ID or '100639'}"
+
+
+def _requested_event_tag_ids(tag_ids: Optional[Sequence[object]] = None) -> List[str]:
+    normalized: List[str] = []
+    for tag_id in tag_ids or []:
+        token = _normalize_text(tag_id)
+        if token and token not in normalized:
+            normalized.append(token)
+    if normalized:
+        return normalized
+    default_tag = _normalize_text(POLYMARKET_GAME_TAG_ID or "100639")
+    return [default_tag or "100639"]
+
+
+def _active_events_query_params(
+    tag_id: str,
+    *,
+    now_iso: str,
+    page_size: int,
+    offset: int,
+    fallback_order: str = "",
+) -> Dict[str, object]:
+    params: Dict[str, object] = {
+        "tag_id": tag_id,
+        "active": "true",
+        "closed": "false",
+        "limit": page_size,
+    }
+    fallback_order = _normalize_text(fallback_order)
+    if fallback_order:
+        params.update({"order": fallback_order, "ascending": "true"})
+        return params
+    params.update(
+        {
+            "archived": "false",
+            "end_date_min": now_iso,
+            "order": "id",
+            "ascending": "false",
+            "offset": offset,
+        }
+    )
+    return params
+
+
+def _active_events_fallback_order_candidates() -> Tuple[str, ...]:
+    return ("competitive", "volume", "")
 
 
 def _websocket_realtime_enabled() -> bool:
@@ -907,6 +955,19 @@ def _clean_team_name(value: object) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+def _strip_competition_prefix(value: object) -> str:
+    text = _clean_team_name(value)
+    if ":" not in text:
+        return text
+    prefix, suffix = text.rsplit(":", 1)
+    suffix = _clean_team_name(suffix)
+    if not prefix.strip() or not suffix:
+        return text
+    if len(suffix.split()) >= 2:
+        return suffix
+    return text
+
+
 def _team_token(value: object) -> str:
     text = _clean_team_name(value).lower()
     text = re.sub(r"[^a-z0-9]+", " ", text)
@@ -973,7 +1034,7 @@ def _extract_matchup_from_text(text: object) -> Optional[Tuple[str, str]]:
         match = re.match(pattern, raw, flags=re.IGNORECASE)
         if not match:
             continue
-        home = _clean_team_name(match.group(1))
+        home = _strip_competition_prefix(match.group(1))
         away = _clean_team_name(match.group(2))
         if home and away and _team_token(home) != _team_token(away):
             return home, away
@@ -3649,46 +3710,90 @@ def _load_active_game_events(
     all_events: List[dict] = []
     total_retries = 0
     pages_fetched = 0
-    offset = 0
+    tag_query_errors = 0
+    tag_query_fallback_count = 0
+    last_error: Optional[ProviderError] = None
     now_iso = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    requested_tag_ids = [
-        _normalize_text(tag_id)
-        for tag_id in (tag_ids or [])
-        if _normalize_text(tag_id)
-    ] or [POLYMARKET_GAME_TAG_ID or "100639"]
-    for _page in range(max_pages):
-        payload, retries_used = _request_json(
-            "events",
-            {
-                "tag_id": requested_tag_ids[0],
-                "active": "true",
-                "closed": "false",
-                "archived": "false",
-                "end_date_min": now_iso,
-                "order": "id",
-                "ascending": "false",
-                "limit": page_size,
-                "offset": offset,
-            },
-            retries=retries,
-            backoff_seconds=backoff_seconds,
-        )
-        pages_fetched += 1
-        total_retries += retries_used
-        if not isinstance(payload, list):
-            raise ProviderError("Polymarket events endpoint must return a JSON array")
-        if not payload:
-            break
-        all_events.extend(item for item in payload if isinstance(item, dict))
-        if len(payload) < page_size:
-            break
-        offset += page_size
+    requested_tag_ids = _requested_event_tag_ids(tag_ids)
+    for requested_tag_id in requested_tag_ids:
+        offset = 0
+        try:
+            for _page in range(max_pages):
+                payload, retries_used = _request_json(
+                    "events",
+                    _active_events_query_params(
+                        requested_tag_id,
+                        now_iso=now_iso,
+                        page_size=page_size,
+                        offset=offset,
+                    ),
+                    retries=retries,
+                    backoff_seconds=backoff_seconds,
+                )
+                pages_fetched += 1
+                total_retries += retries_used
+                if not isinstance(payload, list):
+                    raise ProviderError("Polymarket events endpoint must return a JSON array")
+                if not payload:
+                    break
+                all_events.extend(item for item in payload if isinstance(item, dict))
+                if len(payload) < page_size:
+                    break
+                offset += page_size
+        except ProviderError as exc:
+            if exc.status_code == 500:
+                fallback_error: Optional[ProviderError] = exc
+                fallback_succeeded = False
+                for fallback_order in _active_events_fallback_order_candidates():
+                    try:
+                        payload, retries_used = _request_json(
+                            "events",
+                            _active_events_query_params(
+                                requested_tag_id,
+                                now_iso=now_iso,
+                                page_size=page_size,
+                                offset=0,
+                                fallback_order=fallback_order,
+                            ),
+                            retries=retries,
+                            backoff_seconds=backoff_seconds,
+                        )
+                        pages_fetched += 1
+                        total_retries += retries_used
+                        if not isinstance(payload, list):
+                            raise ProviderError("Polymarket events endpoint must return a JSON array")
+                        all_events.extend(item for item in payload if isinstance(item, dict))
+                        fallback_succeeded = True
+                        break
+                    except ProviderError as fallback_exc:
+                        fallback_error = fallback_exc
+                        continue
+                tag_query_fallback_count += 1
+                if fallback_succeeded:
+                    continue
+                last_error = fallback_error
+                tag_query_errors += 1
+                continue
+            last_error = exc
+            tag_query_errors += 1
+            continue
+
+    if not all_events and last_error is not None:
+        raise last_error
+    all_events = _merge_events([], all_events)
 
     expires_base = time.time()
     EVENTS_CACHE["expires_at"] = expires_base + ttl if ttl > 0 else expires_base
     EVENTS_CACHE["events"] = all_events
     EVENTS_CACHE["cache_key"] = cache_key
-    meta = {"pages_fetched": pages_fetched, "retries_used": total_retries, "cache": "miss"}
+    meta = {
+        "pages_fetched": pages_fetched,
+        "retries_used": total_retries,
+        "cache": "miss",
+        "tag_query_count": len(requested_tag_ids),
+        "tag_query_errors": tag_query_errors,
+        "tag_query_fallback_count": tag_query_fallback_count,
+    }
     if _scan_cache_active():
         with SCAN_CACHE_LOCK:
             SCAN_CACHE_CONTEXT["events"] = list(all_events)
@@ -3746,41 +3851,79 @@ async def _load_active_game_events_async(
         all_events: List[dict] = []
         total_retries = 0
         pages_fetched = 0
-        offset = 0
+        tag_query_errors = 0
+        tag_query_fallback_count = 0
+        last_error: Optional[ProviderError] = None
         now_iso = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        requested_tag_ids = [
-            _normalize_text(tag_id)
-            for tag_id in (tag_ids or [])
-            if _normalize_text(tag_id)
-        ] or [POLYMARKET_GAME_TAG_ID or "100639"]
-        for _page in range(max_pages):
-            payload, retries_used = await _request_json_async(
-                client,
-                "events",
-                {
-                    "tag_id": requested_tag_ids[0],
-                    "active": "true",
-                    "closed": "false",
-                    "archived": "false",
-                    "end_date_min": now_iso,
-                    "order": "id",
-                    "ascending": "false",
-                    "limit": page_size,
-                    "offset": offset,
-                },
-                retries=retries,
-                backoff_seconds=backoff_seconds,
-            )
-            pages_fetched += 1
-            total_retries += retries_used
-            if not isinstance(payload, list):
-                raise ProviderError("Polymarket events endpoint must return a JSON array")
-            if not payload:
-                break
-            all_events.extend(item for item in payload if isinstance(item, dict))
-            if len(payload) < page_size:
-                break
-            offset += page_size
+        requested_tag_ids = _requested_event_tag_ids(tag_ids)
+        for requested_tag_id in requested_tag_ids:
+            offset = 0
+            try:
+                for _page in range(max_pages):
+                    payload, retries_used = await _request_json_async(
+                        client,
+                        "events",
+                        _active_events_query_params(
+                            requested_tag_id,
+                            now_iso=now_iso,
+                            page_size=page_size,
+                            offset=offset,
+                        ),
+                        retries=retries,
+                        backoff_seconds=backoff_seconds,
+                    )
+                    pages_fetched += 1
+                    total_retries += retries_used
+                    if not isinstance(payload, list):
+                        raise ProviderError("Polymarket events endpoint must return a JSON array")
+                    if not payload:
+                        break
+                    all_events.extend(item for item in payload if isinstance(item, dict))
+                    if len(payload) < page_size:
+                        break
+                    offset += page_size
+            except ProviderError as exc:
+                if exc.status_code == 500:
+                    fallback_error: Optional[ProviderError] = exc
+                    fallback_succeeded = False
+                    for fallback_order in _active_events_fallback_order_candidates():
+                        try:
+                            payload, retries_used = await _request_json_async(
+                                client,
+                                "events",
+                                _active_events_query_params(
+                                    requested_tag_id,
+                                    now_iso=now_iso,
+                                    page_size=page_size,
+                                    offset=0,
+                                    fallback_order=fallback_order,
+                                ),
+                                retries=retries,
+                                backoff_seconds=backoff_seconds,
+                            )
+                            pages_fetched += 1
+                            total_retries += retries_used
+                            if not isinstance(payload, list):
+                                raise ProviderError("Polymarket events endpoint must return a JSON array")
+                            all_events.extend(item for item in payload if isinstance(item, dict))
+                            fallback_succeeded = True
+                            break
+                        except ProviderError as fallback_exc:
+                            fallback_error = fallback_exc
+                            continue
+                    tag_query_fallback_count += 1
+                    if fallback_succeeded:
+                        continue
+                    last_error = fallback_error
+                    tag_query_errors += 1
+                    continue
+                last_error = exc
+                tag_query_errors += 1
+                continue
+
+        if not all_events and last_error is not None:
+            raise last_error
+        all_events = _merge_events([], all_events)
 
         expires_base = time.time()
         EVENTS_CACHE["expires_at"] = expires_base + ttl if ttl > 0 else expires_base
@@ -3790,6 +3933,9 @@ async def _load_active_game_events_async(
             "pages_fetched": pages_fetched,
             "retries_used": total_retries,
             "cache": "miss",
+            "tag_query_count": len(requested_tag_ids),
+            "tag_query_errors": tag_query_errors,
+            "tag_query_fallback_count": tag_query_fallback_count,
         }
         if _scan_cache_active():
             with SCAN_CACHE_LOCK:

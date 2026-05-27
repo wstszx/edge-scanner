@@ -693,6 +693,70 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first_events[0].get("slug"), "game-745")
         self.assertEqual(second_events[0].get("slug"), "game-899")
 
+    async def test_load_active_game_events_async_falls_back_across_sport_tag_ids(self) -> None:
+        captured_requests = []
+
+        async def _fake_request_json_async(client, path, params=None, retries=0, backoff_seconds=0.0):
+            request_tag = str((params or {}).get("tag_id") or "")
+            captured_requests.append(request_tag)
+            if request_tag == "bad-tag":
+                raise polymarket.ProviderError("bad tag", status_code=500)
+            return ([_sample_event(f"game-{request_tag}")], 0)
+
+        with (
+            patch.object(polymarket, "POLYMARKET_EVENTS_CACHE_TTL_RAW", "12"),
+            patch.object(polymarket, "_request_json_async", side_effect=_fake_request_json_async),
+        ):
+            events, meta = await polymarket._load_active_game_events_async(
+                client=object(),
+                retries=0,
+                backoff_seconds=0.0,
+                page_size=200,
+                max_pages=8,
+                tag_ids=["bad-tag", "good-tag"],
+            )
+
+        self.assertEqual(captured_requests, ["bad-tag", "bad-tag", "bad-tag", "bad-tag", "good-tag"])
+        self.assertEqual([event.get("slug") for event in events], ["game-good-tag"])
+        self.assertEqual(meta.get("tag_query_count"), 2)
+        self.assertEqual(meta.get("tag_query_errors"), 1)
+        self.assertEqual(meta.get("tag_query_fallback_count"), 1)
+
+    async def test_load_active_game_events_async_retries_tradeable_fallback_when_filtered_tag_query_500(self) -> None:
+        captured_params = []
+
+        async def _fake_request_json_async(client, path, params=None, retries=0, backoff_seconds=0.0):
+            request_params = dict(params or {})
+            captured_params.append(request_params)
+            if "archived" in request_params:
+                raise polymarket.ProviderError("filtered tag failed", status_code=500)
+            return ([_sample_event("minimal-query-game")], 0)
+
+        with (
+            patch.object(polymarket, "POLYMARKET_EVENTS_CACHE_TTL_RAW", "12"),
+            patch.object(polymarket, "_request_json_async", side_effect=_fake_request_json_async),
+        ):
+            events, meta = await polymarket._load_active_game_events_async(
+                client=object(),
+                retries=0,
+                backoff_seconds=0.0,
+                page_size=200,
+                max_pages=8,
+                tag_ids=["tennis-tag"],
+            )
+
+        self.assertEqual([event.get("slug") for event in events], ["minimal-query-game"])
+        self.assertIn("archived", captured_params[0])
+        self.assertIn("offset", captured_params[0])
+        self.assertNotIn("archived", captured_params[1])
+        self.assertNotIn("end_date_min", captured_params[1])
+        self.assertEqual(captured_params[1].get("order"), "competitive")
+        self.assertEqual(captured_params[1].get("ascending"), "true")
+        self.assertNotIn("offset", captured_params[1])
+        self.assertEqual(meta.get("tag_query_count"), 1)
+        self.assertEqual(meta.get("tag_query_errors"), 0)
+        self.assertEqual(meta.get("tag_query_fallback_count"), 1)
+
     async def test_fetch_events_async_uses_sport_specific_tag_query_without_global_prefetch(self) -> None:
         requested_tag_ids = []
 
@@ -1604,6 +1668,38 @@ class PolymarketSportsResultMatchingTests(unittest.TestCase):
                 "basketball_ncaab",
             )
         )
+
+    def test_tennis_sport_aliases_match_current_polymarket_itf_tag(self) -> None:
+        event = {
+            "tags": [
+                {"id": "1", "slug": "sports"},
+                {"id": "864", "slug": "itf"},
+            ],
+        }
+
+        self.assertTrue(polymarket._event_matches_sport(event, "tennis_atp", {"itf": {"864"}}))
+        self.assertTrue(polymarket._event_matches_sport(event, "tennis_wta", {"itf": {"864"}}))
+
+    def test_tennis_matchup_strips_competition_prefix_before_player_name(self) -> None:
+        self.assertEqual(
+            polymarket._extract_matchup_from_text("ITF Monastir: Sana Garakani vs Masha Lazarenko"),
+            ("Sana Garakani", "Masha Lazarenko"),
+        )
+
+    def test_tennis_direct_h2h_market_matches_prefixed_question(self) -> None:
+        token_ids = polymarket._match_market_clob_token_ids(
+            {
+                "question": "ITF Monastir: Sana Garakani vs Masha Lazarenko",
+                "outcomes": '["Sana Garakani", "Masha Lazarenko"]',
+                "outcomePrices": '["0.075", "0.925"]',
+                "clobTokenIds": '["token-a", "token-b"]',
+            },
+            "Sana Garakani",
+            "Masha Lazarenko",
+            {"h2h"},
+        )
+
+        self.assertEqual(token_ids, ["token-a", "token-b"])
 
     def test_sports_result_matches_event_with_college_basketball_abbreviations(self) -> None:
         payload = {

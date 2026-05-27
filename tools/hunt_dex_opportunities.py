@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import re
 import sys
+import time
 from collections import Counter
 from datetime import datetime
 from itertools import combinations
@@ -19,7 +21,9 @@ from tools import hunt_real_arbitrage as hunt
 
 
 DEFAULT_MIN_EXECUTABLE_STAKE = 25.0
-EXECUTION_ADAPTER_PROVIDERS = {"polymarket", "sx_bet"}
+AUTO_EXECUTION_ADAPTER_PROVIDERS = {"polymarket", "sx_bet"}
+MANUAL_EXECUTION_ADAPTER_PROVIDERS = {"artline"}
+EXECUTION_ADAPTER_PROVIDERS = AUTO_EXECUTION_ADAPTER_PROVIDERS | MANUAL_EXECUTION_ADAPTER_PROVIDERS
 EXECUTION_READY_ENV_BY_PROVIDER = {
     "polymarket": ("POLYMARKET_API_KEY",),
     "sx_bet": ("SX_BET_API_KEY",),
@@ -39,7 +43,7 @@ def _normalize_list(values: Sequence[str] | None) -> list[str]:
 
 def _provider_has_explicit_liquidity(provider_key: str) -> bool:
     capability = hunt.PROVIDER_CAPABILITIES.get(str(provider_key).strip())
-    return bool(capability and capability.liquidity_confidence == "explicit")
+    return bool(capability and capability.liquidity_confidence in {"explicit", "estimated"})
 
 
 def _filter_explicit_providers(providers: Sequence[str], require_explicit_liquidity: bool) -> list[str]:
@@ -122,6 +126,78 @@ def _build_scan_jobs(
             }
         )
     return jobs
+
+
+def _timeout_scan_row(
+    sport: str,
+    providers: Sequence[str],
+    *,
+    all_markets: bool,
+    timeout_seconds: float,
+    elapsed_seconds: float,
+) -> dict[str, Any]:
+    return {
+        "sport": sport,
+        "providers": list(providers),
+        "api_bookmakers": [],
+        "all_markets": bool(all_markets),
+        "elapsed_seconds": round(elapsed_seconds, 3),
+        "success": False,
+        "partial": True,
+        "timed_out": True,
+        "error": f"scan timed out after {timeout_seconds:g}s",
+        "arbitrage_count": 0,
+        "positive_candidates": 0,
+        "actionable_arbitrage_count": 0,
+        "top_candidate": None,
+        "actionable_arbitrage": [],
+        "top_arbitrage": [],
+        "middle_count": 0,
+        "positive_middle_count": 0,
+        "actionable_middle_count": 0,
+        "top_middles": [],
+        "actionable_middles": [],
+        "plus_ev_count": 0,
+        "top_plus_ev": [],
+        "provider_capabilities": [],
+        "scan_diagnostics": {
+            "reason_code": "scan_timeout",
+            "raw_provider_events": 0,
+            "providers_with_events": 0,
+            "overlap_clusters": 0,
+            "total_merge_hits": 0,
+        },
+        "custom_providers": {},
+        "sport_errors": [{"sport": sport, "error": f"scan_timeout:{timeout_seconds:g}s"}],
+    }
+
+
+def _run_scan_once_with_timeout(
+    sport: str,
+    providers: Sequence[str],
+    *,
+    timeout_seconds: float,
+    **kwargs,
+) -> dict[str, Any]:
+    timeout = max(0.0, float(timeout_seconds or 0.0))
+    if timeout <= 0:
+        return hunt._scan_once(sport, providers, **kwargs)
+    started = time.monotonic()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(hunt._scan_once, sport, providers, **kwargs)
+    try:
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        future.cancel()
+        return _timeout_scan_row(
+            sport,
+            providers,
+            all_markets=bool(kwargs.get("all_markets")),
+            timeout_seconds=timeout,
+            elapsed_seconds=time.monotonic() - started,
+        )
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _bookmaker_key(value: object) -> str:
@@ -386,6 +462,11 @@ def _book_execution_blockers(
     diagnostics = book.get("execution_diagnostics")
     if isinstance(diagnostics, dict) and diagnostics.get("reason") == "max_bet_below_min_bet":
         blockers.add(f"{bookmaker_key}_max_bet_below_min_bet")
+    if bookmaker_key == "artline":
+        if isinstance(diagnostics, dict) and diagnostics.get("executable") is False:
+            blockers.add("artline_not_executable")
+        if not book.get("book_event_url"):
+            blockers.add("artline_missing_event_url")
     if not book.get("quote_updated_at"):
         blockers.add("missing_quote_time")
     if max_stake is None:
@@ -407,6 +488,9 @@ def _execution_identifier_blockers(bookmaker_key: str, book: dict[str, Any]) -> 
     elif bookmaker_key == "polymarket":
         if not (book.get("token_id") or book.get("asset_id")):
             blockers.append("polymarket_missing_token_id")
+    elif bookmaker_key == "artline":
+        if not book.get("book_event_url"):
+            blockers.append("artline_missing_event_url")
     return blockers
 
 
@@ -439,6 +523,19 @@ def _draft_order_for_leg(bookmaker_key: str, book: dict[str, Any], *, stake: flo
             "order_type": "limit",
             "token_id": token_id,
             "asset_id": book.get("asset_id") or token_id,
+            "side": "buy",
+            "size": round(float(stake), 2),
+            "limit_odds": limit_odds,
+        }
+    if bookmaker_key == "artline":
+        event_url = book.get("book_event_url")
+        if not event_url:
+            return None
+        return {
+            "adapter": "manual_artline",
+            "order_type": "manual_web",
+            "event_url": event_url,
+            "outcome": book.get("outcome"),
             "side": "buy",
             "size": round(float(stake), 2),
             "limit_odds": limit_odds,
@@ -514,6 +611,8 @@ def _build_execution_ticket(
                 "quote_updated_at": book.get("quote_updated_at"),
                 "quote_source": book.get("quote_source"),
                 "fee_rate": fee_rate,
+                "book_event_url": book.get("book_event_url"),
+                "execution_diagnostics": book.get("execution_diagnostics"),
                 "market_hash": book.get("market_hash"),
                 "token_id": book.get("token_id"),
                 "asset_id": book.get("asset_id"),
@@ -627,6 +726,8 @@ def _build_middle_execution_ticket(
                 "quote_updated_at": book.get("quote_updated_at"),
                 "quote_source": book.get("quote_source"),
                 "fee_rate": fee_rate,
+                "book_event_url": book.get("book_event_url"),
+                "execution_diagnostics": book.get("execution_diagnostics"),
                 "market_hash": book.get("market_hash"),
                 "token_id": book.get("token_id"),
                 "asset_id": book.get("asset_id"),
@@ -775,6 +876,57 @@ def _scan_diagnostic_summary(scans: Sequence[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _rank_count_items(counts: dict[str, Any], *, limit: int = 5) -> list[dict[str, Any]]:
+    rows = [
+        {"reason": str(reason), "count": int(count or 0)}
+        for reason, count in (counts or {}).items()
+        if str(reason).strip() and int(count or 0) > 0
+    ]
+    rows.sort(key=lambda item: (-item["count"], item["reason"]))
+    return rows[: max(0, int(limit))]
+
+
+def _opportunity_funnel_summary(
+    *,
+    scan_count: int,
+    scan_diagnostics: dict[str, Any],
+    actionable_arbitrage_count: int,
+    actionable_middle_count: int,
+    plus_ev_count: int,
+    model_only_arbitrage_count: int,
+    model_only_middle_count: int,
+    execution_ready_ticket_count: int,
+    middle_execution_ready_ticket_count: int,
+    blocked_reason_counts: dict[str, Any],
+    execution_risk_counts: dict[str, Any],
+) -> dict[str, Any]:
+    diagnostics = scan_diagnostics if isinstance(scan_diagnostics, dict) else {}
+    ready_ticket_count = int(execution_ready_ticket_count or 0) + int(middle_execution_ready_ticket_count or 0)
+    actionable_count = int(actionable_arbitrage_count or 0) + int(actionable_middle_count or 0)
+    model_only_count = int(model_only_arbitrage_count or 0) + int(model_only_middle_count or 0)
+    if ready_ticket_count > 0:
+        conclusion = "execution_ready_opportunity"
+    elif actionable_count > 0:
+        conclusion = "actionable_but_execution_blocked"
+    else:
+        conclusion = "no_execution_ready_opportunity"
+    return {
+        "conclusion": conclusion,
+        "scan_count": int(scan_count or 0),
+        "scans_with_source_events": int(diagnostics.get("scans_with_source_events") or 0),
+        "scans_without_source_events": int(diagnostics.get("scans_without_source_events") or 0),
+        "scans_with_cross_provider_matches": int(diagnostics.get("scans_with_cross_provider_matches") or 0),
+        "scans_without_cross_provider_matches": int(diagnostics.get("scans_without_cross_provider_matches") or 0),
+        "actionable_count": actionable_count,
+        "ready_ticket_count": ready_ticket_count,
+        "model_only_count": model_only_count,
+        "plus_ev_count": int(plus_ev_count or 0),
+        "top_scan_reasons": _rank_count_items(diagnostics.get("reason_counts") or {}),
+        "top_blockers": _rank_count_items(blocked_reason_counts),
+        "execution_risks": _rank_count_items(execution_risk_counts),
+    }
+
+
 def _model_only_middles(middles: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = [
         item
@@ -867,6 +1019,32 @@ def _render_markdown_summary(payload: dict[str, Any], *, source_json: str) -> st
             else []
         ),
         "",
+        "## Opportunity Funnel",
+    ]
+    funnel = summary.get("opportunity_funnel") if isinstance(summary.get("opportunity_funnel"), dict) else {}
+    if funnel:
+        lines.extend(
+            [
+                f"- conclusion: {funnel.get('conclusion', '-')}",
+                f"- scans_with_source_events: {funnel.get('scans_with_source_events', 0)}",
+                f"- scans_with_cross_provider_matches: {funnel.get('scans_with_cross_provider_matches', 0)}",
+                f"- actionable_count: {funnel.get('actionable_count', 0)}",
+                f"- ready_ticket_count: {funnel.get('ready_ticket_count', 0)}",
+                f"- model_only_count: {funnel.get('model_only_count', 0)}",
+            ]
+        )
+        for label, key in (
+            ("top_scan_reason", "top_scan_reasons"),
+            ("top_blocker", "top_blockers"),
+            ("execution_risk", "execution_risks"),
+        ):
+            for item in funnel.get(key) or []:
+                lines.append(f"- {label}: {item.get('reason')} x{item.get('count')}")
+    else:
+        lines.append("- none")
+    lines.extend(
+        [
+        "",
         "## Execution Risk Counts",
         *_format_counts(summary.get("execution_risk_counts") or {}),
         "",
@@ -874,7 +1052,8 @@ def _render_markdown_summary(payload: dict[str, Any], *, source_json: str) -> st
         *_format_counts(summary.get("blocked_reason_counts") or {}),
         "",
         "## Top Actionable Middles",
-    ]
+        ]
+    )
     actionable_middles = [item for item in payload.get("actionable_middles") or [] if isinstance(item, dict)]
     lines.extend(_format_opportunity_row(item) for item in actionable_middles[:5])
     if not actionable_middles:
@@ -949,6 +1128,199 @@ def _write_markdown_summary(path: Path, payload: dict[str, Any], *, source_json:
     path.write_text(_render_markdown_summary(payload, source_json=source_json), encoding="utf-8")
 
 
+def _batch_report_stem(index: int, job_name: object, sport: object) -> str:
+    raw = f"{index:03d}_{job_name}_{sport}"
+    safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", raw).strip("._")
+    return safe or f"{index:03d}_scan"
+
+
+def _extend_scan_outputs(
+    row: dict[str, Any],
+    *,
+    job_name: str,
+    candidates: list[dict[str, Any]],
+    top_arbitrage: list[dict[str, Any]],
+    actionable_arbitrage: list[dict[str, Any]],
+    top_middles: list[dict[str, Any]],
+    actionable_middles: list[dict[str, Any]],
+    plus_ev: list[dict[str, Any]],
+) -> None:
+    top_candidate = row.get("top_candidate")
+    if isinstance(top_candidate, dict):
+        top_candidate["job_name"] = job_name
+        candidates.append(top_candidate)
+    for item in row.get("top_arbitrage") or []:
+        if isinstance(item, dict):
+            item["job_name"] = job_name
+            top_arbitrage.append(item)
+    for item in row.get("actionable_arbitrage") or []:
+        if isinstance(item, dict):
+            item["job_name"] = job_name
+            actionable_arbitrage.append(item)
+    for item in row.get("top_middles") or []:
+        if isinstance(item, dict):
+            item["job_name"] = job_name
+            top_middles.append(item)
+    for item in row.get("actionable_middles") or []:
+        if isinstance(item, dict):
+            item["job_name"] = job_name
+            actionable_middles.append(item)
+    for item in row.get("top_plus_ev") or []:
+        if isinstance(item, dict):
+            item["job_name"] = job_name
+            plus_ev.append(item)
+
+
+def _build_payload(
+    *,
+    jobs: Sequence[dict[str, Any]],
+    scans: Sequence[dict[str, Any]],
+    candidates: Sequence[dict[str, Any]],
+    top_arbitrage: Sequence[dict[str, Any]],
+    actionable_arbitrage: Sequence[dict[str, Any]],
+    top_middles: Sequence[dict[str, Any]],
+    actionable_middles: Sequence[dict[str, Any]],
+    plus_ev: Sequence[dict[str, Any]],
+    require_explicit_liquidity: bool,
+    max_quote_skew_seconds: int,
+    min_executable_stake: float,
+    batch_reports: Sequence[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    candidates_list = _deduplicate_rows(candidates, key_factory=_arb_key, metric_key="roi_percent")
+    top_arbitrage_list = _deduplicate_rows(top_arbitrage, key_factory=_arb_key, metric_key="roi_percent")
+    actionable_arbitrage_list = _deduplicate_rows(
+        actionable_arbitrage,
+        key_factory=_arb_key,
+        metric_key="roi_percent",
+    )
+    top_middles_list = _deduplicate_rows(top_middles, key_factory=_middle_key, metric_key="ev_percent")
+    actionable_middles_list = _deduplicate_rows(
+        actionable_middles,
+        key_factory=_middle_key,
+        metric_key="ev_percent",
+    )
+    actionable_middles_list, execution_risky_middles = _split_actionable_middles_by_quote_skew(
+        actionable_middles_list,
+        max_quote_skew_seconds=max(0, int(max_quote_skew_seconds)),
+    )
+    plus_ev_list = _deduplicate_rows(plus_ev, key_factory=_plus_ev_key, metric_key="edge_percent")
+    minimum_stake = max(0.0, float(min_executable_stake))
+    model_only_arbitrage = _annotate_blocked_reasons(
+        _model_only_arbitrage(top_arbitrage_list),
+        min_executable_stake=minimum_stake,
+    )
+    model_only_middles = _annotate_blocked_reasons(
+        _model_only_middles(top_middles_list),
+        min_executable_stake=minimum_stake,
+    )
+    max_quote_skew = max(0, int(max_quote_skew_seconds))
+    execution_tickets = [
+        _build_execution_ticket(
+            item,
+            source="actionable_arbitrage",
+            min_executable_stake=minimum_stake,
+            max_quote_skew_seconds=max_quote_skew,
+        )
+        for item in actionable_arbitrage_list
+    ]
+    execution_tickets.extend(
+        _build_execution_ticket(
+            item,
+            source="model_only_arbitrage",
+            min_executable_stake=minimum_stake,
+            max_quote_skew_seconds=max_quote_skew,
+        )
+        for item in model_only_arbitrage
+    )
+    execution_ready_ticket_count = sum(1 for item in execution_tickets if item.get("status") == "ready")
+    middle_execution_tickets = [
+        _build_middle_execution_ticket(
+            item,
+            source="actionable_middle",
+            min_executable_stake=minimum_stake,
+            max_quote_skew_seconds=max_quote_skew,
+        )
+        for item in actionable_middles_list
+    ]
+    middle_execution_tickets.extend(
+        _build_middle_execution_ticket(
+            item,
+            source="execution_risky_middle",
+            min_executable_stake=minimum_stake,
+            max_quote_skew_seconds=max_quote_skew,
+        )
+        for item in execution_risky_middles
+    )
+    middle_execution_tickets.extend(
+        _build_middle_execution_ticket(
+            item,
+            source="model_only_middle",
+            min_executable_stake=minimum_stake,
+            max_quote_skew_seconds=max_quote_skew,
+        )
+        for item in model_only_middles
+    )
+    middle_execution_ready_ticket_count = sum(
+        1 for item in middle_execution_tickets if item.get("status") == "ready"
+    )
+    blocked_reason_counts = _blocked_reason_counts([*model_only_arbitrage, *model_only_middles])
+    execution_risk_counts = _execution_risk_counts(execution_risky_middles)
+    scan_diagnostics_summary = _scan_diagnostic_summary(scans)
+    opportunity_funnel = _opportunity_funnel_summary(
+        scan_count=len(scans),
+        scan_diagnostics=scan_diagnostics_summary,
+        actionable_arbitrage_count=len(actionable_arbitrage_list),
+        actionable_middle_count=len(actionable_middles_list),
+        plus_ev_count=len(plus_ev_list),
+        model_only_arbitrage_count=len(model_only_arbitrage),
+        model_only_middle_count=len(model_only_middles),
+        execution_ready_ticket_count=execution_ready_ticket_count,
+        middle_execution_ready_ticket_count=middle_execution_ready_ticket_count,
+        blocked_reason_counts=blocked_reason_counts,
+        execution_risk_counts=execution_risk_counts,
+    )
+    reports = list(batch_reports or [])
+    return {
+        "summary": {
+            "scan_count": len(scans),
+            "candidate_count": len(candidates_list),
+            "actionable_arbitrage_count": len(actionable_arbitrage_list),
+            "model_only_arbitrage_count": len(model_only_arbitrage),
+            "execution_ticket_count": len(execution_tickets),
+            "execution_ready_ticket_count": execution_ready_ticket_count,
+            "middle_execution_ticket_count": len(middle_execution_tickets),
+            "middle_execution_ready_ticket_count": middle_execution_ready_ticket_count,
+            "actionable_middle_count": len(actionable_middles_list),
+            "execution_risky_middle_count": len(execution_risky_middles),
+            "model_only_middle_count": len(model_only_middles),
+            "plus_ev_count": len(plus_ev_list),
+            "blocked_reason_counts": blocked_reason_counts,
+            "execution_risk_counts": execution_risk_counts,
+            "scan_diagnostics": scan_diagnostics_summary,
+            "opportunity_funnel": opportunity_funnel,
+            "require_explicit_liquidity": bool(require_explicit_liquidity),
+            "max_quote_skew_seconds": max_quote_skew,
+            "min_executable_stake": minimum_stake,
+            "batch_report_count": len(reports),
+        },
+        "jobs": list(jobs),
+        "scans": list(scans),
+        "batch_reports": reports,
+        "candidates": candidates_list[:20],
+        "actionable_arbitrage": actionable_arbitrage_list[:20],
+        "model_only_arbitrage": model_only_arbitrage[:20],
+        "execution_tickets": execution_tickets[:20],
+        "middle_execution_tickets": middle_execution_tickets[:20],
+        "actionable_middles": actionable_middles_list[:20],
+        "execution_risky_middles": execution_risky_middles[:20],
+        "model_only_middles": model_only_middles[:20],
+        "top_arbitrage": top_arbitrage_list[:20],
+        "top_middles": top_middles_list[:20],
+        "top_plus_ev": plus_ev_list[:20],
+        "provider_capabilities": hunt._provider_capability_summary(hunt.DEFAULT_PROVIDERS),
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run a combined DEX-only opportunity hunt.")
     parser.add_argument("--sports", nargs="*", default=hunt.DEFAULT_SPORTS)
@@ -977,10 +1349,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=DEFAULT_MIN_EXECUTABLE_STAKE,
         help="Minimum per-leg stake required before a model-only middle is considered executable-looking.",
     )
+    parser.add_argument(
+        "--per-scan-timeout-seconds",
+        type=float,
+        default=0.0,
+        help="Maximum seconds to allow each sport/provider job before recording a timeout row; 0 disables.",
+    )
     parser.add_argument("--out", default=str(Path("data") / "provider_verification" / "dex_opportunities_latest.json"))
     parser.add_argument(
         "--summary-out",
         default=str(Path("data") / "provider_verification" / "latest_actionable_summary.md"),
+    )
+    parser.add_argument(
+        "--batch-out-dir",
+        default="",
+        help="Optional directory for one JSON/Markdown report per completed scan row.",
     )
     args = parser.parse_args(argv)
 
@@ -1001,46 +1384,79 @@ def main(argv: Sequence[str] | None = None) -> int:
     top_middles: list[dict[str, Any]] = []
     actionable_middles: list[dict[str, Any]] = []
     plus_ev: list[dict[str, Any]] = []
+    batch_reports: list[dict[str, Any]] = []
+    batch_out_dir = Path(args.batch_out_dir) if str(args.batch_out_dir or "").strip() else None
 
     try:
+        scan_index = 0
         for job in jobs:
             for sport in job["sports"]:
-                row = hunt._scan_once(
-                    sport,
-                    job["providers"],
-                    api_key=str(args.api_key or "").strip(),
-                    api_bookmakers=api_bookmakers,
-                    all_markets=bool(job["all_markets"]),
-                    stake=float(args.stake),
-                    min_roi=float(args.min_roi),
-                    allowed_quality=allowed_quality,
-                )
+                scan_index += 1
+                timeout_seconds = max(0.0, float(args.per_scan_timeout_seconds))
+                try:
+                    row = _run_scan_once_with_timeout(
+                        sport,
+                        job["providers"],
+                        timeout_seconds=timeout_seconds,
+                        api_key=str(args.api_key or "").strip(),
+                        api_bookmakers=api_bookmakers,
+                        all_markets=bool(job["all_markets"]),
+                        stake=float(args.stake),
+                        min_roi=float(args.min_roi),
+                        allowed_quality=allowed_quality,
+                    )
+                except TimeoutError:
+                    row = _timeout_scan_row(
+                        sport,
+                        job["providers"],
+                        all_markets=bool(job["all_markets"]),
+                        timeout_seconds=timeout_seconds,
+                        elapsed_seconds=timeout_seconds,
+                    )
                 row["job_name"] = job["name"]
                 scans.append(row)
-                top_candidate = row.get("top_candidate")
-                if isinstance(top_candidate, dict):
-                    top_candidate["job_name"] = job["name"]
-                    candidates.append(top_candidate)
-                for item in row.get("top_arbitrage") or []:
-                    if isinstance(item, dict):
-                        item["job_name"] = job["name"]
-                        top_arbitrage.append(item)
-                for item in row.get("actionable_arbitrage") or []:
-                    if isinstance(item, dict):
-                        item["job_name"] = job["name"]
-                        actionable_arbitrage.append(item)
-                for item in row.get("top_middles") or []:
-                    if isinstance(item, dict):
-                        item["job_name"] = job["name"]
-                        top_middles.append(item)
-                for item in row.get("actionable_middles") or []:
-                    if isinstance(item, dict):
-                        item["job_name"] = job["name"]
-                        actionable_middles.append(item)
-                for item in row.get("top_plus_ev") or []:
-                    if isinstance(item, dict):
-                        item["job_name"] = job["name"]
-                        plus_ev.append(item)
+                _extend_scan_outputs(
+                    row,
+                    job_name=job["name"],
+                    candidates=candidates,
+                    top_arbitrage=top_arbitrage,
+                    actionable_arbitrage=actionable_arbitrage,
+                    top_middles=top_middles,
+                    actionable_middles=actionable_middles,
+                    plus_ev=plus_ev,
+                )
+                if batch_out_dir is not None:
+                    batch_stem = _batch_report_stem(scan_index, job["name"], sport)
+                    batch_json_path = batch_out_dir / f"{batch_stem}.json"
+                    batch_md_path = batch_out_dir / f"{batch_stem}.md"
+                    batch_payload = _build_payload(
+                        jobs=[job],
+                        scans=[row],
+                        candidates=[],
+                        top_arbitrage=row.get("top_arbitrage") or [],
+                        actionable_arbitrage=row.get("actionable_arbitrage") or [],
+                        top_middles=row.get("top_middles") or [],
+                        actionable_middles=row.get("actionable_middles") or [],
+                        plus_ev=row.get("top_plus_ev") or [],
+                        require_explicit_liquidity=bool(args.require_explicit_liquidity),
+                        max_quote_skew_seconds=max(0, int(args.max_quote_skew_seconds)),
+                        min_executable_stake=max(0.0, float(args.min_executable_stake)),
+                    )
+                    _write_json(batch_json_path, batch_payload)
+                    _write_markdown_summary(batch_md_path, batch_payload, source_json=str(batch_json_path))
+                    batch_reports.append(
+                        {
+                            "sport": sport,
+                            "job_name": job["name"],
+                            "json": str(batch_json_path),
+                            "summary": str(batch_md_path),
+                            "success": bool(row.get("success")),
+                            "timed_out": bool(row.get("timed_out")),
+                            "actionable_arbitrage_count": int(row.get("actionable_arbitrage_count") or 0),
+                            "actionable_middle_count": int(row.get("actionable_middle_count") or 0),
+                            "plus_ev_count": int(row.get("plus_ev_count") or 0),
+                        }
+                    )
                 print(
                     f"{job['name']} sport={sport} providers={'+'.join(job['providers'])} "
                     f"all_markets={bool(job['all_markets'])} "
@@ -1050,142 +1466,46 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"plus_ev={row['plus_ev_count']} elapsed={row['elapsed_seconds']}s"
                 )
 
-        candidates = _deduplicate_rows(candidates, key_factory=_arb_key, metric_key="roi_percent")
-        top_arbitrage = _deduplicate_rows(top_arbitrage, key_factory=_arb_key, metric_key="roi_percent")
-        actionable_arbitrage = _deduplicate_rows(
-            actionable_arbitrage,
-            key_factory=_arb_key,
-            metric_key="roi_percent",
-        )
-        top_middles = _deduplicate_rows(top_middles, key_factory=_middle_key, metric_key="ev_percent")
-        actionable_middles = _deduplicate_rows(
-            actionable_middles,
-            key_factory=_middle_key,
-            metric_key="ev_percent",
-        )
-        actionable_middles, execution_risky_middles = _split_actionable_middles_by_quote_skew(
-            actionable_middles,
+        payload = _build_payload(
+            jobs=jobs,
+            scans=scans,
+            candidates=candidates,
+            top_arbitrage=top_arbitrage,
+            actionable_arbitrage=actionable_arbitrage,
+            top_middles=top_middles,
+            actionable_middles=actionable_middles,
+            plus_ev=plus_ev,
+            require_explicit_liquidity=bool(args.require_explicit_liquidity),
             max_quote_skew_seconds=max(0, int(args.max_quote_skew_seconds)),
+            min_executable_stake=max(0.0, float(args.min_executable_stake)),
+            batch_reports=batch_reports,
         )
-        plus_ev = _deduplicate_rows(plus_ev, key_factory=_plus_ev_key, metric_key="edge_percent")
-        min_executable_stake = max(0.0, float(args.min_executable_stake))
-        model_only_arbitrage = _annotate_blocked_reasons(
-            _model_only_arbitrage(top_arbitrage),
-            min_executable_stake=min_executable_stake,
-        )
-        model_only_middles = _annotate_blocked_reasons(
-            _model_only_middles(top_middles),
-            min_executable_stake=min_executable_stake,
-        )
-        max_quote_skew_seconds = max(0, int(args.max_quote_skew_seconds))
-        execution_tickets = [
-            _build_execution_ticket(
-                item,
-                source="actionable_arbitrage",
-                min_executable_stake=min_executable_stake,
-                max_quote_skew_seconds=max_quote_skew_seconds,
-            )
-            for item in actionable_arbitrage
-        ]
-        execution_tickets.extend(
-            _build_execution_ticket(
-                item,
-                source="model_only_arbitrage",
-                min_executable_stake=min_executable_stake,
-                max_quote_skew_seconds=max_quote_skew_seconds,
-            )
-            for item in model_only_arbitrage
-        )
-        execution_ready_ticket_count = sum(1 for item in execution_tickets if item.get("status") == "ready")
-        middle_execution_tickets = [
-            _build_middle_execution_ticket(
-                item,
-                source="actionable_middle",
-                min_executable_stake=min_executable_stake,
-                max_quote_skew_seconds=max_quote_skew_seconds,
-            )
-            for item in actionable_middles
-        ]
-        middle_execution_tickets.extend(
-            _build_middle_execution_ticket(
-                item,
-                source="execution_risky_middle",
-                min_executable_stake=min_executable_stake,
-                max_quote_skew_seconds=max_quote_skew_seconds,
-            )
-            for item in execution_risky_middles
-        )
-        middle_execution_tickets.extend(
-            _build_middle_execution_ticket(
-                item,
-                source="model_only_middle",
-                min_executable_stake=min_executable_stake,
-                max_quote_skew_seconds=max_quote_skew_seconds,
-            )
-            for item in model_only_middles
-        )
-        middle_execution_ready_ticket_count = sum(
-            1 for item in middle_execution_tickets if item.get("status") == "ready"
-        )
-        blocked_reason_counts = _blocked_reason_counts([*model_only_arbitrage, *model_only_middles])
-        execution_risk_counts = _execution_risk_counts(execution_risky_middles)
-        scan_diagnostics_summary = _scan_diagnostic_summary(scans)
-
-        payload = {
-            "summary": {
-                "scan_count": len(scans),
-                "candidate_count": len(candidates),
-                "actionable_arbitrage_count": len(actionable_arbitrage),
-                "model_only_arbitrage_count": len(model_only_arbitrage),
-                "execution_ticket_count": len(execution_tickets),
-                "execution_ready_ticket_count": execution_ready_ticket_count,
-                "middle_execution_ticket_count": len(middle_execution_tickets),
-                "middle_execution_ready_ticket_count": middle_execution_ready_ticket_count,
-                "actionable_middle_count": len(actionable_middles),
-                "execution_risky_middle_count": len(execution_risky_middles),
-                "model_only_middle_count": len(model_only_middles),
-                "plus_ev_count": len(plus_ev),
-                "blocked_reason_counts": blocked_reason_counts,
-                "execution_risk_counts": execution_risk_counts,
-                "scan_diagnostics": scan_diagnostics_summary,
-                "require_explicit_liquidity": bool(args.require_explicit_liquidity),
-                "max_quote_skew_seconds": max(0, int(args.max_quote_skew_seconds)),
-                "min_executable_stake": min_executable_stake,
-            },
-            "jobs": jobs,
-            "scans": scans,
-            "candidates": candidates[:20],
-            "actionable_arbitrage": actionable_arbitrage[:20],
-            "model_only_arbitrage": model_only_arbitrage[:20],
-            "execution_tickets": execution_tickets[:20],
-            "middle_execution_tickets": middle_execution_tickets[:20],
-            "actionable_middles": actionable_middles[:20],
-            "execution_risky_middles": execution_risky_middles[:20],
-            "model_only_middles": model_only_middles[:20],
-            "top_arbitrage": top_arbitrage[:20],
-            "top_middles": top_middles[:20],
-            "top_plus_ev": plus_ev[:20],
-            "provider_capabilities": hunt._provider_capability_summary(hunt.DEFAULT_PROVIDERS),
-        }
         out_path = Path(args.out)
         summary_path = Path(args.summary_out)
         _write_json(out_path, payload)
         _write_markdown_summary(summary_path, payload, source_json=str(out_path))
 
-        if actionable_arbitrage or actionable_middles:
+        summary = payload.get("summary") or {}
+        ready_count = int(summary.get("execution_ready_ticket_count") or 0) + int(
+            summary.get("middle_execution_ready_ticket_count") or 0
+        )
+        actionable_count = int(summary.get("actionable_arbitrage_count") or 0) + int(
+            summary.get("actionable_middle_count") or 0
+        )
+        if actionable_count > 0 or ready_count > 0:
             print(
-                f"FOUND actionable opportunities; wrote {args.out} and {args.summary_out} "
-                f"actionable_arbitrage={len(actionable_arbitrage)} "
-                f"actionable_middles={len(actionable_middles)}"
+                f"FOUND executable opportunities; wrote {args.out} and {args.summary_out} "
+                f"actionable_count={actionable_count} "
+                f"ready_ticket_count={ready_count}"
             )
             return 0
         print(
             f"No actionable opportunity found; wrote {args.out} and {args.summary_out} "
-            f"candidates={len(candidates)} "
-            f"model_only_arbitrage={len(model_only_arbitrage)} "
-            f"execution_risky_middles={len(execution_risky_middles)} "
-            f"model_only_middles={len(model_only_middles)} "
-            f"plus_ev={len(plus_ev)}"
+            f"candidates={summary.get('candidate_count', 0)} "
+            f"model_only_arbitrage={summary.get('model_only_arbitrage_count', 0)} "
+            f"execution_risky_middles={summary.get('execution_risky_middle_count', 0)} "
+            f"model_only_middles={summary.get('model_only_middle_count', 0)} "
+            f"plus_ev={summary.get('plus_ev_count', 0)}"
         )
         return 1
     finally:

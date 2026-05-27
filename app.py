@@ -61,7 +61,7 @@ from config import (  # noqa: E402
     derive_required_regions,
     normalize_supported_bookmakers,
 )
-from providers import PROVIDER_FETCHERS, resolve_provider_key  # noqa: E402
+from providers import PROVIDER_CAPABILITIES, PROVIDER_FETCHERS, PROVIDER_TITLES, resolve_provider_key  # noqa: E402
 from scanner import (  # noqa: E402
     DEFAULT_LIVE_PROVIDER_KEYS,
     LIVE_SUPPORTED_PROVIDER_KEYS,
@@ -72,7 +72,13 @@ from scanner import (  # noqa: E402
 from live_availability import write_live_scan_report  # noqa: E402
 from history import get_history_manager  # noqa: E402
 from notifier import get_notifier  # noqa: E402
-from paper_trading import DEFAULT_LEDGER_PATH, load_middle_paper_trades, record_scan_paper_trades  # noqa: E402
+from paper_trading import (  # noqa: E402
+    DEFAULT_LEDGER_PATH,
+    EXECUTION_ADAPTER_PROVIDERS,
+    load_paper_trades,
+    record_scan_paper_trades,
+    settle_paper_trades,
+)
 
 app = Flask(__name__)
 _BACKGROUND_SERVICES_LOCK = threading.Lock()
@@ -570,6 +576,13 @@ def _extract_opportunity_list(payload: object) -> list[dict]:
         if isinstance(opportunities, list):
             return [item for item in opportunities if isinstance(item, dict)]
     return []
+
+
+def _positive_roi_opportunity(item: dict) -> bool:
+    try:
+        return float(item.get("roi_percent") or 0.0) > 0.0
+    except (TypeError, ValueError):
+        return False
 
 
 def _normalize_scan_mode(value: object) -> str:
@@ -1429,12 +1442,23 @@ def _execute_scan_payload(
             arbitrage_items = _extract_opportunity_list(result.get("arbitrage"))
             if not arbitrage_items:
                 arbitrage_items = _extract_opportunity_list(result.get("opportunities"))
+            paper_arbitrage_items = list(arbitrage_items)
+            if not paper_arbitrage_items:
+                top_arbitrage_payload = result.get("top_arbitrage")
+                if not top_arbitrage_payload and isinstance(result.get("arbitrage"), dict):
+                    top_arbitrage_payload = result["arbitrage"].get("top_arbitrage")
+                paper_arbitrage_items = [
+                    item
+                    for item in _extract_opportunity_list(top_arbitrage_payload)
+                    if _positive_roi_opportunity(item)
+                ]
             middle_items = _extract_opportunity_list(result.get("middles"))
             plus_ev_items = _extract_opportunity_list(result.get("plus_ev"))
             try:
                 paper_payload = record_scan_paper_trades(
-                    arbitrage_items,
+                    paper_arbitrage_items,
                     middle_items,
+                    plus_ev_items,
                     scan_time=scan_time,
                     ledger_path=PAPER_TRADE_LEDGER_PATH,
                     max_quote_skew_seconds=PAPER_TRADE_MAX_QUOTE_SKEW_SECONDS,
@@ -1442,18 +1466,20 @@ def _execute_scan_payload(
                 )
                 result["execution_tickets"] = paper_payload.get("execution_tickets") or []
                 result["middle_execution_tickets"] = paper_payload.get("middle_execution_tickets") or []
+                result["plus_ev_execution_tickets"] = paper_payload.get("plus_ev_execution_tickets") or []
                 result["paper_trades"] = paper_payload.get("records") or []
                 result["paper_trade_summary"] = paper_payload.get("summary") or {}
             except Exception:
-                logging.warning("Failed to record middle paper trades", exc_info=True)
+                logging.warning("Failed to record paper trades", exc_info=True)
                 result["execution_tickets"] = []
                 result["middle_execution_tickets"] = []
+                result["plus_ev_execution_tickets"] = []
                 result["paper_trades"] = []
                 result["paper_trade_summary"] = {
                     "created_count": 0,
                     "ready_count": 0,
                     "blocked_count": 0,
-                    "error": "Failed to record middle paper trades",
+                    "error": "Failed to record paper trades",
                 }
             history_manager = get_history_manager()
             try:
@@ -1679,6 +1705,44 @@ def _get_fx_rate_payload(force: bool = False) -> dict:
         return stale_payload
 
 
+PROVIDER_CREDENTIAL_ENV_KEYS = {
+    "sx_bet": ("SX_BET_API_KEY",),
+    "polymarket": ("POLYMARKET_API_KEY",),
+    "betdex": ("BETDEX_APP_ID", "BETDEX_API_KEY"),
+}
+
+
+def _execution_capability_summary() -> list[dict]:
+    summary: list[dict] = []
+    for key in sorted(PROVIDER_FETCHERS):
+        capability = PROVIDER_CAPABILITIES.get(key)
+        credential_env_keys = PROVIDER_CREDENTIAL_ENV_KEYS.get(key, ())
+        missing_env = [name for name in credential_env_keys if not os.getenv(name, "").strip()]
+        paper_supported = key in EXECUTION_ADAPTER_PROVIDERS
+        liquidity_confidence = capability.liquidity_confidence if capability else "unknown"
+        execution_role = (
+            "paper_execution"
+            if paper_supported
+            else ("quote_reference" if liquidity_confidence == "quote_only" else "price_reference")
+        )
+        summary.append(
+            {
+                "key": key,
+                "title": PROVIDER_TITLES.get(key) or (capability.title if capability else key),
+                "paper_execution_supported": paper_supported,
+                "live_submit_enabled": False,
+                "credential_ready": bool(credential_env_keys) and not missing_env,
+                "credential_env_keys": list(credential_env_keys),
+                "missing_env_keys": missing_env,
+                "liquidity_confidence": liquidity_confidence,
+                "live_mode_supported": bool(capability.live_mode_supported) if capability else False,
+                "execution_role": execution_role,
+                "notes": list(capability.notes) if capability else [],
+            }
+        )
+    return summary
+
+
 @app.route("/fx-rates", methods=["GET"])
 def fx_rates() -> tuple:
     force_refresh = _coerce_bool(request.args.get("force"), default=False)
@@ -1744,6 +1808,7 @@ def index() -> str:
         kelly_options=KELLY_OPTIONS,
         bookmaker_links=BOOKMAKER_URLS,
         custom_provider_keys=list(PROVIDER_FETCHERS.keys()),
+        execution_capabilities=_execution_capability_summary(),
         default_live_provider_keys=list(DEFAULT_LIVE_PROVIDER_KEYS),
         live_supported_provider_keys=list(LIVE_SUPPORTED_PROVIDER_KEYS),
     )
@@ -1844,7 +1909,7 @@ def scan_job_current() -> tuple:
         return auth_error
     snapshot = _get_current_or_latest_scan_job_snapshot()
     if not isinstance(snapshot, dict):
-        return jsonify({"success": False, "error": "Scan job not found", "error_code": 404}), 404
+        return _jsonify_client_payload({"success": False, "job": None, "status": "idle"}), 200
     return _jsonify_client_payload({"success": True, "job": snapshot}), 200
 
 
@@ -1995,8 +2060,50 @@ def paper_trades() -> tuple:
     except (TypeError, ValueError):
         limit = 50
     try:
-        records = load_middle_paper_trades(ledger_path=PAPER_TRADE_LEDGER_PATH, limit=limit)
+        records = load_paper_trades(ledger_path=PAPER_TRADE_LEDGER_PATH, limit=limit)
         return _jsonify_client_payload({"success": True, "records": records, "count": len(records)}), 200
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/paper-trades/settle", methods=["POST"])
+def paper_trades_settle() -> tuple:
+    auth_error = _require_admin_auth()
+    if auth_error is not None:
+        return auth_error
+    raw_body = request.get_data(cache=True, as_text=False)
+    if raw_body:
+        try:
+            payload = request.get_json(force=True, silent=False)
+        except BadRequest:
+            return jsonify({"success": False, "error": "Invalid JSON payload", "error_code": 400}), 400
+    else:
+        payload = {}
+    if not isinstance(payload, dict):
+        return jsonify({"success": False, "error": "Settlement payload must be a JSON object", "error_code": 400}), 400
+    results = payload.get("results")
+    if not isinstance(results, dict):
+        return jsonify({"success": False, "error": "Settlement results must be a JSON object", "error_code": 400}), 400
+    try:
+        limit = min(500, max(1, int(request.args.get("limit", "50"))))
+    except (TypeError, ValueError):
+        limit = 50
+    try:
+        settled_at = payload.get("settled_at") if isinstance(payload.get("settled_at"), str) else None
+        result = settle_paper_trades(
+            results,
+            ledger_path=PAPER_TRADE_LEDGER_PATH,
+            settled_at=settled_at,
+        )
+        records = load_paper_trades(ledger_path=PAPER_TRADE_LEDGER_PATH, limit=limit)
+        return _jsonify_client_payload(
+            {
+                "success": True,
+                "settled_count": result.get("settled_count", 0),
+                "records": records,
+                "count": len(records),
+            }
+        ), 200
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
 
