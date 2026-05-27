@@ -31,10 +31,15 @@ def _reset_provider_caches() -> None:
 
     sx_bet.UPCOMING_CACHE["expires_at"] = 0.0
     sx_bet.UPCOMING_CACHE["entries"] = {}
+    sx_bet.ODDS_CACHE["expires_at"] = 0.0
+    sx_bet.ODDS_CACHE["entries"] = {}
     sx_bet.ORDERS_CACHE["expires_at"] = 0.0
     sx_bet.ORDERS_CACHE["entries"] = {}
     sx_bet.LEAGUES_CACHE["expires_at"] = 0.0
     sx_bet.LEAGUES_CACHE["entries"] = {}
+    if getattr(sx_bet, "REALTIME_MANAGER", None) is not None:
+        sx_bet.stop_realtime(timeout_seconds=0.1)
+    sx_bet.REALTIME_MANAGER = None
 
     bookmaker_xyz.disable_scan_cache()
     bookmaker_xyz.CONDITIONS_CACHE["expires_at"] = 0.0
@@ -328,8 +333,8 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
                             "team_1": {"value": HOME_TEAM},
                             "team_2": {"value": AWAY_TEAM},
                             "events": [
-                                {"event_name_value": "0_ml_1", "value": 2.25, "status": 1},
-                                {"event_name_value": "0_ml_2", "value": 1.70, "status": 1},
+                                {"id": "artline-event-1-ml-1", "event_name_value": "0_ml_1", "value": 2.25, "status": 1},
+                                {"id": "artline-event-1-ml-2", "event_name_value": "0_ml_2", "value": 1.70, "status": 1},
                             ],
                             "period": 0,
                             "is_live": False,
@@ -1015,8 +1020,8 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
                     "sx-h2h": {
                         "odds_one": 2.35,
                         "odds_two": 1.66,
-                        "updated_at_one": "2026-03-14T08:00:00Z",
-                        "updated_at_two": "2026-03-14T08:00:01Z",
+                        "updated_at_one": "2026-03-19T23:54:50Z",
+                        "updated_at_two": "2026-03-19T23:54:51Z",
                         "raw_percentage_one": "44000000000000000000",
                         "raw_percentage_two": "57500000000000000000",
                         "source_one": "rest_snapshot",
@@ -1036,6 +1041,7 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
 
         with (
             patch.object(sx_bet, "get_shared_client", new=_fake_shared_client),
+            patch.object(sx_bet, "_sx_best_odds_ws_enabled", return_value=False),
             patch.object(sx_bet, "_load_upcoming_fixtures_async", new=_fake_load_upcoming_fixtures_async),
             patch.object(sx_bet, "_load_best_odds_map_async", new=_fake_load_best_odds_map_async),
             patch.object(sx_bet, "_load_best_stake_map_async", new=_fake_load_best_stake_map_async),
@@ -1054,8 +1060,8 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
             self.assertEqual(outcomes[AWAY_TEAM]["price"], 1.66)
             self.assertEqual(outcomes[HOME_TEAM]["stake"], 150.0)
             self.assertEqual(outcomes[AWAY_TEAM]["stake"], 120.0)
-            self.assertEqual(outcomes[HOME_TEAM]["last_updated"], "2026-03-14T08:00:00Z")
-            self.assertEqual(outcomes[AWAY_TEAM]["last_updated"], "2026-03-14T08:00:01Z")
+            self.assertEqual(outcomes[HOME_TEAM]["last_updated"], "2026-03-19T23:54:50Z")
+            self.assertEqual(outcomes[AWAY_TEAM]["last_updated"], "2026-03-19T23:54:51Z")
             self.assertEqual(outcomes[HOME_TEAM]["raw_percentage_odds"], "44000000000000000000")
             self.assertEqual(outcomes[AWAY_TEAM]["raw_percentage_odds"], "57500000000000000000")
             self.assertEqual(outcomes[HOME_TEAM]["quote_source"], "rest_snapshot")
@@ -1074,9 +1080,8 @@ class ProviderArbitragePipelineTests(unittest.TestCase):
         def _assert_sx_bet_stats(stats: dict) -> None:
             self.assertEqual(stats.get("fixture_source_used"), "summary")
             self.assertEqual(stats.get("orders_lookup_with_any_stake"), 1)
-            self.assertIn(stats.get("odds_lookup_requested"), {0, 1})
-            if stats.get("odds_lookup_requested") == 0:
-                self.assertEqual(stats.get("realtime_odds_hits"), 1)
+            self.assertEqual(stats.get("odds_lookup_requested"), 1)
+            self.assertEqual(stats.get("realtime_odds_hits"), 0)
 
         self._assert_arbitrage_result(
             result,

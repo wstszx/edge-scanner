@@ -701,10 +701,13 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
             captured_requests.append(request_tag)
             if request_tag == "bad-tag":
                 raise polymarket.ProviderError("bad tag", status_code=500)
-            return ([_sample_event(f"game-{request_tag}")], 0)
+            event = _sample_event(f"game-{request_tag}")
+            event["id"] = f"evt-{request_tag}"
+            return ([event], 0)
 
         with (
             patch.object(polymarket, "POLYMARKET_EVENTS_CACHE_TTL_RAW", "12"),
+            patch.object(polymarket, "POLYMARKET_GAME_TAG_ID", "game-tag"),
             patch.object(polymarket, "_request_json_async", side_effect=_fake_request_json_async),
         ):
             events, meta = await polymarket._load_active_game_events_async(
@@ -716,11 +719,13 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
                 tag_ids=["bad-tag", "good-tag"],
             )
 
-        self.assertEqual(captured_requests, ["bad-tag", "bad-tag", "bad-tag", "bad-tag", "good-tag"])
-        self.assertEqual([event.get("slug") for event in events], ["game-good-tag"])
+        self.assertEqual(captured_requests, ["bad-tag", "bad-tag", "bad-tag", "bad-tag", "good-tag", "game-tag"])
+        self.assertEqual([event.get("slug") for event in events], ["game-good-tag", "game-game-tag"])
         self.assertEqual(meta.get("tag_query_count"), 2)
         self.assertEqual(meta.get("tag_query_errors"), 1)
         self.assertEqual(meta.get("tag_query_fallback_count"), 1)
+        self.assertEqual(meta.get("game_tag_backfill_count"), 1)
+        self.assertTrue(meta.get("partial_tag_query"))
 
     async def test_load_active_game_events_async_retries_tradeable_fallback_when_filtered_tag_query_500(self) -> None:
         captured_params = []
@@ -757,6 +762,45 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(meta.get("tag_query_errors"), 0)
         self.assertEqual(meta.get("tag_query_fallback_count"), 1)
 
+    async def test_load_active_game_events_async_backfills_game_tag_when_requested_tag_query_is_partial(self) -> None:
+        captured_tags = []
+
+        async def _fake_request_json_async(client, path, params=None, retries=0, backoff_seconds=0.0):
+            request_tag = str((params or {}).get("tag_id") or "")
+            captured_tags.append(request_tag)
+            if request_tag == "tennis-tag":
+                raise polymarket.ProviderError("temporary tag failure", status_code=503)
+            if request_tag == "wta-tag":
+                outright = _sample_event("wta-outright")
+                outright["id"] = "evt-outright"
+                outright["title"] = "2026 Women's US Open Winner"
+                outright["markets"] = []
+                return ([outright], 0)
+            game = _sample_event("game-tag-match")
+            game["id"] = "evt-game"
+            return ([game], 0)
+
+        with (
+            patch.object(polymarket, "POLYMARKET_EVENTS_CACHE_TTL_RAW", "12"),
+            patch.object(polymarket, "POLYMARKET_GAME_TAG_ID", "game-tag"),
+            patch.object(polymarket, "_request_json_async", side_effect=_fake_request_json_async),
+        ):
+            events, meta = await polymarket._load_active_game_events_async(
+                client=object(),
+                retries=0,
+                backoff_seconds=0.0,
+                page_size=200,
+                max_pages=8,
+                tag_ids=["tennis-tag", "wta-tag"],
+            )
+
+        self.assertEqual(captured_tags, ["tennis-tag", "wta-tag", "game-tag"])
+        self.assertEqual([event.get("slug") for event in events], ["wta-outright", "game-tag-match"])
+        self.assertEqual(meta.get("tag_query_count"), 2)
+        self.assertEqual(meta.get("tag_query_errors"), 1)
+        self.assertEqual(meta.get("game_tag_backfill_count"), 1)
+        self.assertTrue(meta.get("partial_tag_query"))
+
     async def test_fetch_events_async_uses_sport_specific_tag_query_without_global_prefetch(self) -> None:
         requested_tag_ids = []
 
@@ -780,6 +824,89 @@ class PolymarketFetchRealtimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(requested_tag_ids, [["745"]])
+
+    async def test_fetch_events_async_records_structured_provider_error_stats(self) -> None:
+        with (
+            patch.object(polymarket, "_websocket_realtime_enabled", return_value=False),
+            patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={"tennis": {"864"}})),
+            patch.object(
+                polymarket,
+                "_load_active_game_events_async",
+                new=AsyncMock(side_effect=polymarket.ProviderError("HTTP 403 Forbidden", status_code=403)),
+            ),
+            patch.object(polymarket, "get_shared_client", new=AsyncMock(return_value=object())),
+        ):
+            with self.assertRaises(polymarket.ProviderError):
+                await polymarket.fetch_events_async(
+                    "tennis_wta",
+                    ["h2h"],
+                    ["us"],
+                    bookmakers=["polymarket"],
+                )
+
+        stats = polymarket.fetch_events_async.last_stats
+        self.assertEqual(stats.get("provider_error_code"), "auth_or_access_denied")
+        self.assertEqual(stats.get("provider_error_status_code"), 403)
+        self.assertIn("403", stats.get("provider_error_message") or "")
+
+    async def test_fetch_events_async_records_market_gap_diagnostics(self) -> None:
+        event = _sample_event("unsupported-market")
+        event["markets"] = [
+            {
+                "question": "Will Team C win?",
+                "outcomes": '["Yes", "No"]',
+                "outcomePrices": '["0.2", "0.8"]',
+                "clobTokenIds": '["other-a", "other-b"]',
+                "active": True,
+                "closed": False,
+                "archived": False,
+                "acceptingOrders": True,
+            }
+        ]
+
+        with (
+            patch.object(polymarket, "_websocket_realtime_enabled", return_value=False),
+            patch.object(polymarket, "_load_sport_tag_mapping_async", new=AsyncMock(return_value={"nba": {"999"}})),
+            patch.object(
+                polymarket,
+                "_load_active_game_events_async",
+                new=AsyncMock(
+                    return_value=(
+                        [event],
+                        {
+                            "cache": "miss",
+                            "pages_fetched": 1,
+                            "retries_used": 0,
+                            "tag_query_count": 1,
+                            "tag_query_errors": 0,
+                            "tag_query_fallback_count": 0,
+                            "game_tag_backfill_count": 0,
+                            "partial_tag_query": False,
+                        },
+                    )
+                ),
+            ),
+            patch.object(polymarket, "_load_clob_quote_map_async", new=AsyncMock(return_value=({}, {}))),
+        ):
+            events = await polymarket.fetch_events_async(
+                "basketball_nba",
+                ["h2h"],
+                ["us"],
+                bookmakers=["polymarket"],
+            )
+
+        self.assertEqual(events, [])
+        stats = polymarket.fetch_events_async.last_stats
+        self.assertEqual(stats.get("tag_query_count"), 1)
+        self.assertEqual(stats.get("events_matchup_count"), 1)
+        self.assertEqual(stats.get("events_without_supported_market_count"), 1)
+        self.assertEqual(stats.get("events_with_match_clob_tokens_count"), 0)
+        self.assertEqual(stats.get("matched_clob_token_count"), 0)
+        sample = stats.get("sample_unmatched_market_questions") or []
+        self.assertEqual(sample[0]["event_id"], "evt-1")
+        self.assertEqual(sample[0]["home_team"], "Team A")
+        self.assertEqual(sample[0]["away_team"], "Team B")
+        self.assertEqual(sample[0]["market_questions"], ["Will Team C win?"])
 
     async def test_fetch_events_async_prefers_realtime_quotes_before_rest(self) -> None:
         manager = _FakeRealtimeManager(

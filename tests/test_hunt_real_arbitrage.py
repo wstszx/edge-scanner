@@ -135,6 +135,12 @@ def test_scan_once_keeps_top_arbitrage_even_when_not_candidate(monkeypatch) -> N
             "middles": {"opportunities": [], "summary": {}},
             "plus_ev": {"opportunities": [], "summary": {}},
             "scan_diagnostics": {},
+            "cross_provider_match_report_path": "data/provider_snapshots/cross_provider_match_report.json",
+            "cross_provider_match_report_summary": {
+                "overlap_clusters": 1,
+                "single_provider_reason_counts": {"no_close_candidate": 2},
+            },
+            "provider_snapshot_paths": {"artline": "data/provider_snapshots/artline.json"},
             "custom_providers": {},
             "sport_errors": [],
         }
@@ -155,6 +161,9 @@ def test_scan_once_keeps_top_arbitrage_even_when_not_candidate(monkeypatch) -> N
     assert row["arbitrage_count"] == 1
     assert row["positive_candidates"] == 0
     assert row["top_arbitrage"][0]["roi_percent"] == -1.5
+    assert row["cross_provider_match_report_path"].endswith("cross_provider_match_report.json")
+    assert row["cross_provider_match_report_summary"]["overlap_clusters"] == 1
+    assert row["provider_snapshot_paths"] == {"artline": "data/provider_snapshots/artline.json"}
 
 
 def test_compact_arb_surfaces_provider_execution_ids() -> None:
@@ -173,25 +182,26 @@ def test_compact_arb_surfaces_provider_execution_ids() -> None:
             },
             {
                 "outcome": "Away",
-                "bookmaker": "Polymarket",
-                "bookmaker_key": "polymarket",
+                "bookmaker": "Artline",
+                "bookmaker_key": "artline",
                 "price": 1.85,
                 "effective_price": 1.84,
                 "fee_rate": 0.03,
-                "token_id": "poly-token-away",
-                "asset_id": "poly-token-away",
-                "outcome_index": 1,
+                "book_event_id": "385791953713647",
+                "book_event_url": "https://artline.bet/bookmaker/match/prematch/tennis/385791953713647",
+                "selection_id": "3857919537136470064",
+                "provider_event_name": "0_ml_2",
             },
         ],
     }
 
-    compact = hunt_real_arbitrage._compact_arb(item, "basketball_nba", ["sx_bet", "polymarket"], False)
+    compact = hunt_real_arbitrage._compact_arb(item, "basketball_nba", ["sx_bet", "artline"], False)
 
     assert compact["books"][0]["market_hash"] == "0xsxhash"
     assert compact["books"][0]["outcome_index"] == 0
-    assert compact["books"][1]["token_id"] == "poly-token-away"
-    assert compact["books"][1]["asset_id"] == "poly-token-away"
-    assert compact["books"][1]["outcome_index"] == 1
+    assert compact["books"][1]["book_event_id"] == "385791953713647"
+    assert compact["books"][1]["selection_id"] == "3857919537136470064"
+    assert compact["books"][1]["provider_event_name"] == "0_ml_2"
     assert compact["books"][1]["fee_rate"] == 0.03
 
 

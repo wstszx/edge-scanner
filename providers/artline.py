@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime as dt
+import json
 import os
 import re
+import shutil
+import sqlite3
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 import httpx
@@ -22,6 +32,7 @@ ARTLINE_RETRIES_RAW = os.getenv("ARTLINE_RETRIES", "2").strip()
 ARTLINE_RETRY_BACKOFF_RAW = os.getenv("ARTLINE_RETRY_BACKOFF", "0.5").strip()
 ARTLINE_DETAIL_MAX_CONCURRENCY_RAW = os.getenv("ARTLINE_DETAIL_MAX_CONCURRENCY", "8").strip()
 ARTLINE_MIN_BET_RAW = os.getenv("ARTLINE_MIN_BET", "5").strip()
+ARTLINE_CURRENCY_TYPE = os.getenv("ARTLINE_CURRENCY_TYPE", "balance").strip() or "balance"
 ARTLINE_USER_AGENT = os.getenv(
     "ARTLINE_USER_AGENT",
     (
@@ -135,6 +146,18 @@ def _bool_or_none(value: object) -> Optional[bool]:
     return None
 
 
+def _selection_id(event: object) -> str:
+    if not isinstance(event, dict):
+        return ""
+    return _normalize_text(
+        event.get("id")
+        or event.get("event_id")
+        or event.get("eventId")
+        or event.get("selection_id")
+        or event.get("selectionId")
+    )
+
+
 def _api_base() -> str:
     base = _normalize_text(ARTLINE_API_BASE) or "https://api.artline.bet/api"
     if not re.match(r"^https?://", base, flags=re.IGNORECASE):
@@ -143,6 +166,11 @@ def _api_base() -> str:
     if not base.endswith("/api"):
         base = f"{base}/api"
     return base
+
+
+def _api_origin() -> str:
+    base = _api_base()
+    return re.sub(r"/api$", "", base)
 
 
 def _detail_max_concurrency() -> int:
@@ -161,6 +189,371 @@ def _headers() -> Dict[str, str]:
     if ARTLINE_USER_AGENT:
         headers["User-Agent"] = ARTLINE_USER_AGENT
     return headers
+
+
+def _web_headers(*, cookie: str, csrf_token: str = "", referer: str = "") -> Dict[str, str]:
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Origin": _public_base(),
+        "Referer": referer or f"{_public_base()}/",
+    }
+    headers.update(_headers())
+    if cookie:
+        headers["Cookie"] = cookie
+    if csrf_token:
+        headers["X-XSRF-TOKEN"] = csrf_token
+    return headers
+
+
+def _truthy(value: object) -> bool:
+    token = _normalize_text(value).lower()
+    return token in {"1", "true", "yes", "y", "on"}
+
+
+def _safe_cookie_name(name: str) -> str:
+    normalized = _normalize_text(name)
+    if normalized in {"XSRF-TOKEN", "apiato", "laravel_session"}:
+        return normalized
+    if len(normalized) >= 32 and re.fullmatch(r"[A-Za-z0-9_-]+", normalized):
+        return "session_cookie"
+    return "other_cookie"
+
+
+def _cookie_names_from_header(cookie_header: str) -> List[str]:
+    names: List[str] = []
+    seen: set[str] = set()
+    for part in _normalize_text(cookie_header).split(";"):
+        if "=" not in part:
+            continue
+        name = _safe_cookie_name(part.split("=", 1)[0].strip())
+        if name and name not in seen:
+            names.append(name)
+            seen.add(name)
+    return names
+
+
+def _cookie_header_from_mapping(cookies: object) -> str:
+    if not isinstance(cookies, dict):
+        try:
+            cookies = dict(cookies)
+        except Exception:
+            return ""
+    parts: List[str] = []
+    for name, value in cookies.items():
+        name_text = _normalize_text(name)
+        value_text = _normalize_text(value)
+        if name_text and value_text:
+            parts.append(f"{name_text}={value_text}")
+    return "; ".join(parts)
+
+
+def _csrf_token_from_cookie_header(cookie_header: str) -> str:
+    for part in _normalize_text(cookie_header).split(";"):
+        if "=" not in part:
+            continue
+        name, value = part.split("=", 1)
+        if name.strip().upper() == "XSRF-TOKEN":
+            return urllib.parse.unquote(value.strip())
+    return ""
+
+
+def _bootstrap_artline_csrf(client: httpx.Client) -> dict:
+    try:
+        response = client.get(
+            f"{_api_origin()}/sanctum/csrf-cookie",
+            headers=_web_headers(cookie="", referer=f"{_public_base()}/"),
+        )
+    except httpx.HTTPError as exc:
+        return {"cookie_header": "", "source": "csrf_bootstrap", "error": str(exc)}
+    cookie_header = _cookie_header_from_mapping(getattr(client, "cookies", {}))
+    return {
+        "cookie_header": cookie_header,
+        "source": "csrf_bootstrap",
+        "cookie_names": _cookie_names_from_header(cookie_header),
+        "http_status": response.status_code,
+    }
+
+
+def _chrome_epoch_now() -> int:
+    return int((time.time() + 11644473600) * 1_000_000)
+
+
+def _browser_cookie_roots() -> List[tuple[str, Path]]:
+    custom = _normalize_text(os.getenv("ARTLINE_BROWSER_PROFILE_DIRS", ""))
+    if custom:
+        rows: List[tuple[str, Path]] = []
+        for idx, raw_path in enumerate(re.split(r"[;\n]", custom), start=1):
+            path = Path(raw_path.strip().strip('"'))
+            if path:
+                rows.append((f"custom{idx}", path))
+        return rows
+
+    local = _normalize_text(os.getenv("LOCALAPPDATA", ""))
+    if not local:
+        return []
+    base = Path(local)
+    return [
+        ("chrome", base / "Google" / "Chrome" / "User Data"),
+        ("edge", base / "Microsoft" / "Edge" / "User Data"),
+        ("brave", base / "BraveSoftware" / "Brave-Browser" / "User Data"),
+    ]
+
+
+def _candidate_chromium_cookie_dbs() -> List[tuple[str, Path, Path]]:
+    candidates: List[tuple[str, Path, Path]] = []
+    for browser, root in _browser_cookie_roots():
+        if not root.exists():
+            continue
+        profile_dirs = [root] if (root / "Network" / "Cookies").exists() else []
+        profile_dirs.extend(
+            path
+            for path in root.iterdir()
+            if path.is_dir() and ((path / "Network" / "Cookies").exists() or (path / "Cookies").exists())
+        )
+        seen: set[Path] = set()
+        for profile_dir in profile_dirs:
+            for cookie_db in (profile_dir / "Network" / "Cookies", profile_dir / "Cookies"):
+                if not cookie_db.exists() or cookie_db in seen:
+                    continue
+                seen.add(cookie_db)
+                label = f"{browser}:{profile_dir.name}"
+                local_state = root / "Local State"
+                candidates.append((label, cookie_db, local_state))
+    return candidates
+
+
+def _chrome_debug_ports() -> List[int]:
+    ports: List[int] = []
+    custom = _normalize_text(os.getenv("ARTLINE_CHROME_DEBUG_PORTS", ""))
+    if custom:
+        for token in re.split(r"[,;\s]+", custom):
+            if not token:
+                continue
+            try:
+                ports.append(int(token))
+            except ValueError:
+                continue
+        return ports
+
+    for _, root in _browser_cookie_roots():
+        active_port = root / "DevToolsActivePort"
+        if not active_port.exists():
+            continue
+        try:
+            first_line = active_port.read_text(encoding="utf-8").splitlines()[0].strip()
+            ports.append(int(first_line))
+        except (OSError, IndexError, ValueError):
+            continue
+    return ports
+
+
+def _resolve_artline_cdp_cookie_header() -> dict:
+    errors: List[str] = []
+    for port in _chrome_debug_ports():
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/json/version",
+                timeout=2,
+            ) as response:
+                version_payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            errors.append(f"chrome-cdp:{port}:HTTPError:{exc.code}")
+            continue
+        except Exception as exc:
+            errors.append(f"chrome-cdp:{port}:{type(exc).__name__}")
+            continue
+        websocket_url = _normalize_text(version_payload.get("webSocketDebuggerUrl"))
+        if not websocket_url:
+            errors.append(f"chrome-cdp:{port}:missing_websocket_url")
+            continue
+        try:
+            from websockets.sync.client import connect
+
+            with connect(websocket_url, open_timeout=2, close_timeout=1) as websocket:
+                request = {
+                    "id": 1,
+                    "method": "Network.getCookies",
+                    "params": {"urls": [_public_base(), "https://api.artline.bet"]},
+                }
+                websocket.send(json.dumps(request, separators=(",", ":")))
+                while True:
+                    payload = json.loads(websocket.recv(timeout=2))
+                    if payload.get("id") != 1:
+                        continue
+                    if payload.get("error"):
+                        errors.append(f"chrome-cdp:{port}:protocol_error")
+                        break
+                    cookies = payload.get("result", {}).get("cookies") or []
+                    parts: List[str] = []
+                    names: List[str] = []
+                    seen: set[str] = set()
+                    for cookie in cookies:
+                        if not isinstance(cookie, dict):
+                            continue
+                        domain = _normalize_text(cookie.get("domain")).lstrip(".").lower()
+                        if not domain.endswith("artline.bet"):
+                            continue
+                        name = _normalize_text(cookie.get("name"))
+                        value = _normalize_text(cookie.get("value"))
+                        if not (name and value):
+                            continue
+                        parts.append(f"{name}={value}")
+                        safe_name = _safe_cookie_name(name)
+                        if safe_name not in seen:
+                            names.append(safe_name)
+                            seen.add(safe_name)
+                    if parts:
+                        return {
+                            "cookie_header": "; ".join(parts),
+                            "source": f"chrome-cdp:{port}",
+                            "cookie_names": names,
+                            "errors": errors,
+                        }
+                    errors.append(f"chrome-cdp:{port}:no_artline_cookies")
+                    break
+        except Exception as exc:
+            errors.append(f"chrome-cdp:{port}:{type(exc).__name__}")
+            continue
+    return {"cookie_header": "", "source": None, "cookie_names": [], "errors": errors}
+
+
+def _dpapi_decrypt(ciphertext: bytes) -> Optional[bytes]:
+    if not ciphertext:
+        return None
+    try:
+        import win32crypt  # type: ignore
+
+        value = win32crypt.CryptUnprotectData(ciphertext, None, None, None, 0)[1]
+        return bytes(value) if value is not None else None
+    except Exception:
+        return None
+
+
+def _chromium_master_key(local_state_path: Path) -> Optional[bytes]:
+    try:
+        local_state = json.loads(local_state_path.read_text(encoding="utf-8"))
+        encrypted_key = local_state.get("os_crypt", {}).get("encrypted_key")
+    except Exception:
+        return None
+    if not encrypted_key:
+        return None
+    try:
+        raw = base64.b64decode(encrypted_key)
+    except Exception:
+        return None
+    if raw.startswith(b"DPAPI"):
+        raw = raw[5:]
+    return _dpapi_decrypt(raw)
+
+
+def _decrypt_chromium_cookie(encrypted_value: bytes, master_key: Optional[bytes]) -> str:
+    if not encrypted_value:
+        return ""
+    if encrypted_value.startswith((b"v10", b"v11")):
+        if not master_key:
+            return ""
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+            nonce = encrypted_value[3:15]
+            ciphertext = encrypted_value[15:]
+            return AESGCM(master_key).decrypt(nonce, ciphertext, None).decode("utf-8")
+        except Exception:
+            return ""
+    decrypted = _dpapi_decrypt(encrypted_value)
+    if not decrypted:
+        return ""
+    try:
+        return decrypted.decode("utf-8")
+    except UnicodeDecodeError:
+        return ""
+
+
+def _read_artline_cookies_from_db(
+    *,
+    cookie_db: Path,
+    local_state: Path,
+) -> tuple[List[tuple[str, str]], List[str]]:
+    rows: List[tuple[str, str]] = []
+    errors: List[str] = []
+    tmp_path: Optional[Path] = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sqlite") as handle:
+            tmp_path = Path(handle.name)
+        try:
+            shutil.copy2(cookie_db, tmp_path)
+        except OSError as exc:
+            reason = "cookie_db_locked" if getattr(exc, "winerror", None) == 32 else type(exc).__name__
+            return [], [reason]
+
+        master_key = _chromium_master_key(local_state)
+        now = _chrome_epoch_now()
+        with sqlite3.connect(str(tmp_path)) as connection:
+            connection.row_factory = sqlite3.Row
+            cookie_rows = connection.execute(
+                """
+                SELECT host_key, name, value, encrypted_value, expires_utc
+                FROM cookies
+                WHERE host_key LIKE ?
+                ORDER BY host_key, name
+                """,
+                ("%artline.bet%",),
+            ).fetchall()
+        for cookie_row in cookie_rows:
+            expires_utc = int(cookie_row["expires_utc"] or 0)
+            if expires_utc and expires_utc < now:
+                continue
+            name = _normalize_text(cookie_row["name"])
+            if not name:
+                continue
+            value = _normalize_text(cookie_row["value"])
+            if not value:
+                value = _decrypt_chromium_cookie(bytes(cookie_row["encrypted_value"] or b""), master_key)
+            if value:
+                rows.append((name, value))
+    except sqlite3.Error as exc:
+        errors.append(type(exc).__name__)
+    finally:
+        if tmp_path:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return rows, errors
+
+
+def resolve_artline_browser_cookie_header() -> dict:
+    errors: List[str] = []
+    seen_names: set[str] = set()
+    cdp_probe = _resolve_artline_cdp_cookie_header()
+    cdp_errors = cdp_probe.get("errors") or []
+    errors.extend(str(error) for error in cdp_errors)
+    if cdp_probe.get("cookie_header"):
+        return cdp_probe
+    for label, cookie_db, local_state in _candidate_chromium_cookie_dbs():
+        rows, row_errors = _read_artline_cookies_from_db(cookie_db=cookie_db, local_state=local_state)
+        errors.extend(f"{label}:{error}" for error in row_errors)
+        if not rows:
+            continue
+        cookie_parts: List[str] = []
+        names: List[str] = []
+        for name, value in rows:
+            safe_name = _safe_cookie_name(name)
+            if safe_name not in seen_names:
+                names.append(safe_name)
+                seen_names.add(safe_name)
+            cookie_parts.append(f"{name}={value}")
+        if cookie_parts:
+            return {
+                "cookie_header": "; ".join(cookie_parts),
+                "source": label,
+                "cookie_names": names,
+                "errors": errors,
+            }
+    if not errors:
+        errors.append("no_artline_cookies")
+    return {"cookie_header": "", "source": None, "cookie_names": [], "errors": errors}
 
 
 def _supports_sport(sport_key: str) -> bool:
@@ -301,24 +694,71 @@ def _decorate_markets_for_execution(markets: List[dict], diagnostics: dict, obse
                 outcome.setdefault("max_stake", round(float(max_bet), 6))
 
 
-def _outcome_row(name: str, price: float) -> dict:
-    return {"name": name, "price": round(float(price), 6)}
+def _with_betslip_fields(
+    row: dict,
+    *,
+    selection_id: object = None,
+    provider_event_name: object = None,
+) -> dict:
+    selection_text = _normalize_text(selection_id)
+    event_name_text = _normalize_text(provider_event_name)
+    if selection_text:
+        row["selection_id"] = selection_text
+    if selection_text and event_name_text:
+        row["provider_event_name"] = event_name_text
+    return row
 
 
-def _spread_outcome_row(name: str, price: float, point: float) -> dict:
-    return {
-        "name": name,
-        "price": round(float(price), 6),
-        "point": round(float(point), 6),
-    }
+def _outcome_row(
+    name: str,
+    price: float,
+    *,
+    selection_id: object = None,
+    provider_event_name: object = None,
+) -> dict:
+    return _with_betslip_fields(
+        {"name": name, "price": round(float(price), 6)},
+        selection_id=selection_id,
+        provider_event_name=provider_event_name,
+    )
 
 
-def _total_outcome_row(name: str, price: float, point: float) -> dict:
-    return {
-        "name": name,
-        "price": round(float(price), 6),
-        "point": round(float(point), 6),
-    }
+def _spread_outcome_row(
+    name: str,
+    price: float,
+    point: float,
+    *,
+    selection_id: object = None,
+    provider_event_name: object = None,
+) -> dict:
+    return _with_betslip_fields(
+        {
+            "name": name,
+            "price": round(float(price), 6),
+            "point": round(float(point), 6),
+        },
+        selection_id=selection_id,
+        provider_event_name=provider_event_name,
+    )
+
+
+def _total_outcome_row(
+    name: str,
+    price: float,
+    point: float,
+    *,
+    selection_id: object = None,
+    provider_event_name: object = None,
+) -> dict:
+    return _with_betslip_fields(
+        {
+            "name": name,
+            "price": round(float(price), 6),
+            "point": round(float(point), 6),
+        },
+        selection_id=selection_id,
+        provider_event_name=provider_event_name,
+    )
 
 
 def _store_best_outcome(store: Dict[str, dict], key: str, candidate: dict) -> None:
@@ -374,6 +814,36 @@ def _market_needs_detail_fetch(requested_markets: set[str], sport_key: str) -> b
     return False
 
 
+def _h2h_selection_ids_need_detail(events: object) -> bool:
+    if not isinstance(events, list):
+        return False
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if int(event.get("status", 0) or 0) != 1:
+            continue
+        event_name = _normalize_text(event.get("event_name_value"))
+        if event_name in {"0_ml_1", "0_ml_2", "1_ml_1", "1_ml_2"} and not _selection_id(event):
+            return True
+    return False
+
+
+def _needs_detail_fetch_for_games(
+    games: Sequence[object],
+    *,
+    requested_markets: set[str],
+    sport_key: str,
+) -> bool:
+    if _market_needs_detail_fetch(requested_markets, sport_key):
+        return True
+    if "h2h" not in requested_markets:
+        return False
+    return any(
+        _h2h_selection_ids_need_detail(game.get("events") if isinstance(game, dict) else None)
+        for game in games
+    )
+
+
 def _normalize_game_markets(
     events: object,
     *,
@@ -402,19 +872,65 @@ def _normalize_game_markets(
         if price is None or price <= 1:
             continue
         event_name = _normalize_text(event.get("event_name_value"))
+        betslip_selection_id = _selection_id(event)
         sport_token = _normalize_text(sport_key).lower()
         is_hockey_detail_moneyline = _sport_uses_detail_h2h(sport_token) and event_name == "1_ml_1"
         is_hockey_detail_moneyline_away = _sport_uses_detail_h2h(sport_token) and event_name == "1_ml_2"
         if event_name == "0_ml_1" or is_hockey_detail_moneyline:
-            _store_best_outcome(two_way, "home", _outcome_row(home_team, price))
+            _store_best_outcome(
+                two_way,
+                "home",
+                _outcome_row(
+                    home_team,
+                    price,
+                    selection_id=betslip_selection_id,
+                    provider_event_name=event_name,
+                ),
+            )
         elif event_name == "0_ml_2" or is_hockey_detail_moneyline_away:
-            _store_best_outcome(two_way, "away", _outcome_row(away_team, price))
+            _store_best_outcome(
+                two_way,
+                "away",
+                _outcome_row(
+                    away_team,
+                    price,
+                    selection_id=betslip_selection_id,
+                    provider_event_name=event_name,
+                ),
+            )
         elif event_name == "0_win_0":
-            _store_best_outcome(three_way, "draw", _outcome_row("Draw", price))
+            _store_best_outcome(
+                three_way,
+                "draw",
+                _outcome_row(
+                    "Draw",
+                    price,
+                    selection_id=betslip_selection_id,
+                    provider_event_name=event_name,
+                ),
+            )
         elif event_name == "0_win_1":
-            _store_best_outcome(three_way, "home", _outcome_row(home_team, price))
+            _store_best_outcome(
+                three_way,
+                "home",
+                _outcome_row(
+                    home_team,
+                    price,
+                    selection_id=betslip_selection_id,
+                    provider_event_name=event_name,
+                ),
+            )
         elif event_name == "0_win_2":
-            _store_best_outcome(three_way, "away", _outcome_row(away_team, price))
+            _store_best_outcome(
+                three_way,
+                "away",
+                _outcome_row(
+                    away_team,
+                    price,
+                    selection_id=betslip_selection_id,
+                    provider_event_name=event_name,
+                ),
+            )
         else:
             totals_match = re.match(
                 r"^0_(to|tu)-[^_]+_([0-9]+)_(-?\d+(?:\.\d+)?)$",
@@ -432,7 +948,13 @@ def _normalize_game_markets(
                     _store_best_outcome(
                         market_bucket,
                         outcome_name,
-                        _total_outcome_row(outcome_name, price, point_value),
+                        _total_outcome_row(
+                            outcome_name,
+                            price,
+                            point_value,
+                            selection_id=betslip_selection_id,
+                            provider_event_name=event_name,
+                        ),
                     )
                     continue
                 if scope_token in {"1", "2"}:
@@ -442,7 +964,13 @@ def _normalize_game_markets(
                         round(float(point_value), 6),
                         {},
                     )
-                    row = _total_outcome_row(outcome_name, price, point_value)
+                    row = _total_outcome_row(
+                        outcome_name,
+                        price,
+                        point_value,
+                        selection_id=betslip_selection_id,
+                        provider_event_name=event_name,
+                    )
                     row["description"] = team_name
                     _store_best_outcome(market_bucket, outcome_name, row)
                 continue
@@ -462,10 +990,22 @@ def _normalize_game_markets(
                 is_positive = float(point_value) > 0
                 if team_token == "1":
                     bucket_key = "home_positive" if is_positive else "home_negative"
-                    candidate = _spread_outcome_row(home_team, price, point_value)
+                    candidate = _spread_outcome_row(
+                        home_team,
+                        price,
+                        point_value,
+                        selection_id=betslip_selection_id,
+                        provider_event_name=event_name,
+                    )
                 else:
                     bucket_key = "away_positive" if is_positive else "away_negative"
-                    candidate = _spread_outcome_row(away_team, price, point_value)
+                    candidate = _spread_outcome_row(
+                        away_team,
+                        price,
+                        point_value,
+                        selection_id=betslip_selection_id,
+                        provider_event_name=event_name,
+                    )
                 _store_best_outcome(market_bucket, bucket_key, candidate)
 
     markets_by_sig: Dict[str, dict] = {}
@@ -551,6 +1091,175 @@ def _event_url(event: object) -> str:
         is_live = _bool_or_none(live_state.get("is_live"))
     games_type = "live" if is_live else "prematch"
     return f"{_public_base()}/bookmaker/match/{games_type}/{sport_slug}/{event_id}"
+
+
+def build_web_max_bet_payload(
+    *,
+    sport: object,
+    game_id: object,
+    selection_id: object,
+    is_live: object = False,
+) -> dict:
+    sport_text = _normalize_text(sport)
+    game_text = _normalize_text(game_id)
+    selection_text = _normalize_text(selection_id)
+    event = {
+        "is_live": bool(_bool_or_none(is_live)),
+        "sport": sport_text,
+        "game_id": game_text,
+        "event_id": selection_text,
+        "sum": 0,
+    }
+    return {
+        "currency_type": ARTLINE_CURRENCY_TYPE,
+        "type": "solo",
+        "events": json.dumps([event], separators=(",", ":")),
+        "sum": 0,
+    }
+
+
+def _extract_web_max_bet(payload: object) -> Optional[float]:
+    if isinstance(payload, dict):
+        direct = _safe_float(payload.get("max_bet"))
+        if direct is not None:
+            return direct
+        data = payload.get("data")
+        if isinstance(data, dict):
+            nested = _safe_float(data.get("max_bet"))
+            if nested is not None:
+                return nested
+    return None
+
+
+def preflight_web_max_bet(
+    *,
+    sport: object,
+    game_id: object,
+    selection_id: object,
+    is_live: object = False,
+    stake: object = None,
+    event_url: object = "",
+    cookie: Optional[str] = None,
+    csrf_token: Optional[str] = None,
+) -> dict:
+    sport_text = _normalize_text(sport)
+    game_text = _normalize_text(game_id)
+    selection_text = _normalize_text(selection_id)
+    requested_stake = _safe_float(stake)
+    if not (sport_text and game_text and selection_text):
+        return {
+            "status": "not_configured",
+            "reason": "missing_betslip_identifiers",
+            "sport": sport_text or None,
+            "game_id": game_text or None,
+            "selection_id": selection_text or None,
+            "requested_stake": requested_stake,
+        }
+    resolved_cookie = _normalize_text(cookie if cookie is not None else os.getenv("ARTLINE_COOKIE", ""))
+    cookie_source = "explicit" if cookie is not None else ("env" if resolved_cookie else None)
+    browser_cookie_probe: Optional[dict] = None
+    if not resolved_cookie and cookie is None and _truthy(os.getenv("ARTLINE_AUTO_BROWSER_COOKIES", "")):
+        browser_cookie_probe = resolve_artline_browser_cookie_header()
+        resolved_cookie = _normalize_text(browser_cookie_probe.get("cookie_header"))
+        cookie_source = _normalize_text(browser_cookie_probe.get("source")) or "browser"
+    resolved_csrf = _normalize_text(
+        csrf_token
+        if csrf_token is not None
+        else (os.getenv("ARTLINE_CSRF_TOKEN", "") or os.getenv("ARTLINE_XSRF_TOKEN", ""))
+    )
+    if resolved_cookie and not resolved_csrf:
+        resolved_csrf = _csrf_token_from_cookie_header(resolved_cookie)
+    result = {
+        "status": "auth_required",
+        "reason": "missing_artline_cookie",
+        "sport": sport_text,
+        "game_id": game_text,
+        "selection_id": selection_text,
+        "requested_stake": requested_stake,
+        "cookie_source": cookie_source,
+    }
+    if browser_cookie_probe is not None:
+        result["cookie_names"] = browser_cookie_probe.get("cookie_names") or []
+        result["browser_cookie_errors"] = browser_cookie_probe.get("errors") or []
+    payload = build_web_max_bet_payload(
+        sport=sport_text,
+        game_id=game_text,
+        selection_id=selection_text,
+        is_live=is_live,
+    )
+    referer = _normalize_text(event_url) or _event_url(
+        {
+            "event_id": game_text,
+            "sport": sport_text,
+            "is_live": bool(_bool_or_none(is_live)),
+        }
+    )
+    timeout = _int_or_default(ARTLINE_TIMEOUT_RAW, 20, min_value=1)
+    url = f"{_api_base()}/bets/max-bet"
+    bootstrap_probe: Optional[dict] = None
+    try:
+        with httpx.Client(timeout=float(timeout)) as client:
+            if not resolved_cookie:
+                bootstrap_probe = _bootstrap_artline_csrf(client)
+                resolved_cookie = _normalize_text(bootstrap_probe.get("cookie_header"))
+                resolved_csrf = _csrf_token_from_cookie_header(resolved_cookie)
+                cookie_source = "csrf_bootstrap"
+                result["cookie_source"] = cookie_source
+                result["cookie_names"] = bootstrap_probe.get("cookie_names") or []
+                result["bootstrap_http_status"] = bootstrap_probe.get("http_status")
+                if not resolved_cookie:
+                    return result
+            response = client.post(
+                url,
+                json=payload,
+                headers=_web_headers(cookie=resolved_cookie, csrf_token=resolved_csrf, referer=referer),
+            )
+    except httpx.HTTPError as exc:
+        return {
+            **result,
+            "status": "error",
+            "reason": "network_error",
+            "error": str(exc),
+        }
+
+    status_code = response.status_code
+    try:
+        response_payload: object = response.json()
+    except ValueError:
+        response_payload = None
+
+    base = {
+        "sport": sport_text,
+        "game_id": game_text,
+        "selection_id": selection_text,
+        "requested_stake": requested_stake,
+        "http_status": status_code,
+        "cookie_source": cookie_source,
+        "cookie_names": _cookie_names_from_header(resolved_cookie),
+    }
+    if browser_cookie_probe is not None:
+        base["browser_cookie_errors"] = browser_cookie_probe.get("errors") or []
+    if bootstrap_probe is not None:
+        base["bootstrap_http_status"] = bootstrap_probe.get("http_status")
+    if status_code in {401, 403, 419}:
+        reason = "csrf_required" if status_code == 419 else "auth_required"
+        return {**base, "status": "auth_required", "reason": reason}
+    if status_code >= 400:
+        return {**base, "status": "error", "reason": "http_error"}
+
+    max_bet = _extract_web_max_bet(response_payload)
+    if max_bet is None:
+        return {**base, "status": "error", "reason": "missing_max_bet"}
+    min_bet = _artline_min_bet()
+    executable = bool(max_bet >= min_bet and (requested_stake is None or max_bet + 1e-9 >= requested_stake))
+    return {
+        **base,
+        "status": "verified" if executable else "limited",
+        "reason": None if executable else "max_bet_below_requested_stake",
+        "max_bet": round(float(max_bet), 6),
+        "min_bet": round(float(min_bet), 6),
+        "executable": executable,
+    }
 
 
 def _set_last_stats(stats: dict) -> None:
@@ -700,7 +1409,11 @@ async def fetch_events_async(
             stats['live_all_total_games'] = sum(live_all_sports_available.values())
 
     detailed_events_by_id: Dict[str, List[dict]] = {}
-    if games and _market_needs_detail_fetch(requested_markets, sport_token):
+    if games and _needs_detail_fetch_for_games(
+        games,
+        requested_markets=requested_markets,
+        sport_key=sport_token,
+    ):
         semaphore = asyncio.Semaphore(_detail_max_concurrency())
 
         async def _detail_job(game: dict) -> tuple[str, Optional[List[dict]], Optional[str]]:

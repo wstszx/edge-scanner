@@ -1107,6 +1107,8 @@ class ScannerRegressionTests(unittest.TestCase):
                 {
                     "key": "artline",
                     "title": "Artline",
+                    "event_id": "385763185818357",
+                    "event_url": "https://artline.bet/bookmaker/match/prematch/basketball/385763185818357",
                     "execution_diagnostics": {
                         "artline_max_bet": 0.01,
                         "artline_min_bet": 5.0,
@@ -1117,7 +1119,12 @@ class ScannerRegressionTests(unittest.TestCase):
                         {
                             "key": "h2h",
                             "outcomes": [
-                                {"name": "Home Team", "price": 2.4},
+                                {
+                                    "name": "Home Team",
+                                    "price": 2.4,
+                                    "selection_id": "3857631858183570063",
+                                    "provider_event_name": "0_ml_1",
+                                },
                                 {"name": "Away Team", "price": 1.6},
                             ],
                         }
@@ -1159,6 +1166,9 @@ class ScannerRegressionTests(unittest.TestCase):
                 "reason": "max_bet_below_min_bet",
             },
         )
+        self.assertEqual(artline_leg.get("book_event_id"), "385763185818357")
+        self.assertEqual(artline_leg.get("selection_id"), "3857631858183570063")
+        self.assertEqual(artline_leg.get("provider_event_name"), "0_ml_1")
 
     def test_collect_market_entries_surfaces_observed_at_as_quote_time_for_snapshot_sources(self) -> None:
         game = {

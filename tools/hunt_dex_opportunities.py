@@ -19,11 +19,23 @@ if str(ROOT_DIR) not in sys.path:
 
 from tools import hunt_real_arbitrage as hunt
 
+try:
+    from providers import artline as artline_provider
+except Exception:  # pragma: no cover - optional during standalone script use
+    artline_provider = None
+
 
 DEFAULT_MIN_EXECUTABLE_STAKE = 25.0
 AUTO_EXECUTION_ADAPTER_PROVIDERS = {"polymarket", "sx_bet"}
 MANUAL_EXECUTION_ADAPTER_PROVIDERS = {"artline"}
 EXECUTION_ADAPTER_PROVIDERS = AUTO_EXECUTION_ADAPTER_PROVIDERS | MANUAL_EXECUTION_ADAPTER_PROVIDERS
+PAPER_TRADE_SOFT_BLOCKERS = {
+    "artline_max_bet_below_min_bet",
+    "artline_not_executable",
+    "execution_quality_not_high",
+    "limited_by_liquidity",
+    "wallet_not_ready",
+}
 EXECUTION_READY_ENV_BY_PROVIDER = {
     "polymarket": ("POLYMARKET_API_KEY",),
     "sx_bet": ("SX_BET_API_KEY",),
@@ -205,6 +217,8 @@ def _bookmaker_key(value: object) -> str:
     aliases = {
         "bookmaker.xyz": "bookmaker_xyz",
         "bookmaker xyz": "bookmaker_xyz",
+        "artlinebet": "artline",
+        "artline bet": "artline",
         "polymarket": "polymarket",
         "sx bet": "sx_bet",
         "sxbet": "sx_bet",
@@ -248,10 +262,17 @@ def _middle_key(item: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _sport_family_key(sport: object) -> str:
+    text = str(sport or "").strip().lower()
+    if text in {"tennis_atp", "tennis_wta"}:
+        return "tennis"
+    return text
+
+
 def _arb_key(item: dict[str, Any]) -> tuple[Any, ...]:
     books = item.get("books") if isinstance(item.get("books"), list) else []
     return (
-        item.get("sport"),
+        _sport_family_key(item.get("sport")),
         _canonical_event_key(item.get("event")),
         item.get("market"),
         tuple(sorted(_book_signature(book) for book in books if isinstance(book, dict))),
@@ -494,6 +515,102 @@ def _execution_identifier_blockers(bookmaker_key: str, book: dict[str, Any]) -> 
     return blockers
 
 
+def _artline_sport_slug(book: dict[str, Any]) -> str:
+    url = str(book.get("book_event_url") or "").strip()
+    match = re.search(r"/bookmaker/match/(?:prematch|live)/([^/?#]+)/", url)
+    if match:
+        return match.group(1)
+    sport = str(book.get("sport") or "").strip().lower()
+    if sport.startswith("tennis"):
+        return "tennis"
+    if sport.startswith("icehockey"):
+        return "hockey"
+    if sport.startswith("soccer"):
+        return "football"
+    if sport.startswith("basketball"):
+        return "basketball"
+    if sport.startswith("baseball"):
+        return "baseball"
+    return sport.replace("_", "-")
+
+
+def _artline_web_max_bet_preflight(book: dict[str, Any], *, stake: float | None) -> dict[str, Any] | None:
+    if artline_provider is None:
+        return None
+    selection_id = book.get("selection_id") or book.get("selectionId")
+    game_id = book.get("book_event_id") or book.get("event_id") or book.get("eventId")
+    if not game_id:
+        url = str(book.get("book_event_url") or "").strip()
+        match = re.search(r"/([^/?#]+)(?:[?#].*)?$", url)
+        if match:
+            game_id = match.group(1)
+    sport_slug = _artline_sport_slug(book)
+    live_state = book.get("live_state") if isinstance(book.get("live_state"), dict) else {}
+    is_live = bool(live_state.get("is_live")) if isinstance(live_state, dict) else False
+    return artline_provider.preflight_web_max_bet(
+        sport=sport_slug,
+        game_id=game_id,
+        selection_id=selection_id,
+        is_live=is_live,
+        stake=stake,
+        event_url=book.get("book_event_url"),
+    )
+
+
+def _paper_trade_preflight(
+    *,
+    submit_blockers: Sequence[str],
+    legs: Sequence[dict[str, Any]],
+    positive_metric: bool,
+) -> dict[str, Any]:
+    manual_web_required = any(
+        isinstance(leg.get("draft_order"), dict)
+        and (
+            leg["draft_order"].get("adapter") in {"manual_artline"}
+            or leg["draft_order"].get("order_type") == "manual_web"
+        )
+        for leg in legs
+        if isinstance(leg, dict)
+    )
+    missing_draft_orders = [
+        str(leg.get("bookmaker_key") or leg.get("bookmaker") or "unknown")
+        for leg in legs
+        if isinstance(leg, dict) and not isinstance(leg.get("draft_order"), dict)
+    ]
+    liquidity_blocked_legs = [
+        leg
+        for leg in legs
+        if isinstance(leg, dict)
+        and "missing_liquidity" in {str(blocker) for blocker in leg.get("blockers") or []}
+    ]
+    missing_liquidity_is_manual_only = bool(liquidity_blocked_legs) and all(
+        isinstance(leg.get("draft_order"), dict)
+        and (
+            leg["draft_order"].get("adapter") in {"manual_artline"}
+            or leg["draft_order"].get("order_type") == "manual_web"
+        )
+        for leg in liquidity_blocked_legs
+    )
+    hard_blockers = []
+    for blocker in submit_blockers:
+        text = str(blocker)
+        if not text or text in PAPER_TRADE_SOFT_BLOCKERS:
+            continue
+        if text == "missing_liquidity" and missing_liquidity_is_manual_only:
+            continue
+        hard_blockers.append(text)
+    if missing_draft_orders:
+        hard_blockers.append("missing_draft_order")
+    if not positive_metric:
+        hard_blockers.append("non_positive_metric")
+    hard_blockers = sorted(set(hard_blockers))
+    return {
+        "paper_trade_ready": not hard_blockers,
+        "manual_web_required": manual_web_required,
+        "paper_trade_blockers": hard_blockers,
+    }
+
+
 def _draft_order_for_leg(bookmaker_key: str, book: dict[str, Any], *, stake: float | None) -> dict[str, Any] | None:
     if stake is None or stake <= 0:
         return None
@@ -531,14 +648,19 @@ def _draft_order_for_leg(bookmaker_key: str, book: dict[str, Any], *, stake: flo
         event_url = book.get("book_event_url")
         if not event_url:
             return None
+        web_preflight = _artline_web_max_bet_preflight(book, stake=stake)
         return {
             "adapter": "manual_artline",
             "order_type": "manual_web",
             "event_url": event_url,
+            "event_id": book.get("book_event_id") or book.get("event_id") or book.get("eventId"),
+            "selection_id": book.get("selection_id") or book.get("selectionId"),
+            "provider_event_name": book.get("provider_event_name") or book.get("providerEventName"),
             "outcome": book.get("outcome"),
             "side": "buy",
             "size": round(float(stake), 2),
             "limit_odds": limit_odds,
+            "web_max_bet_preflight": web_preflight,
         }
     return None
 
@@ -618,6 +740,8 @@ def _build_execution_ticket(
                 "asset_id": book.get("asset_id"),
                 "condition_id": book.get("condition_id"),
                 "outcome_index": book.get("outcome_index"),
+                "selection_id": book.get("selection_id") or book.get("selectionId"),
+                "provider_event_name": book.get("provider_event_name") or book.get("providerEventName"),
                 "execution_supported": bookmaker_key in EXECUTION_ADAPTER_PROVIDERS,
                 "draft_order": draft_order,
                 "blockers": leg_blockers,
@@ -625,7 +749,8 @@ def _build_execution_ticket(
         )
 
     roi = hunt._safe_float(item.get("roi_percent"))
-    if roi is None or roi <= 0:
+    positive_metric = roi is not None and roi > 0
+    if not positive_metric:
         blockers.add("non_positive_roi")
     quality = item.get("execution_quality") if isinstance(item.get("execution_quality"), dict) else {}
     if str(quality.get("status") or "").strip().lower() != "high" or quality.get("flags"):
@@ -642,6 +767,11 @@ def _build_execution_ticket(
         blockers.add("wallet_not_ready")
 
     submit_blockers = sorted(blockers)
+    paper_preflight = _paper_trade_preflight(
+        submit_blockers=submit_blockers,
+        legs=legs,
+        positive_metric=positive_metric,
+    )
     slippage = max(0, int(slippage_bps))
     preflight = {
         "wallet_ready": resolved_wallet_ready,
@@ -652,11 +782,15 @@ def _build_execution_ticket(
         "slippage_bps": slippage,
         "fee_check": "present" if fee_values else "missing",
     }
+    status = "ready" if not submit_blockers else "blocked"
+    if status == "ready" and paper_preflight["manual_web_required"]:
+        status = "manual_ready"
     return {
         "source": source,
         "dry_run": True,
         "can_submit_live": False,
-        "status": "ready" if not submit_blockers else "blocked",
+        "status": status,
+        **paper_preflight,
         "event": item.get("event"),
         "sport": item.get("sport"),
         "market": item.get("market"),
@@ -733,6 +867,8 @@ def _build_middle_execution_ticket(
                 "asset_id": book.get("asset_id"),
                 "condition_id": book.get("condition_id"),
                 "outcome_index": book.get("outcome_index"),
+                "selection_id": book.get("selection_id") or book.get("selectionId"),
+                "provider_event_name": book.get("provider_event_name") or book.get("providerEventName"),
                 "execution_supported": bookmaker_key in EXECUTION_ADAPTER_PROVIDERS,
                 "draft_order": draft_order,
                 "blockers": leg_blockers,
@@ -740,7 +876,8 @@ def _build_middle_execution_ticket(
         )
 
     ev = hunt._safe_float(item.get("ev_percent"))
-    if ev is None or ev <= 0:
+    positive_metric = ev is not None and ev > 0
+    if not positive_metric:
         blockers.add("non_positive_ev")
     if bool(stake.get("limited_by_max_stake")):
         blockers.add("limited_by_liquidity")
@@ -754,13 +891,22 @@ def _build_middle_execution_ticket(
         blockers.add("wallet_not_ready")
 
     submit_blockers = sorted(blockers)
+    paper_preflight = _paper_trade_preflight(
+        submit_blockers=submit_blockers,
+        legs=legs,
+        positive_metric=positive_metric,
+    )
     slippage = max(0, int(slippage_bps))
+    status = "ready" if not submit_blockers else "blocked"
+    if status == "ready" and paper_preflight["manual_web_required"]:
+        status = "manual_ready"
     return {
         "source": source,
         "execution_type": "middle",
         "dry_run": True,
         "can_submit_live": False,
-        "status": "ready" if not submit_blockers else "blocked",
+        "status": status,
+        **paper_preflight,
         "event": item.get("event"),
         "sport": item.get("sport"),
         "market": item.get("market"),
@@ -876,6 +1022,121 @@ def _scan_diagnostic_summary(scans: Sequence[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _cross_provider_match_summary(scans: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    provider_event_counts: Counter[str] = Counter()
+    provider_cluster_presence: Counter[str] = Counter()
+    single_provider_cluster_counts: Counter[str] = Counter()
+    single_provider_reason_counts: Counter[str] = Counter()
+    pair_overlap_clusters: Counter[str] = Counter()
+    report_paths: list[str] = []
+    total_raw_records = 0
+    total_match_clusters = 0
+    overlap_clusters = 0
+    for scan in scans:
+        if not isinstance(scan, dict):
+            continue
+        path = str(scan.get("cross_provider_match_report_path") or "").strip()
+        if path and path not in report_paths:
+            report_paths.append(path)
+        summary = scan.get("cross_provider_match_report_summary")
+        if not isinstance(summary, dict):
+            continue
+        total_raw_records += int(summary.get("total_raw_records") or 0)
+        total_match_clusters += int(summary.get("total_match_clusters") or 0)
+        overlap_clusters += int(summary.get("overlap_clusters") or 0)
+        provider_event_counts.update(
+            {
+                str(key): int(value or 0)
+                for key, value in (summary.get("provider_event_counts") or {}).items()
+            }
+        )
+        provider_cluster_presence.update(
+            {
+                str(key): int(value or 0)
+                for key, value in (summary.get("provider_cluster_presence") or {}).items()
+            }
+        )
+        single_provider_cluster_counts.update(
+            {
+                str(key): int(value or 0)
+                for key, value in (summary.get("single_provider_cluster_counts") or {}).items()
+            }
+        )
+        single_provider_reason_counts.update(
+            {
+                str(key): int(value or 0)
+                for key, value in (summary.get("single_provider_reason_counts") or {}).items()
+            }
+        )
+        pair_overlap_clusters.update(
+            {
+                str(key): int(value or 0)
+                for key, value in (summary.get("pair_overlap_clusters") or {}).items()
+            }
+        )
+    return {
+        "total_raw_records": total_raw_records,
+        "total_match_clusters": total_match_clusters,
+        "overlap_clusters": overlap_clusters,
+        "provider_event_counts": dict(sorted(provider_event_counts.items())),
+        "provider_cluster_presence": dict(sorted(provider_cluster_presence.items())),
+        "single_provider_cluster_counts": dict(sorted(single_provider_cluster_counts.items())),
+        "single_provider_reason_counts": dict(sorted(single_provider_reason_counts.items())),
+        "pair_overlap_clusters": dict(sorted(pair_overlap_clusters.items())),
+        "report_paths": report_paths[:10],
+    }
+
+
+def _provider_error_label(provider: object, error_code: object, status_code: object, error: object) -> str:
+    provider_key = _bookmaker_key(provider) if provider else "unknown_provider"
+    code = str(error_code or "").strip()
+    if not code and status_code not in (None, ""):
+        code = f"http_{status_code}"
+    if not code:
+        text = str(error or "").strip()
+        code = text[:80] if text else "provider_error"
+    return f"{provider_key}:{code}"
+
+
+def _provider_error_counts(scans: Sequence[dict[str, Any]]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for scan in scans:
+        if not isinstance(scan, dict):
+            continue
+        seen: set[tuple[str, str]] = set()
+        for item in scan.get("sport_errors") or []:
+            if not isinstance(item, dict):
+                continue
+            label = _provider_error_label(
+                item.get("provider_key") or item.get("provider"),
+                item.get("error_code"),
+                item.get("status_code"),
+                item.get("error"),
+            )
+            key = (str(item.get("sport_key") or scan.get("sport") or ""), label)
+            if key not in seen:
+                seen.add(key)
+                counts[label] += 1
+        custom_providers = scan.get("custom_providers") if isinstance(scan.get("custom_providers"), dict) else {}
+        for provider_key, provider_state in custom_providers.items():
+            if not isinstance(provider_state, dict):
+                continue
+            for item in provider_state.get("sports") or []:
+                if not isinstance(item, dict) or not item.get("error"):
+                    continue
+                label = _provider_error_label(
+                    provider_key,
+                    item.get("error_code"),
+                    item.get("status_code"),
+                    item.get("error"),
+                )
+                key = (str(item.get("sport_key") or scan.get("sport") or ""), label)
+                if key not in seen:
+                    seen.add(key)
+                    counts[label] += 1
+    return dict(sorted(counts.items()))
+
+
 def _rank_count_items(counts: dict[str, Any], *, limit: int = 5) -> list[dict[str, Any]]:
     rows = [
         {"reason": str(reason), "count": int(count or 0)}
@@ -897,6 +1158,8 @@ def _opportunity_funnel_summary(
     model_only_middle_count: int,
     execution_ready_ticket_count: int,
     middle_execution_ready_ticket_count: int,
+    paper_trade_ready_ticket_count: int = 0,
+    paper_trade_manual_ticket_count: int = 0,
     blocked_reason_counts: dict[str, Any],
     execution_risk_counts: dict[str, Any],
 ) -> dict[str, Any]:
@@ -906,6 +1169,8 @@ def _opportunity_funnel_summary(
     model_only_count = int(model_only_arbitrage_count or 0) + int(model_only_middle_count or 0)
     if ready_ticket_count > 0:
         conclusion = "execution_ready_opportunity"
+    elif int(paper_trade_ready_ticket_count or 0) > 0:
+        conclusion = "paper_trade_ready_opportunity"
     elif actionable_count > 0:
         conclusion = "actionable_but_execution_blocked"
     else:
@@ -919,6 +1184,8 @@ def _opportunity_funnel_summary(
         "scans_without_cross_provider_matches": int(diagnostics.get("scans_without_cross_provider_matches") or 0),
         "actionable_count": actionable_count,
         "ready_ticket_count": ready_ticket_count,
+        "paper_trade_ready_ticket_count": int(paper_trade_ready_ticket_count or 0),
+        "paper_trade_manual_ticket_count": int(paper_trade_manual_ticket_count or 0),
         "model_only_count": model_only_count,
         "plus_ev_count": int(plus_ev_count or 0),
         "top_scan_reasons": _rank_count_items(diagnostics.get("reason_counts") or {}),
@@ -997,6 +1264,8 @@ def _render_markdown_summary(payload: dict[str, Any], *, source_json: str) -> st
         f"- execution_ready_ticket_count: {summary.get('execution_ready_ticket_count', 0)}",
         f"- middle_execution_ticket_count: {summary.get('middle_execution_ticket_count', 0)}",
         f"- middle_execution_ready_ticket_count: {summary.get('middle_execution_ready_ticket_count', 0)}",
+        f"- paper_trade_ready_ticket_count: {summary.get('paper_trade_ready_ticket_count', 0)}",
+        f"- paper_trade_manual_ticket_count: {summary.get('paper_trade_manual_ticket_count', 0)}",
         f"- actionable_middle_count: {summary.get('actionable_middle_count', 0)}",
         f"- execution_risky_middle_count: {summary.get('execution_risky_middle_count', 0)}",
         f"- model_only_middle_count: {summary.get('model_only_middle_count', 0)}",
@@ -1030,6 +1299,8 @@ def _render_markdown_summary(payload: dict[str, Any], *, source_json: str) -> st
                 f"- scans_with_cross_provider_matches: {funnel.get('scans_with_cross_provider_matches', 0)}",
                 f"- actionable_count: {funnel.get('actionable_count', 0)}",
                 f"- ready_ticket_count: {funnel.get('ready_ticket_count', 0)}",
+                f"- paper_trade_ready_ticket_count: {funnel.get('paper_trade_ready_ticket_count', 0)}",
+                f"- paper_trade_manual_ticket_count: {funnel.get('paper_trade_manual_ticket_count', 0)}",
                 f"- model_only_count: {funnel.get('model_only_count', 0)}",
             ]
         )
@@ -1044,6 +1315,59 @@ def _render_markdown_summary(payload: dict[str, Any], *, source_json: str) -> st
         lines.append("- none")
     lines.extend(
         [
+        "",
+        "## Cross-Provider Match Summary",
+        *_format_counts(
+            (summary.get("cross_provider_match_summary") or {}).get("provider_event_counts")
+            if isinstance(summary.get("cross_provider_match_summary"), dict)
+            else {}
+        ),
+        *(
+            [
+                f"- total_raw_records: {summary.get('cross_provider_match_summary', {}).get('total_raw_records', 0)}",
+                f"- total_match_clusters: {summary.get('cross_provider_match_summary', {}).get('total_match_clusters', 0)}",
+                f"- overlap_clusters: {summary.get('cross_provider_match_summary', {}).get('overlap_clusters', 0)}",
+            ]
+            if isinstance(summary.get("cross_provider_match_summary"), dict)
+            else []
+        ),
+        *(
+            [
+                f"- single_provider_reason: {item.get('reason')} x{item.get('count')}"
+                for item in _rank_count_items(
+                    summary.get("cross_provider_match_summary", {}).get("single_provider_reason_counts") or {}
+                )
+            ]
+            if isinstance(summary.get("cross_provider_match_summary"), dict)
+            else []
+        ),
+        *(
+            [
+                f"- pair_overlap: {key}: {value}"
+                for key, value in sorted(
+                    (
+                        summary.get("cross_provider_match_summary", {})
+                        .get("pair_overlap_clusters", {})
+                        .items()
+                    )
+                )
+            ]
+            if isinstance(summary.get("cross_provider_match_summary"), dict)
+            else []
+        ),
+        *(
+            [
+                f"- report_path: {path}"
+                for path in (
+                    summary.get("cross_provider_match_summary", {}).get("report_paths") or []
+                )[:3]
+            ]
+            if isinstance(summary.get("cross_provider_match_summary"), dict)
+            else []
+        ),
+        "",
+        "## Provider Error Counts",
+        *_format_counts(summary.get("provider_error_counts") or {}),
         "",
         "## Execution Risk Counts",
         *_format_counts(summary.get("execution_risk_counts") or {}),
@@ -1070,6 +1394,8 @@ def _render_markdown_summary(payload: dict[str, Any], *, source_json: str) -> st
                     str(ticket.get("event") or "-"),
                     str(ticket.get("market") or "-"),
                     f"status={ticket.get('status', '-')}",
+                    f"paper_trade_ready={ticket.get('paper_trade_ready', False)}",
+                    f"manual_web_required={ticket.get('manual_web_required', False)}",
                     f"roi={ticket.get('roi_percent', '-')}",
                     "blockers=" + (",".join(str(item) for item in blockers) if blockers else "none"),
                 ]
@@ -1090,6 +1416,8 @@ def _render_markdown_summary(payload: dict[str, Any], *, source_json: str) -> st
                     str(ticket.get("market") or "-"),
                     str(ticket.get("middle_zone") or "-"),
                     f"status={ticket.get('status', '-')}",
+                    f"paper_trade_ready={ticket.get('paper_trade_ready', False)}",
+                    f"manual_web_required={ticket.get('manual_web_required', False)}",
                     f"ev={ticket.get('ev_percent', '-')}",
                     "blockers=" + (",".join(str(item) for item in blockers) if blockers else "none"),
                 ]
@@ -1263,9 +1591,18 @@ def _build_payload(
     middle_execution_ready_ticket_count = sum(
         1 for item in middle_execution_tickets if item.get("status") == "ready"
     )
+    all_execution_tickets = [*execution_tickets, *middle_execution_tickets]
+    paper_trade_ready_ticket_count = sum(
+        1 for item in all_execution_tickets if item.get("paper_trade_ready")
+    )
+    paper_trade_manual_ticket_count = sum(
+        1 for item in all_execution_tickets if item.get("paper_trade_ready") and item.get("manual_web_required")
+    )
     blocked_reason_counts = _blocked_reason_counts([*model_only_arbitrage, *model_only_middles])
     execution_risk_counts = _execution_risk_counts(execution_risky_middles)
     scan_diagnostics_summary = _scan_diagnostic_summary(scans)
+    cross_provider_match_summary = _cross_provider_match_summary(scans)
+    provider_error_counts = _provider_error_counts(scans)
     opportunity_funnel = _opportunity_funnel_summary(
         scan_count=len(scans),
         scan_diagnostics=scan_diagnostics_summary,
@@ -1276,6 +1613,8 @@ def _build_payload(
         model_only_middle_count=len(model_only_middles),
         execution_ready_ticket_count=execution_ready_ticket_count,
         middle_execution_ready_ticket_count=middle_execution_ready_ticket_count,
+        paper_trade_ready_ticket_count=paper_trade_ready_ticket_count,
+        paper_trade_manual_ticket_count=paper_trade_manual_ticket_count,
         blocked_reason_counts=blocked_reason_counts,
         execution_risk_counts=execution_risk_counts,
     )
@@ -1290,13 +1629,17 @@ def _build_payload(
             "execution_ready_ticket_count": execution_ready_ticket_count,
             "middle_execution_ticket_count": len(middle_execution_tickets),
             "middle_execution_ready_ticket_count": middle_execution_ready_ticket_count,
+            "paper_trade_ready_ticket_count": paper_trade_ready_ticket_count,
+            "paper_trade_manual_ticket_count": paper_trade_manual_ticket_count,
             "actionable_middle_count": len(actionable_middles_list),
             "execution_risky_middle_count": len(execution_risky_middles),
             "model_only_middle_count": len(model_only_middles),
             "plus_ev_count": len(plus_ev_list),
             "blocked_reason_counts": blocked_reason_counts,
             "execution_risk_counts": execution_risk_counts,
+            "provider_error_counts": provider_error_counts,
             "scan_diagnostics": scan_diagnostics_summary,
+            "cross_provider_match_summary": cross_provider_match_summary,
             "opportunity_funnel": opportunity_funnel,
             "require_explicit_liquidity": bool(require_explicit_liquidity),
             "max_quote_skew_seconds": max_quote_skew,
@@ -1489,14 +1832,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         ready_count = int(summary.get("execution_ready_ticket_count") or 0) + int(
             summary.get("middle_execution_ready_ticket_count") or 0
         )
+        paper_ready_count = int(summary.get("paper_trade_ready_ticket_count") or 0)
         actionable_count = int(summary.get("actionable_arbitrage_count") or 0) + int(
             summary.get("actionable_middle_count") or 0
         )
-        if actionable_count > 0 or ready_count > 0:
+        if actionable_count > 0 or ready_count > 0 or paper_ready_count > 0:
             print(
-                f"FOUND executable opportunities; wrote {args.out} and {args.summary_out} "
+                f"FOUND reportable opportunities; wrote {args.out} and {args.summary_out} "
                 f"actionable_count={actionable_count} "
-                f"ready_ticket_count={ready_count}"
+                f"ready_ticket_count={ready_count} "
+                f"paper_trade_ready_ticket_count={paper_ready_count}"
             )
             return 0
         print(

@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from tools import hunt_dex_opportunities
 
 
@@ -668,7 +670,10 @@ def test_build_execution_ticket_marks_artline_manual_leg_ready() -> None:
                 "max_stake": 250.0,
                 "quote_updated_at": "2026-05-26T03:40:45Z",
                 "quote_source": "rest_snapshot",
+                "book_event_id": "123",
                 "book_event_url": "https://artline.bet/bookmaker/match/prematch/tennis/123",
+                "selection_id": "1230064",
+                "provider_event_name": "0_ml_2",
                 "execution_diagnostics": {
                     "artline_max_bet": 250.0,
                     "artline_min_bet": 5.0,
@@ -692,19 +697,204 @@ def test_build_execution_ticket_marks_artline_manual_leg_ready() -> None:
         ],
     }
 
-    ticket = hunt_dex_opportunities._build_execution_ticket(
-        row,
-        source="actionable_arbitrage",
-        min_executable_stake=5.0,
-        max_quote_skew_seconds=120,
-        wallet_ready=True,
-    )
+    preflight = {
+        "status": "auth_required",
+        "reason": "missing_artline_cookie",
+        "sport": "tennis",
+        "game_id": "123",
+        "selection_id": "1230064",
+    }
+    with patch.object(hunt_dex_opportunities, "_artline_web_max_bet_preflight", return_value=preflight):
+        ticket = hunt_dex_opportunities._build_execution_ticket(
+            row,
+            source="actionable_arbitrage",
+            min_executable_stake=5.0,
+            max_quote_skew_seconds=120,
+            wallet_ready=True,
+        )
 
-    assert ticket["status"] == "ready"
+    assert ticket["status"] == "manual_ready"
+    assert ticket["paper_trade_ready"] is True
+    assert ticket["manual_web_required"] is True
+    assert ticket["paper_trade_blockers"] == []
     assert ticket["submit_blockers"] == []
     assert ticket["legs"][0]["execution_supported"] is True
+    assert ticket["legs"][0]["selection_id"] == "1230064"
+    assert ticket["legs"][0]["provider_event_name"] == "0_ml_2"
     assert ticket["legs"][0]["draft_order"]["adapter"] == "manual_artline"
     assert ticket["legs"][0]["draft_order"]["event_url"] == "https://artline.bet/bookmaker/match/prematch/tennis/123"
+    assert ticket["legs"][0]["draft_order"]["selection_id"] == "1230064"
+    assert ticket["legs"][0]["draft_order"]["web_max_bet_preflight"] == preflight
+
+
+def test_build_execution_ticket_marks_artline_soft_blockers_paper_ready_only() -> None:
+    row = {
+        "sport": "tennis_wta",
+        "event": "Player One vs Player Two",
+        "market": "h2h",
+        "roi_percent": 0.86,
+        "profit": 0.86,
+        "execution_quality": {"status": "medium", "flags": ["missing_liquidity"]},
+        "stakes": {
+            "total": 100.0,
+            "requested_total": 100.0,
+            "limited_by_max_stake": False,
+            "breakdown": [
+                {"outcome": "Player One", "bookmaker": "Artline", "stake": 18.0},
+                {"outcome": "Player Two", "bookmaker": "Polymarket", "stake": 82.0},
+            ],
+        },
+        "books": [
+            {
+                "outcome": "Player One",
+                "bookmaker": "Artline",
+                "bookmaker_key": "artline",
+                "price": 6.6,
+                "effective_price": 6.6,
+                "max_stake": None,
+                "quote_updated_at": "2026-05-26T03:40:45Z",
+                "quote_source": "rest_snapshot",
+                "book_event_url": "https://artline.bet/bookmaker/match/prematch/tennis/123",
+                "execution_diagnostics": {
+                    "artline_max_bet": 0.01,
+                    "artline_min_bet": 5.0,
+                    "executable": False,
+                    "reason": "max_bet_below_min_bet",
+                },
+            },
+            {
+                "outcome": "Player Two",
+                "bookmaker": "Polymarket",
+                "bookmaker_key": "polymarket",
+                "price": 1.19,
+                "effective_price": 1.18,
+                "max_stake": 500.0,
+                "quote_updated_at": "2026-05-26T03:40:46Z",
+                "quote_source": "clob",
+                "fee_rate": 0.0075,
+                "token_id": "poly-token-two",
+                "asset_id": "poly-token-two",
+                "outcome_index": 1,
+            },
+        ],
+    }
+
+    ticket = hunt_dex_opportunities._build_execution_ticket(
+        row,
+        source="model_only_arbitrage",
+        min_executable_stake=5.0,
+        max_quote_skew_seconds=120,
+        wallet_ready=False,
+    )
+
+    assert ticket["status"] == "blocked"
+    assert ticket["paper_trade_ready"] is True
+    assert ticket["manual_web_required"] is True
+    assert ticket["paper_trade_blockers"] == []
+    assert "artline_not_executable" in ticket["submit_blockers"]
+    assert "missing_liquidity" in ticket["submit_blockers"]
+    assert "wallet_not_ready" in ticket["submit_blockers"]
+    assert ticket["legs"][0]["draft_order"]["adapter"] == "manual_artline"
+    assert ticket["legs"][1]["draft_order"]["adapter"] == "polymarket"
+
+
+def test_build_execution_ticket_treats_scaled_liquidity_limit_as_paper_ready() -> None:
+    row = {
+        "sport": "tennis_wta",
+        "event": "Caheer Warik vs Marko Miladinovic",
+        "market": "h2h",
+        "roi_percent": 0.67,
+        "profit": 0.5,
+        "execution_quality": {"status": "medium", "flags": ["limited_by_liquidity"]},
+        "stakes": {
+            "total": 74.34,
+            "requested_total": 100.0,
+            "limited_by_max_stake": True,
+            "breakdown": [
+                {"outcome": "Caheer Warik", "bookmaker": "Artline", "stake": 5.35},
+                {"outcome": "Marko Miladinovic", "bookmaker": "Polymarket", "stake": 68.99},
+            ],
+        },
+        "books": [
+            {
+                "outcome": "Caheer Warik",
+                "bookmaker": "Artline",
+                "bookmaker_key": "artline",
+                "price": 14.0,
+                "effective_price": 14.0,
+                "max_stake": None,
+                "quote_updated_at": "2026-05-27T12:52:48Z",
+                "quote_source": "rest_snapshot",
+                "book_event_url": "https://artline.bet/bookmaker/match/prematch/tennis/385763185818357",
+                "execution_diagnostics": {
+                    "artline_max_bet": 0.01,
+                    "artline_min_bet": 5.0,
+                    "executable": False,
+                    "reason": "max_bet_below_min_bet",
+                },
+            },
+            {
+                "outcome": "Marko Miladinovic",
+                "bookmaker": "Polymarket",
+                "bookmaker_key": "polymarket",
+                "price": 1.086957,
+                "effective_price": 1.0847489897990494,
+                "max_stake": 69.0,
+                "quote_updated_at": "2026-05-27T12:53:11Z",
+                "quote_source": "clob_book_best_ask",
+                "fee_rate": 0.03,
+                "token_id": "poly-token",
+                "asset_id": "poly-token",
+                "outcome_index": 0,
+            },
+        ],
+    }
+
+    ticket = hunt_dex_opportunities._build_execution_ticket(
+        row,
+        source="model_only_arbitrage",
+        min_executable_stake=5.0,
+        max_quote_skew_seconds=120,
+        wallet_ready=False,
+    )
+
+    assert ticket["status"] == "blocked"
+    assert ticket["paper_trade_ready"] is True
+    assert ticket["manual_web_required"] is True
+    assert ticket["paper_trade_blockers"] == []
+    assert "limited_by_liquidity" in ticket["submit_blockers"]
+    assert ticket["total_stake"] == 74.34
+    assert ticket["legs"][0]["draft_order"]["adapter"] == "manual_artline"
+    assert ticket["legs"][1]["draft_order"]["adapter"] == "polymarket"
+
+
+def test_bookmaker_key_normalizes_artlinebet_display_name() -> None:
+    assert hunt_dex_opportunities._bookmaker_key("ArtlineBet") == "artline"
+    assert hunt_dex_opportunities._bookmaker_key("Artline Bet") == "artline"
+
+
+def test_deduplicate_rows_collapses_same_tennis_match_across_atp_wta_keys() -> None:
+    base = {
+        "event": "Caheer Warik vs Marko Miladinovic",
+        "market": "h2h",
+        "roi_percent": 0.12,
+        "books": [
+            {"bookmaker": "Artline", "outcome": "Caheer Warik", "price": 13.0},
+            {"bookmaker": "Polymarket", "outcome": "Marko Miladinovic", "price": 1.086957},
+        ],
+    }
+
+    rows = hunt_dex_opportunities._deduplicate_rows(
+        [
+            {**base, "sport": "tennis_wta", "job_name": "wta"},
+            {**base, "sport": "tennis_atp", "job_name": "atp"},
+        ],
+        key_factory=hunt_dex_opportunities._arb_key,
+        metric_key="roi_percent",
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["seen_in_jobs"] == ["wta", "atp"]
 
 
 def test_build_execution_ticket_blocks_stale_quote_skew_preflight() -> None:
@@ -1173,7 +1363,9 @@ def test_runner_writes_ready_execution_ticket_for_actionable_arbitrage(monkeypat
     assert exit_code == 0
     assert payload["summary"]["execution_ticket_count"] == 1
     assert payload["summary"]["execution_ready_ticket_count"] == 1
+    assert payload["summary"]["paper_trade_ready_ticket_count"] == 1
     assert payload["execution_tickets"][0]["status"] == "ready"
+    assert payload["execution_tickets"][0]["paper_trade_ready"] is True
     assert payload["execution_tickets"][0]["can_submit_live"] is False
     assert payload["execution_tickets"][0]["submit_blockers"] == []
     assert payload["execution_tickets"][0]["preflight"]["wallet_ready"] is True
@@ -1288,6 +1480,121 @@ def test_runner_writes_middle_execution_tickets_for_model_only_middle(monkeypatc
     assert "stake_limited" in payload["middle_execution_tickets"][0]["submit_blockers"]
     assert payload["middle_execution_tickets"][0]["legs"][0]["draft_order"]["adapter"] == "polymarket"
     assert "## Middle Execution Tickets" in summary_out.read_text(encoding="utf-8")
+
+
+def test_runner_reports_paper_trade_ready_manual_artline_without_live_ready(monkeypatch, tmp_path) -> None:
+    def fake_scan_once(sport, providers, **kwargs):
+        row = {
+            "sport": sport,
+            "event": "Player One vs Player Two",
+            "market": "h2h",
+            "roi_percent": 0.86,
+            "profit": 0.86,
+            "execution_quality": {"status": "medium", "flags": ["missing_liquidity"]},
+            "stakes": {
+                "total": 100.0,
+                "requested_total": 100.0,
+                "limited_by_max_stake": False,
+                "breakdown": [
+                    {"outcome": "Player One", "bookmaker": "Artline", "stake": 18.0},
+                    {"outcome": "Player Two", "bookmaker": "Polymarket", "stake": 82.0},
+                ],
+            },
+            "books": [
+                {
+                    "outcome": "Player One",
+                    "bookmaker": "Artline",
+                    "bookmaker_key": "artline",
+                    "price": 6.6,
+                    "effective_price": 6.6,
+                    "max_stake": None,
+                    "quote_updated_at": "2026-05-26T03:40:45Z",
+                    "quote_source": "rest_snapshot",
+                    "book_event_url": "https://artline.bet/bookmaker/match/prematch/tennis/123",
+                    "execution_diagnostics": {
+                        "artline_max_bet": 0.01,
+                        "artline_min_bet": 5.0,
+                        "executable": False,
+                        "reason": "max_bet_below_min_bet",
+                    },
+                },
+                {
+                    "outcome": "Player Two",
+                    "bookmaker": "Polymarket",
+                    "bookmaker_key": "polymarket",
+                    "price": 1.19,
+                    "effective_price": 1.18,
+                    "max_stake": 500.0,
+                    "quote_updated_at": "2026-05-26T03:40:46Z",
+                    "quote_source": "clob",
+                    "fee_rate": 0.0075,
+                    "token_id": "poly-token-two",
+                    "asset_id": "poly-token-two",
+                    "outcome_index": 1,
+                },
+            ],
+        }
+        return {
+            "sport": sport,
+            "providers": list(providers),
+            "api_bookmakers": [],
+            "all_markets": bool(kwargs.get("all_markets")),
+            "elapsed_seconds": 0.01,
+            "success": True,
+            "partial": False,
+            "arbitrage_count": 1,
+            "positive_candidates": 1,
+            "actionable_arbitrage_count": 0,
+            "top_candidate": row,
+            "top_arbitrage": [row],
+            "actionable_arbitrage": [],
+            "middle_count": 0,
+            "positive_middle_count": 0,
+            "actionable_middle_count": 0,
+            "top_middles": [],
+            "actionable_middles": [],
+            "plus_ev_count": 0,
+            "top_plus_ev": [],
+            "provider_capabilities": [],
+            "scan_diagnostics": {"reason_code": "matched_but_no_arbitrage"},
+            "custom_providers": {},
+            "sport_errors": [],
+        }
+
+    monkeypatch.setattr(hunt_dex_opportunities.hunt, "_scan_once", fake_scan_once)
+    monkeypatch.setattr(hunt_dex_opportunities.hunt, "_shutdown_runtime_resources", lambda: None)
+    monkeypatch.delenv("POLYMARKET_API_KEY", raising=False)
+    out = tmp_path / "dex_hunt.json"
+    summary_out = tmp_path / "summary.md"
+
+    exit_code = hunt_dex_opportunities.main(
+        [
+            "--sports",
+            "tennis_wta",
+            "--provider-sets",
+            "artline,polymarket",
+            "--out",
+            str(out),
+            "--summary-out",
+            str(summary_out),
+            "--min-executable-stake",
+            "5",
+        ]
+    )
+
+    payload = __import__("json").loads(out.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["summary"]["execution_ready_ticket_count"] == 0
+    assert payload["summary"]["paper_trade_ready_ticket_count"] == 1
+    assert payload["summary"]["paper_trade_manual_ticket_count"] == 1
+    assert payload["summary"]["opportunity_funnel"]["conclusion"] == "paper_trade_ready_opportunity"
+    ticket = payload["execution_tickets"][0]
+    assert ticket["status"] == "blocked"
+    assert ticket["paper_trade_ready"] is True
+    assert ticket["manual_web_required"] is True
+    markdown = summary_out.read_text(encoding="utf-8")
+    assert "paper_trade_ready_ticket_count: 1" in markdown
+    assert "paper_trade_ready=True" in markdown
 
 
 def test_build_execution_ticket_checks_wallet_readiness_for_ticket_providers_only(monkeypatch) -> None:
@@ -1795,8 +2102,11 @@ def test_render_markdown_summary_includes_counts_and_top_risks() -> None:
             "actionable_middle_count": 1,
             "execution_risky_middle_count": 2,
             "model_only_middle_count": 3,
+            "paper_trade_ready_ticket_count": 1,
+            "paper_trade_manual_ticket_count": 1,
             "blocked_reason_counts": {"bookmaker_xyz_quote_only": 3},
             "execution_risk_counts": {"quote_time_skew": 2},
+            "provider_error_counts": {"polymarket:auth_or_access_denied": 1},
             "scan_diagnostics": {
                 "reason_counts": {
                     "matched_but_no_arbitrage": 2,
@@ -1806,6 +2116,15 @@ def test_render_markdown_summary_includes_counts_and_top_risks() -> None:
                 "scans_without_source_events": 1,
                 "scans_with_cross_provider_matches": 2,
                 "scans_without_cross_provider_matches": 1,
+            },
+            "cross_provider_match_summary": {
+                "total_raw_records": 118,
+                "total_match_clusters": 117,
+                "overlap_clusters": 1,
+                "provider_event_counts": {"artline": 20, "polymarket": 98},
+                "single_provider_reason_counts": {"no_close_candidate": 116},
+                "pair_overlap_clusters": {"artline__polymarket": 1},
+                "report_paths": ["data/provider_snapshots/cross_provider_match_report.json"],
             },
             "require_explicit_liquidity": True,
             "max_quote_skew_seconds": 120,
@@ -1840,6 +2159,11 @@ def test_render_markdown_summary_includes_counts_and_top_risks() -> None:
     assert "actionable_middle_count: 1" in markdown
     assert "execution_risky_middle_count: 2" in markdown
     assert "quote_time_skew: 2" in markdown
+    assert "polymarket:auth_or_access_denied: 1" in markdown
+    assert "paper_trade_ready_ticket_count: 1" in markdown
+    assert "overlap_clusters: 1" in markdown
+    assert "single_provider_reason: no_close_candidate x116" in markdown
+    assert "report_path: data/provider_snapshots/cross_provider_match_report.json" in markdown
     assert "bookmaker_xyz_quote_only: 3" in markdown
     assert "matched_but_no_arbitrage: 2" in markdown
     assert "scans_with_cross_provider_matches: 2" in markdown
@@ -1867,6 +2191,8 @@ def test_opportunity_funnel_summary_explains_no_execution_ready_opportunity() ->
         model_only_middle_count=1,
         execution_ready_ticket_count=0,
         middle_execution_ready_ticket_count=0,
+        paper_trade_ready_ticket_count=0,
+        paper_trade_manual_ticket_count=0,
         blocked_reason_counts={
             "non_positive_roi": 3,
             "limited_by_liquidity": 1,
@@ -1886,6 +2212,90 @@ def test_opportunity_funnel_summary_explains_no_execution_ready_opportunity() ->
     ]
     assert summary["top_scan_reasons"][0] == {"reason": "no_cross_provider_overlap", "count": 2}
     assert summary["execution_risks"] == [{"reason": "quote_time_skew", "count": 1}]
+
+
+def test_opportunity_funnel_summary_distinguishes_paper_trade_ready() -> None:
+    summary = hunt_dex_opportunities._opportunity_funnel_summary(
+        scan_count=1,
+        scan_diagnostics={"reason_counts": {"matched_but_no_arbitrage": 1}},
+        actionable_arbitrage_count=0,
+        actionable_middle_count=0,
+        plus_ev_count=0,
+        model_only_arbitrage_count=1,
+        model_only_middle_count=0,
+        execution_ready_ticket_count=0,
+        middle_execution_ready_ticket_count=0,
+        paper_trade_ready_ticket_count=1,
+        paper_trade_manual_ticket_count=1,
+        blocked_reason_counts={"wallet_not_ready": 1},
+        execution_risk_counts={},
+    )
+
+    assert summary["conclusion"] == "paper_trade_ready_opportunity"
+    assert summary["ready_ticket_count"] == 0
+    assert summary["paper_trade_ready_ticket_count"] == 1
+    assert summary["paper_trade_manual_ticket_count"] == 1
+
+
+def test_provider_error_counts_uses_structured_provider_error_code() -> None:
+    scans = [
+        {
+            "sport": "tennis_wta",
+            "sport_errors": [
+                {
+                    "sport_key": "tennis_wta",
+                    "provider_key": "polymarket",
+                    "error": "Polymarket: HTTP 403",
+                    "error_code": "auth_or_access_denied",
+                    "status_code": 403,
+                }
+            ],
+            "custom_providers": {
+                "polymarket": {
+                    "sports": [
+                        {
+                            "sport_key": "tennis_wta",
+                            "error": "HTTP 403",
+                            "error_code": "auth_or_access_denied",
+                            "status_code": 403,
+                        }
+                    ]
+                }
+            },
+        }
+    ]
+
+    assert hunt_dex_opportunities._provider_error_counts(scans) == {
+        "polymarket:auth_or_access_denied": 1
+    }
+
+
+def test_cross_provider_match_summary_aggregates_scan_report_summaries() -> None:
+    scans = [
+        {
+            "cross_provider_match_report_path": "data/provider_snapshots/cross_provider_match_report.json",
+            "cross_provider_match_report_summary": {
+                "total_raw_records": 118,
+                "total_match_clusters": 117,
+                "overlap_clusters": 1,
+                "provider_event_counts": {"artline": 20, "polymarket": 98},
+                "provider_cluster_presence": {"artline": 20, "polymarket": 98},
+                "single_provider_cluster_counts": {"artline": 19, "polymarket": 97},
+                "single_provider_reason_counts": {"no_close_candidate": 116},
+                "pair_overlap_clusters": {"artline__polymarket": 1},
+            },
+        }
+    ]
+
+    summary = hunt_dex_opportunities._cross_provider_match_summary(scans)
+
+    assert summary["total_raw_records"] == 118
+    assert summary["total_match_clusters"] == 117
+    assert summary["overlap_clusters"] == 1
+    assert summary["provider_event_counts"] == {"artline": 20, "polymarket": 98}
+    assert summary["single_provider_reason_counts"] == {"no_close_candidate": 116}
+    assert summary["pair_overlap_clusters"] == {"artline__polymarket": 1}
+    assert summary["report_paths"] == ["data/provider_snapshots/cross_provider_match_report.json"]
 
 
 def test_runner_writes_markdown_summary(monkeypatch, tmp_path) -> None:

@@ -173,6 +173,8 @@ def _book_summary(item: dict[str, Any]) -> list[dict[str, Any]]:
                 "asset_id": leg.get("asset_id"),
                 "condition_id": leg.get("condition_id"),
                 "outcome_index": leg.get("outcome_index"),
+                "selection_id": leg.get("selection_id") or leg.get("selectionId"),
+                "provider_event_name": leg.get("provider_event_name") or leg.get("providerEventName"),
                 "execution_diagnostics": leg.get("execution_diagnostics"),
             }
         )
@@ -239,6 +241,8 @@ def _compact_middle(item: dict[str, Any], sport: str, providers: Sequence[str], 
                 "asset_id": side.get("asset_id"),
                 "condition_id": side.get("condition_id"),
                 "outcome_index": side.get("outcome_index"),
+                "selection_id": side.get("selection_id") or side.get("selectionId"),
+                "provider_event_name": side.get("provider_event_name") or side.get("providerEventName"),
                 "execution_diagnostics": side.get("execution_diagnostics"),
             }
         )
@@ -299,6 +303,8 @@ def _compact_plus_ev(item: dict[str, Any], sport: str, providers: Sequence[str],
         "asset_id": bet.get("asset_id"),
         "condition_id": bet.get("condition_id"),
         "outcome_index": bet.get("outcome_index"),
+        "selection_id": bet.get("selection_id") or bet.get("selectionId"),
+        "provider_event_name": bet.get("provider_event_name") or bet.get("providerEventName"),
         "execution_diagnostics": bet.get("execution_diagnostics"),
     }
     reference_leg = {
@@ -420,6 +426,15 @@ def _scan_once(
         "top_plus_ev": top_plus_ev[:5],
         "provider_capabilities": _provider_capability_summary(providers),
         "scan_diagnostics": result.get("scan_diagnostics") if isinstance(result, dict) else {},
+        "cross_provider_match_report_path": (
+            result.get("cross_provider_match_report_path") if isinstance(result, dict) else ""
+        ),
+        "cross_provider_match_report_summary": (
+            result.get("cross_provider_match_report_summary") if isinstance(result, dict) else {}
+        ),
+        "provider_snapshot_paths": (
+            result.get("provider_snapshot_paths") if isinstance(result, dict) else {}
+        ),
         "custom_providers": result.get("custom_providers") if isinstance(result, dict) else {},
         "sport_errors": result.get("sport_errors") if isinstance(result, dict) else [],
     }

@@ -265,7 +265,10 @@ def test_build_arbitrage_execution_ticket_allows_artline_manual_web_liquidity_ri
                     "max_stake": None,
                     "quote_updated_at": "2026-05-27T09:25:56Z",
                     "quote_source": "rest_snapshot",
+                    "book_event_id": "385771835504278",
                     "book_event_url": "https://artline.bet/bookmaker/match/prematch/tennis/385771835504278",
+                    "selection_id": "3857718355042780064",
+                    "provider_event_name": "0_ml_2",
                     "execution_diagnostics": {
                         "artline_max_bet": 0.01,
                         "artline_min_bet": 5.0,
@@ -289,6 +292,9 @@ def test_build_arbitrage_execution_ticket_allows_artline_manual_web_liquidity_ri
     artline_leg = ticket["legs"][1]
     assert artline_leg["draft_order"]["adapter"] == "manual_artline"
     assert artline_leg["draft_order"]["event_url"].endswith("/385771835504278")
+    assert artline_leg["selection_id"] == "3857718355042780064"
+    assert artline_leg["provider_event_name"] == "0_ml_2"
+    assert artline_leg["draft_order"]["selection_id"] == "3857718355042780064"
     assert artline_leg["manual_liquidity_risks"] == [
         "artline_api_max_bet_below_min_bet",
         "manual_liquidity_unverified",

@@ -53,6 +53,358 @@ class ArtlineProviderTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    def test_normalize_game_markets_preserves_betslip_selection_ids(self) -> None:
+        markets = artline._normalize_game_markets(
+            [
+                {
+                    "id": "3857631858183570063",
+                    "event_name_value": "0_ml_1",
+                    "value": 1.06,
+                    "status": 1,
+                },
+                {
+                    "id": "3857631858183570064",
+                    "event_name_value": "0_ml_2",
+                    "value": 14.5,
+                    "status": 1,
+                },
+            ],
+            home_team="Marko Miladinovic",
+            away_team="Caheer Warik",
+            sport_key="tennis_wta",
+            requested_markets={"h2h"},
+        )
+
+        self.assertEqual(
+            markets[0]["outcomes"],
+            [
+                {
+                    "name": "Marko Miladinovic",
+                    "price": 1.06,
+                    "selection_id": "3857631858183570063",
+                    "provider_event_name": "0_ml_1",
+                },
+                {
+                    "name": "Caheer Warik",
+                    "price": 14.5,
+                    "selection_id": "3857631858183570064",
+                    "provider_event_name": "0_ml_2",
+                },
+            ],
+        )
+
+    def test_build_web_max_bet_payload_uses_betslip_selection_id(self) -> None:
+        payload = artline.build_web_max_bet_payload(
+            sport="tennis",
+            game_id="385763185818357",
+            selection_id="3857631858183570064",
+            is_live=False,
+        )
+
+        self.assertEqual(payload["type"], "solo")
+        self.assertEqual(payload["sum"], 0)
+        self.assertEqual(payload["currency_type"], "balance")
+        self.assertIn('"sport":"tennis"', payload["events"])
+        self.assertIn('"game_id":"385763185818357"', payload["events"])
+        self.assertIn('"event_id":"3857631858183570064"', payload["events"])
+        self.assertIn('"is_live":false', payload["events"])
+
+    def test_preflight_web_max_bet_tries_csrf_bootstrap_without_browser_probe(self) -> None:
+        with (
+            patch.dict("os.environ", {"ARTLINE_COOKIE": ""}, clear=False),
+            patch.object(artline, "resolve_artline_browser_cookie_header") as browser_cookie,
+            patch.object(
+                artline,
+                "_bootstrap_artline_csrf",
+                return_value={"cookie_header": "", "source": "csrf_bootstrap", "http_status": 204},
+            ) as bootstrap,
+        ):
+            result = artline.preflight_web_max_bet(
+                sport="tennis",
+                game_id="385763185818357",
+                selection_id="3857631858183570064",
+                is_live=False,
+                stake=5.35,
+            )
+
+        self.assertEqual(result["status"], "auth_required")
+        self.assertEqual(result["reason"], "missing_artline_cookie")
+        self.assertEqual(result["cookie_source"], "csrf_bootstrap")
+        bootstrap.assert_called_once()
+        browser_cookie.assert_not_called()
+
+    def test_csrf_token_can_be_resolved_from_cookie_header(self) -> None:
+        token = artline._csrf_token_from_cookie_header(
+            "laravel_session=session-id; XSRF-TOKEN=abc%2B123%3D; theme=dark"
+        )
+
+        self.assertEqual(token, "abc+123=")
+
+    def test_cookie_names_are_safe_for_reports(self) -> None:
+        names = artline._cookie_names_from_header(
+            "XSRF-TOKEN=token; apiato=session; 8HJsTVhdvQYdl1ou56PX06IgzA832cxkBGvkBvSj=value; theme=dark"
+        )
+
+        self.assertEqual(names, ["XSRF-TOKEN", "apiato", "session_cookie", "other_cookie"])
+
+    def test_preflight_web_max_bet_uses_browser_cookie_when_enabled(self) -> None:
+        class _Response:
+            status_code = 200
+
+            def json(self):
+                return {"data": {"max_bet": 125.0}}
+
+        class _Client:
+            posted_headers = {}
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def post(self, url, *, json, headers):
+                self.__class__.posted_headers = headers
+                return _Response()
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "ARTLINE_COOKIE": "",
+                    "ARTLINE_CSRF_TOKEN": "",
+                    "ARTLINE_XSRF_TOKEN": "",
+                    "ARTLINE_AUTO_BROWSER_COOKIES": "1",
+                },
+                clear=False,
+            ),
+            patch.object(
+                artline,
+                "resolve_artline_browser_cookie_header",
+                return_value={
+                    "cookie_header": "laravel_session=session-id; XSRF-TOKEN=abc%2B123%3D",
+                    "source": "chrome:Default",
+                    "cookie_names": ["laravel_session", "XSRF-TOKEN"],
+                    "errors": [],
+                },
+            ) as browser_cookie,
+            patch("providers.artline.httpx.Client", new=_Client),
+        ):
+            result = artline.preflight_web_max_bet(
+                sport="tennis",
+                game_id="385763185818357",
+                selection_id="3857631858183570064",
+                is_live=False,
+                stake=50,
+            )
+
+        browser_cookie.assert_called_once()
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["cookie_source"], "chrome:Default")
+        self.assertEqual(result["cookie_names"], ["laravel_session", "XSRF-TOKEN"])
+        self.assertEqual(_Client.posted_headers["X-XSRF-TOKEN"], "abc+123=")
+        self.assertNotIn("X-CSRF-TOKEN", _Client.posted_headers)
+        self.assertNotIn("abc%2B123%3D", str(result))
+
+    def test_preflight_web_max_bet_bootstraps_csrf_cookie(self) -> None:
+        class _Response:
+            def __init__(self, status_code, payload=None):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                if self._payload is None:
+                    raise ValueError("no json")
+                return self._payload
+
+        class _Client:
+            posted_headers = {}
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def get(self, url, *, headers):
+                return _Response(204)
+
+            def post(self, url, *, json, headers):
+                self.__class__.posted_headers = headers
+                return _Response(200, {"data": {"max_bet": 80.0}})
+
+            @property
+            def cookies(self):
+                return {"XSRF-TOKEN": "boot%2Btoken", "laravel_session": "session-id"}
+
+        with (
+            patch.dict(
+                "os.environ",
+                {"ARTLINE_COOKIE": "", "ARTLINE_AUTO_BROWSER_COOKIES": ""},
+                clear=False,
+            ),
+            patch("providers.artline.httpx.Client", new=_Client),
+        ):
+            result = artline.preflight_web_max_bet(
+                sport="tennis",
+                game_id="385763185818357",
+                selection_id="3857631858183570064",
+                is_live=False,
+                stake=25,
+            )
+
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["cookie_source"], "csrf_bootstrap")
+        self.assertEqual(_Client.posted_headers["X-XSRF-TOKEN"], "boot+token")
+        self.assertNotIn("X-CSRF-TOKEN", _Client.posted_headers)
+
+    def test_bootstrap_artline_csrf_uses_api_host_without_api_prefix(self) -> None:
+        class _Response:
+            status_code = 204
+
+        class _Client:
+            requested_url = ""
+
+            def get(self, url, *, headers):
+                self.__class__.requested_url = url
+                return _Response()
+
+            @property
+            def cookies(self):
+                return {"XSRF-TOKEN": "boot%2Btoken", "laravel_session": "session-id"}
+
+        with patch.object(artline, "ARTLINE_API_BASE", "https://api.artline.bet/api"):
+            result = artline._bootstrap_artline_csrf(_Client())
+
+        self.assertEqual(_Client.requested_url, "https://api.artline.bet/sanctum/csrf-cookie")
+        self.assertEqual(result["cookie_names"], ["XSRF-TOKEN", "laravel_session"])
+
+    def test_preflight_web_max_bet_reports_bootstrap_when_csrf_cookie_missing(self) -> None:
+        class _Response:
+            status_code = 204
+
+            def json(self):
+                raise ValueError("no json")
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def get(self, url, *, headers):
+                return _Response()
+
+            @property
+            def cookies(self):
+                return {}
+
+        with (
+            patch.dict("os.environ", {"ARTLINE_COOKIE": "", "ARTLINE_AUTO_BROWSER_COOKIES": ""}, clear=False),
+            patch("providers.artline.httpx.Client", new=_Client),
+        ):
+            result = artline.preflight_web_max_bet(
+                sport="tennis",
+                game_id="385763185818357",
+                selection_id="3857631858183570064",
+                is_live=False,
+                stake=5,
+            )
+
+        self.assertEqual(result["status"], "auth_required")
+        self.assertEqual(result["reason"], "missing_artline_cookie")
+        self.assertEqual(result["cookie_source"], "csrf_bootstrap")
+        self.assertEqual(result["bootstrap_http_status"], 204)
+
+    def test_preflight_web_max_bet_reports_browser_cookie_probe_errors_safely(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {"ARTLINE_COOKIE": "", "ARTLINE_AUTO_BROWSER_COOKIES": "1"},
+                clear=False,
+            ),
+            patch.object(
+                artline,
+                "resolve_artline_browser_cookie_header",
+                return_value={
+                    "cookie_header": "",
+                    "source": None,
+                    "cookie_names": [],
+                    "errors": ["chrome:Default:PermissionError"],
+                },
+            ),
+            patch("providers.artline.httpx.Client") as client_cls,
+        ):
+            result = artline.preflight_web_max_bet(
+                sport="tennis",
+                game_id="385763185818357",
+                selection_id="3857631858183570064",
+                is_live=False,
+                stake=5.35,
+            )
+
+        self.assertEqual(result["status"], "auth_required")
+        self.assertEqual(result["reason"], "missing_artline_cookie")
+        self.assertEqual(result["cookie_source"], "csrf_bootstrap")
+        self.assertEqual(result["browser_cookie_errors"], ["chrome:Default:PermissionError"])
+        client_cls.assert_called_once()
+
+    def test_resolve_browser_cookie_prefers_cdp_debug_cookie_source(self) -> None:
+        with (
+            patch.object(
+                artline,
+                "_resolve_artline_cdp_cookie_header",
+                return_value={
+                    "cookie_header": "XSRF-TOKEN=abc; laravel_session=session-id",
+                    "source": "chrome-cdp:9222",
+                    "cookie_names": ["XSRF-TOKEN", "laravel_session"],
+                    "errors": [],
+                },
+            ) as cdp_probe,
+            patch.object(artline, "_candidate_chromium_cookie_dbs") as db_probe,
+        ):
+            result = artline.resolve_artline_browser_cookie_header()
+
+        cdp_probe.assert_called_once()
+        db_probe.assert_not_called()
+        self.assertEqual(result["source"], "chrome-cdp:9222")
+        self.assertEqual(result["cookie_names"], ["XSRF-TOKEN", "laravel_session"])
+
+    def test_resolve_browser_cookie_sanitizes_cookie_names_from_db(self) -> None:
+        with (
+            patch.object(
+                artline,
+                "_resolve_artline_cdp_cookie_header",
+                return_value={"cookie_header": "", "source": None, "cookie_names": [], "errors": []},
+            ),
+            patch.object(
+                artline,
+                "_candidate_chromium_cookie_dbs",
+                return_value=[("chrome:Default", object(), object())],
+            ),
+            patch.object(
+                artline,
+                "_read_artline_cookies_from_db",
+                return_value=[
+                    [("XSRF-TOKEN", "token"), ("8HJsTVhdvQYdl1ou56PX06IgzA832cxkBGvkBvSj", "session")],
+                    [],
+                ],
+            ),
+        ):
+            result = artline.resolve_artline_browser_cookie_header()
+
+        self.assertEqual(result["cookie_names"], ["XSRF-TOKEN", "session_cookie"])
+
     async def test_fetch_events_async_surfaces_artline_max_bet_diagnostics_without_max_stake(self) -> None:
         payload = {
             "data": {
@@ -343,6 +695,60 @@ class ArtlineProviderTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(all(row.get("quote_source") == "rest_snapshot" for row in market["outcomes"]))
         self.assertTrue(all(row.get("observed_at") for row in market["outcomes"]))
+        self.assertEqual(artline.fetch_events_async.last_stats.get("detail_enrichment_requested"), 1)
+        self.assertEqual(artline.fetch_events_async.last_stats.get("detail_enrichment_succeeded"), 1)
+
+    async def test_fetch_events_async_enriches_tennis_h2h_selection_ids_from_detail_feed(self) -> None:
+        payload = {
+            "data": {
+                "tennis": {
+                    "games": [
+                        {
+                            "id": 385763185818357,
+                            "is_live": False,
+                            "max_bet": 0.01,
+                            "start_at_timestamp": 1779891300,
+                            "team_1": {"value": "Marko Miladinovic"},
+                            "team_2": {"value": "Caheer Warik"},
+                            "events": [
+                                {"event_name_value": "0_ml_1", "value": 1.06, "status": 1},
+                                {"event_name_value": "0_ml_2", "value": 14.5, "status": 1},
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+        detail_events = [
+            {
+                "id": "3857631858183570063",
+                "event_name_value": "0_ml_1",
+                "value": 1.06,
+                "status": 1,
+            },
+            {
+                "id": "3857631858183570064",
+                "event_name_value": "0_ml_2",
+                "value": 14.5,
+                "status": 1,
+            },
+        ]
+
+        with (
+            patch.object(artline, "get_shared_client", new=_fake_shared_client),
+            patch.object(artline, "_request_json_async", return_value=(_deepcopy(payload), 0)),
+            patch.object(artline, "_load_game_detail_events_async", return_value=_deepcopy(detail_events)),
+        ):
+            events = await artline.fetch_events_async(
+                "tennis_wta",
+                ["h2h"],
+                ["eu"],
+                bookmakers=["artline"],
+            )
+
+        outcomes = events[0]["bookmakers"][0]["markets"][0]["outcomes"]
+        self.assertEqual(outcomes[0]["selection_id"], "3857631858183570063")
+        self.assertEqual(outcomes[1]["selection_id"], "3857631858183570064")
         self.assertEqual(artline.fetch_events_async.last_stats.get("detail_enrichment_requested"), 1)
         self.assertEqual(artline.fetch_events_async.last_stats.get("detail_enrichment_succeeded"), 1)
 

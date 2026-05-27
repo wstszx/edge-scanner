@@ -217,6 +217,19 @@ class ProviderError(Exception):
         self.status_code = status_code
 
 
+def _provider_error_code(error: BaseException) -> str:
+    status_code = getattr(error, "status_code", None)
+    if status_code in {401, 403}:
+        return "auth_or_access_denied"
+    if status_code == 429:
+        return "rate_limited"
+    if status_code in {500, 502, 503, 504}:
+        return "upstream_unavailable"
+    if status_code:
+        return f"http_{status_code}"
+    return "provider_error"
+
+
 def _sport_tag_cache_async_lock() -> asyncio.Lock:
     global SPORT_TAG_CACHE_ASYNC_LOCK
     if SPORT_TAG_CACHE_ASYNC_LOCK is None:
@@ -1245,6 +1258,44 @@ def _event_match_clob_token_ids(
             )
         )
     return list(dict.fromkeys(token_ids))
+
+
+def _event_market_question_sample(event: object, now_utc: dt.datetime, limit: int = 3) -> List[str]:
+    if not isinstance(event, dict):
+        return []
+    questions: List[str] = []
+    for market in (event.get("markets") or []):
+        if not isinstance(market, dict):
+            continue
+        if not _market_is_tradeable(market, now_utc):
+            continue
+        question = _normalize_text(market.get("question"))
+        if question and question not in questions:
+            questions.append(question)
+        if len(questions) >= limit:
+            break
+    return questions
+
+
+def _record_unmatched_market_sample(
+    samples: List[dict],
+    event: dict,
+    home_team: str,
+    away_team: str,
+    now_utc: dt.datetime,
+    limit: int = 5,
+) -> None:
+    if len(samples) >= limit:
+        return
+    samples.append(
+        {
+            "event_id": _normalize_text(event.get("id") or event.get("slug")),
+            "title": _normalize_text(event.get("title")),
+            "home_team": _normalize_text(home_team),
+            "away_team": _normalize_text(away_team),
+            "market_questions": _event_market_question_sample(event, now_utc),
+        }
+    )
 
 
 def _price_to_decimal_odds(price) -> Optional[float]:
@@ -3681,6 +3732,13 @@ def _event_url(event: dict) -> str:
     return ""
 
 
+def _game_tag_backfill_ids(requested_tag_ids: Sequence[str]) -> List[str]:
+    default_tag = _normalize_text(POLYMARKET_GAME_TAG_ID or "100639")
+    if not default_tag or default_tag in set(requested_tag_ids or []):
+        return []
+    return [default_tag]
+
+
 def _load_active_game_events(
     retries: int,
     backoff_seconds: float,
@@ -3712,10 +3770,12 @@ def _load_active_game_events(
     pages_fetched = 0
     tag_query_errors = 0
     tag_query_fallback_count = 0
+    game_tag_backfill_count = 0
     last_error: Optional[ProviderError] = None
     now_iso = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     requested_tag_ids = _requested_event_tag_ids(tag_ids)
-    for requested_tag_id in requested_tag_ids:
+    query_tag_ids = list(requested_tag_ids)
+    for requested_tag_id in query_tag_ids:
         offset = 0
         try:
             for _page in range(max_pages):
@@ -3778,6 +3838,36 @@ def _load_active_game_events(
             tag_query_errors += 1
             continue
 
+    if all_events and tag_query_errors > 0:
+        for backfill_tag_id in _game_tag_backfill_ids(query_tag_ids):
+            offset = 0
+            try:
+                for _page in range(max_pages):
+                    payload, retries_used = _request_json(
+                        "events",
+                        _active_events_query_params(
+                            backfill_tag_id,
+                            now_iso=now_iso,
+                            page_size=page_size,
+                            offset=offset,
+                        ),
+                        retries=retries,
+                        backoff_seconds=backoff_seconds,
+                    )
+                    pages_fetched += 1
+                    total_retries += retries_used
+                    if not isinstance(payload, list):
+                        raise ProviderError("Polymarket events endpoint must return a JSON array")
+                    if not payload:
+                        break
+                    all_events.extend(item for item in payload if isinstance(item, dict))
+                    if len(payload) < page_size:
+                        break
+                    offset += page_size
+                game_tag_backfill_count += 1
+            except ProviderError:
+                continue
+
     if not all_events and last_error is not None:
         raise last_error
     all_events = _merge_events([], all_events)
@@ -3793,6 +3883,8 @@ def _load_active_game_events(
         "tag_query_count": len(requested_tag_ids),
         "tag_query_errors": tag_query_errors,
         "tag_query_fallback_count": tag_query_fallback_count,
+        "game_tag_backfill_count": game_tag_backfill_count,
+        "partial_tag_query": bool(tag_query_errors > 0),
     }
     if _scan_cache_active():
         with SCAN_CACHE_LOCK:
@@ -3853,10 +3945,12 @@ async def _load_active_game_events_async(
         pages_fetched = 0
         tag_query_errors = 0
         tag_query_fallback_count = 0
+        game_tag_backfill_count = 0
         last_error: Optional[ProviderError] = None
         now_iso = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         requested_tag_ids = _requested_event_tag_ids(tag_ids)
-        for requested_tag_id in requested_tag_ids:
+        query_tag_ids = list(requested_tag_ids)
+        for requested_tag_id in query_tag_ids:
             offset = 0
             try:
                 for _page in range(max_pages):
@@ -3921,6 +4015,37 @@ async def _load_active_game_events_async(
                 tag_query_errors += 1
                 continue
 
+        if all_events and tag_query_errors > 0:
+            for backfill_tag_id in _game_tag_backfill_ids(query_tag_ids):
+                offset = 0
+                try:
+                    for _page in range(max_pages):
+                        payload, retries_used = await _request_json_async(
+                            client,
+                            "events",
+                            _active_events_query_params(
+                                backfill_tag_id,
+                                now_iso=now_iso,
+                                page_size=page_size,
+                                offset=offset,
+                            ),
+                            retries=retries,
+                            backoff_seconds=backoff_seconds,
+                        )
+                        pages_fetched += 1
+                        total_retries += retries_used
+                        if not isinstance(payload, list):
+                            raise ProviderError("Polymarket events endpoint must return a JSON array")
+                        if not payload:
+                            break
+                        all_events.extend(item for item in payload if isinstance(item, dict))
+                        if len(payload) < page_size:
+                            break
+                        offset += page_size
+                    game_tag_backfill_count += 1
+                except ProviderError:
+                    continue
+
         if not all_events and last_error is not None:
             raise last_error
         all_events = _merge_events([], all_events)
@@ -3936,6 +4061,8 @@ async def _load_active_game_events_async(
             "tag_query_count": len(requested_tag_ids),
             "tag_query_errors": tag_query_errors,
             "tag_query_fallback_count": tag_query_fallback_count,
+            "game_tag_backfill_count": game_tag_backfill_count,
+            "partial_tag_query": bool(tag_query_errors > 0),
         }
         if _scan_cache_active():
             with SCAN_CACHE_LOCK:
@@ -4098,9 +4225,13 @@ async def fetch_events_async(
         "events_sport_filtered_count": 0,
         "events_status_filtered_count": 0,
         "events_matchup_count": 0,
+        "events_without_matchup_count": 0,
+        "events_with_match_clob_tokens_count": 0,
+        "events_without_supported_market_count": 0,
         "events_with_market_count": 0,
         "events_returned_count": 0,
         "clob_tokens_requested": 0,
+        "matched_clob_token_count": 0,
         "clob_tokens_considered": 0,
         "clob_tokens_truncated": 0,
         "clob_http_fallback_enabled": True,
@@ -4138,6 +4269,9 @@ async def fetch_events_async(
         "realtime_owner_id": "",
         "realtime_shared_snapshot_loaded": False,
         "realtime_shared_snapshot_age_seconds": None,
+        "sport_tag_aliases": list(SPORT_ALIASES.get(sport_key, ())),
+        "sport_tag_ids_requested": [],
+        "sample_unmatched_market_questions": [],
     }
     _set_last_stats(stats)
 
@@ -4169,31 +4303,48 @@ async def fetch_events_async(
         _apply_realtime_stats(stats, realtime_manager.snapshot())
 
     client = await get_shared_client(PROVIDER_KEY, timeout=float(timeout), follow_redirects=True)
-    sport_tag_mapping = await _load_sport_tag_mapping_async(
-        client=client,
-        retries=retries,
-        backoff_seconds=backoff,
-    )
-    requested_event_tag_ids = []
-    for alias in SPORT_ALIASES.get(sport_key, ()):
-        requested_event_tag_ids.extend(sorted(sport_tag_mapping.get(_normalize_token(alias), set())))
-    normalized_requested_event_tag_ids = [
-        _normalize_text(tag_id)
-        for tag_id in requested_event_tag_ids
-        if _normalize_text(tag_id)
-    ]
-    payload_bundle = await _load_active_game_events_async(
-        client=client,
-        retries=retries,
-        backoff_seconds=backoff,
-        page_size=page_size,
-        max_pages=max_pages,
-        tag_ids=normalized_requested_event_tag_ids or None,
-    )
+    try:
+        sport_tag_mapping = await _load_sport_tag_mapping_async(
+            client=client,
+            retries=retries,
+            backoff_seconds=backoff,
+        )
+        requested_event_tag_ids = []
+        for alias in SPORT_ALIASES.get(sport_key, ()):
+            requested_event_tag_ids.extend(sorted(sport_tag_mapping.get(_normalize_token(alias), set())))
+        normalized_requested_event_tag_ids = [
+            _normalize_text(tag_id)
+            for tag_id in requested_event_tag_ids
+            if _normalize_text(tag_id)
+        ]
+        stats["sport_tag_ids_requested"] = list(dict.fromkeys(normalized_requested_event_tag_ids))
+        payload_bundle = await _load_active_game_events_async(
+            client=client,
+            retries=retries,
+            backoff_seconds=backoff,
+            page_size=page_size,
+            max_pages=max_pages,
+            tag_ids=normalized_requested_event_tag_ids or None,
+        )
+    except ProviderError as exc:
+        stats["provider_error_code"] = _provider_error_code(exc)
+        stats["provider_error_status_code"] = exc.status_code
+        stats["provider_error_message"] = str(exc)
+        _set_last_stats(stats)
+        raise
     payload, payload_meta = payload_bundle
     stats["payload_cache"] = payload_meta.get("cache", "miss")
     stats["pages_fetched"] += int(payload_meta.get("pages_fetched", 0) or 0)
     stats["retries_used"] += int(payload_meta.get("retries_used", 0) or 0)
+    for meta_key in (
+        "tag_query_count",
+        "tag_query_errors",
+        "tag_query_fallback_count",
+        "game_tag_backfill_count",
+        "partial_tag_query",
+    ):
+        if meta_key in payload_meta:
+            stats[meta_key] = payload_meta.get(meta_key)
     recent_sport_results: Dict[str, dict] = {}
     recent_sport_result_index: Dict[str, dict] = {}
     if realtime_manager is not None and _sports_websocket_enabled():
@@ -4274,6 +4425,7 @@ async def fetch_events_async(
 
             matchup = _extract_matchup(event)
             if not matchup:
+                stats["events_without_matchup_count"] += 1
                 continue
             home_team, away_team = matchup
             if live_context:
@@ -4289,15 +4441,26 @@ async def fetch_events_async(
                     continue
             stats["events_matchup_count"] += 1
             filtered_events.append((event, home_team, away_team, realtime_state))
-            clob_token_ids.extend(
-                _event_match_clob_token_ids(
+            event_clob_token_ids = _event_match_clob_token_ids(
+                event,
+                home_team,
+                away_team,
+                supported_markets,
+                now_utc,
+            )
+            if event_clob_token_ids:
+                stats["events_with_match_clob_tokens_count"] += 1
+                stats["matched_clob_token_count"] += len(event_clob_token_ids)
+                clob_token_ids.extend(event_clob_token_ids)
+            else:
+                stats["events_without_supported_market_count"] += 1
+                _record_unmatched_market_sample(
+                    stats["sample_unmatched_market_questions"],
                     event,
                     home_team,
                     away_team,
-                    supported_markets,
                     now_utc,
                 )
-            )
         progress_callback = context.get("progress_callback") if isinstance(context, dict) else None
         clob_quote_map: Dict[str, dict] = {}
 

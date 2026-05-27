@@ -3739,6 +3739,18 @@ def _record_line_offers(
                     or outcome.get("max_stake")
                     or outcome.get("liquidity")
                 )
+                selection_id = (
+                    outcome.get("selection_id")
+                    or outcome.get("selectionId")
+                    or outcome.get("event_id")
+                    or outcome.get("eventId")
+                )
+                provider_event_name = (
+                    outcome.get("provider_event_name")
+                    or outcome.get("providerEventName")
+                    or outcome.get("event_name_value")
+                    or outcome.get("eventNameValue")
+                )
                 entry = lines.setdefault(key, {})
                 name = str(outcome.get("name") or "").strip()
                 outcome_key = _canonicalize_outcome_name(name, sport_key)
@@ -3765,6 +3777,8 @@ def _record_line_offers(
                         "outcome_index": outcome.get("outcome_index")
                         if outcome.get("outcome_index") is not None
                         else outcome.get("outcomeIndex"),
+                        "selection_id": selection_id,
+                        "provider_event_name": provider_event_name,
                         "live_state": book_live_state,
                         "bookmaker": bookmaker,
                         "bookmaker_key": bookmaker_key_normalized or bookmaker_key,
@@ -3939,6 +3953,8 @@ def _collect_market_entries(
                 "asset_id": o.get("asset_id"),
                 "condition_id": o.get("condition_id"),
                 "outcome_index": o.get("outcome_index"),
+                "selection_id": o.get("selection_id"),
+                "provider_event_name": o.get("provider_event_name"),
                 "execution_diagnostics": o.get("execution_diagnostics"),
             }
             for o in outcomes
@@ -4031,6 +4047,18 @@ def _collect_middle_opportunities(
                 is_exchange = bookmaker_key in EXCHANGE_KEYS
                 effective_price = _apply_commission(display_price, bookmaker_key, commission_rate)
                 fee_rate = _effective_commission_rate(bookmaker_key, commission_rate)
+                selection_id = (
+                    outcome.get("selection_id")
+                    or outcome.get("selectionId")
+                    or outcome.get("event_id")
+                    or outcome.get("eventId")
+                )
+                provider_event_name = (
+                    outcome.get("provider_event_name")
+                    or outcome.get("providerEventName")
+                    or outcome.get("event_name_value")
+                    or outcome.get("eventNameValue")
+                )
                 offers.append(
                     {
                         "pair_key": f"{bookmaker_key}:{name}:{point_value}",
@@ -4053,6 +4081,8 @@ def _collect_middle_opportunities(
                         "outcome_index": outcome.get("outcome_index")
                         if outcome.get("outcome_index") is not None
                         else outcome.get("outcomeIndex"),
+                        "selection_id": selection_id,
+                        "provider_event_name": provider_event_name,
                         "book_event_id": book_event_id,
                         "book_event_url": book_event_url,
                         "liquidity_provenance": outcome.get("liquidity_provenance"),
@@ -4448,6 +4478,8 @@ def _build_middle_entry(
             "asset_id": side_a.get("asset_id"),
             "condition_id": side_a.get("condition_id"),
             "outcome_index": side_a.get("outcome_index"),
+            "selection_id": side_a.get("selection_id"),
+            "provider_event_name": side_a.get("provider_event_name"),
             "execution_diagnostics": side_a.get("execution_diagnostics"),
         },
         {
@@ -4471,6 +4503,8 @@ def _build_middle_entry(
             "asset_id": side_b.get("asset_id"),
             "condition_id": side_b.get("condition_id"),
             "outcome_index": side_b.get("outcome_index"),
+            "selection_id": side_b.get("selection_id"),
+            "provider_event_name": side_b.get("provider_event_name"),
             "execution_diagnostics": side_b.get("execution_diagnostics"),
         },
     )
@@ -5156,6 +5190,8 @@ async def _scan_single_sport(
             stats = {}
         provider_error = _normalize_text(provider_result.get("error")) or None
         provider_fetch_ms = float(provider_result.get("ms") or 0.0)
+        provider_error_code = _normalize_text(stats.get("provider_error_code"))
+        provider_error_status_code = stats.get("provider_error_status_code")
         if (
             provider_error
             and _provider_network_retry_once_enabled()
@@ -5180,6 +5216,8 @@ async def _scan_single_sport(
                 provider_events = []
             retry_stats = retry_result.get("stats")
             stats = retry_stats if isinstance(retry_stats, dict) else {}
+            provider_error_code = _normalize_text(stats.get("provider_error_code")) or provider_error_code
+            provider_error_status_code = stats.get("provider_error_status_code") or provider_error_status_code
             (
                 raw_provider_events,
                 filtered_provider_events,
@@ -5210,23 +5248,34 @@ async def _scan_single_sport(
             "regions": list(normalized_regions),
         }
         if provider_error:
-            provider_update["sports"].append(
-                {
-                    "sport_key": sport_key,
-                    "error": provider_error,
-                    "requested_markets": list(provider_markets),
-                }
-            )
+            provider_sport_error = {
+                "sport_key": sport_key,
+                "error": provider_error,
+                "requested_markets": list(provider_markets),
+            }
+            if provider_error_code:
+                provider_sport_error["error_code"] = provider_error_code
+            if provider_error_status_code not in (None, ""):
+                provider_sport_error["status_code"] = provider_error_status_code
+            provider_update["sports"].append(provider_sport_error)
             sport_snapshot["error"] = provider_error
+            if provider_error_code:
+                sport_snapshot["error_code"] = provider_error_code
+            if provider_error_status_code not in (None, ""):
+                sport_snapshot["status_code"] = provider_error_status_code
             provider_snapshot_update["sports"].append(sport_snapshot)
-            sport_errors.append(
-                {
-                    "sport_key": sport_key,
-                    "sport": sport.get("title")
-                    or SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
-                    "error": f"{provider_title}: {provider_error}",
-                }
-            )
+            sport_error = {
+                "sport_key": sport_key,
+                "sport": sport.get("title") or SPORT_DISPLAY_NAMES.get(sport_key, sport_key),
+                "provider_key": provider_key,
+                "provider": provider_title,
+                "error": f"{provider_title}: {provider_error}",
+            }
+            if provider_error_code:
+                sport_error["error_code"] = provider_error_code
+            if provider_error_status_code not in (None, ""):
+                sport_error["status_code"] = provider_error_status_code
+            sport_errors.append(sport_error)
         else:
             merge_stats = _empty_event_merge_stats()
             events_before_merge = len(events)
